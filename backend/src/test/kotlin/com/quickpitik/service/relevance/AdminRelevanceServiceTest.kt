@@ -41,7 +41,8 @@ class AdminRelevanceServiceTest {
         decisionLog, com.quickpitik.support.testTransactionTemplate(),
         RelevanceSwitch(props, com.quickpitik.config.AdminProperties(flagsEnabled = true), com.quickpitik.config.AiApiProperties()),
         Mockito.mock(com.quickpitik.repository.RelevanceStrikeRepository::class.java), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java),
-        Mockito.mock(com.quickpitik.repository.UserRepository::class.java))
+        Mockito.mock(com.quickpitik.repository.UserRepository::class.java),
+        Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java), Mockito.mock(RelevanceNotifier::class.java))
 
     @Test
     fun `the hidden tab lists cases with an action, marked would-have in record-only`() {
@@ -136,6 +137,7 @@ class AdminRelevanceServiceTest {
             override val measured = ms
             override val junk = j
             override val decidedAt = now
+            override val noConsent = false
         }
     }
 
@@ -192,6 +194,9 @@ class AdminRelevanceServiceTest {
     @Test
     fun `a single restore refuses a case that is not current`() {
         val case = appliedCase(action = "HIDE_ALL").apply { stage = "CLOSED"; closeReason = "SUPERSEDED" }
+        // RVF-11: a closed case is refused only while its batch has a newer current case.
+        val newer = appliedCase(action = "HIDE_ALL")
+        Mockito.`when`(cases.currentFor(case.batchId)).thenReturn(newer)
         val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> {
             service.restorePhoto(UUID.randomUUID(), case.id, UUID.randomUUID())
         }

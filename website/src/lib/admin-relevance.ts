@@ -15,6 +15,8 @@ export interface RelevanceCaseRow {
   batchPhotos: number;
   junkPercent: number | null;
   decidedAt: string | null;
+  // RVF-9: the photographer had not consented when the case was applied; an older server leaves it out.
+  noConsent?: boolean;
 }
 
 export interface RelevanceWord {
@@ -112,6 +114,7 @@ const NOTE_LABEL: Record<string, string> = {
   SUSPICIOUS_WORDS: "Words read off the photos seemed to tell the model what to answer.",
   NO_CONSENT: "The photographer has not accepted the Terms that allow automatic hiding.",
   ADMIN_HIDE: "An admin hid this batch from this page.",
+  WORDS_ONLY: "The model called this a wrong event from printed words only. The camera dates do not show it, so nothing was hidden. Look at the batch. In auto-hide you can hide it by hand if it is from another event.",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -125,6 +128,7 @@ const ALERT_LABEL: Record<string, string> = {
   COPIED: "Copied photos",
   APPEAL: "New appeal",
   THIRD_CASE: "Third confirmed case",
+  WORDS_ONLY: "Wrong event on words only",
 };
 
 const BAND_LABEL: Record<string, string> = {
@@ -163,6 +167,10 @@ export const bandLabel = (b: string | null) => label(BAND_LABEL, b) ?? "Not work
 
 /** Applied in record-only with a hide recorded: nothing was hidden. The server works it out. */
 export const isWouldHave = (row: Pick<RelevanceCaseRow, "wouldHave">) => row.wouldHave;
+
+/** RVF-9: the mark first; an older server only has the note. */
+export const isNoConsent = (row: Pick<RelevanceCaseRow, "noConsent" | "verdictNote">) =>
+  row.noConsent ?? row.verdictNote === "NO_CONSENT";
 
 // RV-2.6: the actions on a case. Types mirror `RelevanceHiddenPhotoDto`, `RelevanceRestoreDto`, `RelevancePhotoRestoreDto`.
 export interface RelevanceHiddenPhoto {
@@ -243,6 +251,9 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
 // RV-4.5b: Hide batch on a no-consent case (ADMIN_HIDE holds new uploads, V2-T24 note opens an appeal, never confirmed).
 export const NO_CONSENT_HIDE_CONFIRM = "Takes every photo of this batch off sale as your decision, a chunk at a time over the next minutes. New uploads to the batch are taken off sale too. The photographer is told a person took the photos off sale and may appeal. It does not count as a confirmed case. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.";
 
+// RVF-19: Restore batch on a closed case; the server only releases the leftover holds (AdminRelevanceService.restore).
+export const CLOSED_RESTORE_CONFIRM = "Puts back on sale the photos of this batch that are still held. The case stays closed as it is, and no payout hold changes. Photos the photographer hid stay hidden.";
+
 // RV-4.3: the consequences of a confirmed case (A.7, A.8).
 export const CONSEQUENCES_TEXT = {
   title: "Consequences",
@@ -268,12 +279,18 @@ export const heldByLabel = (h: string) => label(HELD_BY_LABEL, h) ?? h;
 export const isReleasable = (p: RelevanceHiddenPhoto) => p.restoredAt === null && p.heldBy !== "PHOTOGRAPHER";
 
 /**
- * The actions a case offers. Record-only never acts (P18): it offers only the batch restore, and only while it is
- * current and a releasable hold exists (seeded rows). Can't tell actions need action NONE:
+ * RVF-11: the batch and photo restores take the current case, or any closed one (the junk a won appeal left held, a
+ * restore that broke off). The server refuses a closed case once a newer case is current; the drawer shows that.
+ */
+export const restoresHolds = (stage: string) => stage === "APPLIED" || stage === "CLOSED";
+
+/**
+ * The actions a case offers. Record-only never acts (P18): it offers only the batch restore, and only while a
+ * releasable hold exists (seeded rows). A closed case offers only the restore (`restoresHolds`). Can't tell actions need action NONE:
  * a Can't tell an admin hid offers the restores instead. The mode itself is not readable here; the server refuses.
  */
 export function caseActions(
-  detail: Pick<RelevanceCaseDetail, "case" | "stage" | "payoutHoldAt" | "payoutHoldPlaced" | "closeReason">,
+  detail: Pick<RelevanceCaseDetail, "case" | "stage" | "payoutHoldAt" | "payoutHoldPlaced">,
   hasReleasable: boolean,
 ): RelevanceCaseAction[] {
   // RV-4.3: a live payout hold can be ended whatever the case's stage; the server answers 409 when none is left.
@@ -283,18 +300,15 @@ export function caseActions(
   const hiding = row.action !== null && row.action !== "NONE";
   // RV-4.5b: a no-consent case whose verdict would have hidden the whole batch; an admin may hide it, and hold a
   // Copied one's payouts (also after hiding it) once. An admin's hide of it reads AUTO_HIDE + ADMIN_HIDE.
-  const noConsent = detail.stage === "APPLIED" && row.appliedMode === "RECORD_ONLY" && row.verdictNote === "NO_CONSENT"
+  const noConsent = detail.stage === "APPLIED" && row.appliedMode === "RECORD_ONLY" && isNoConsent(row)
     && ["JUNK_DUMP", "WRONG_EVENT", "COPIED"].includes(row.verdict ?? "");
   const adminHid = acting && row.verdictNote === "ADMIN_HIDE";
   const holdPayouts: RelevanceCaseAction[] =
     (noConsent || adminHid) && row.verdict === "COPIED" && !detail.payoutHoldPlaced ? ["hold_payouts"] : [];
   if (acting && hiding) return ["restore", "keep_hidden", ...holdPayouts, ...endHold];
   if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch", ...endHold];
-  // A restore that broke off leaves the case closed RESTORED_BY_ADMIN with holds live: the server takes the repeat
-  // (and refuses it once a newer case is current).
-  const restorable = detail.stage === "APPLIED" || (detail.stage === "CLOSED" && detail.closeReason === "RESTORED_BY_ADMIN");
   const noConsentActions: RelevanceCaseAction[] = noConsent ? ["hide_batch", ...holdPayouts] : [];
-  return [...(restorable && hasReleasable ? (["restore"] as const) : []), ...noConsentActions, ...endHold];
+  return [...(restoresHolds(detail.stage) && hasReleasable ? (["restore"] as const) : []), ...noConsentActions, ...endHold];
 }
 
 /** Why a sample counts as junk, or that it was not judged while a cut-off is unset. */

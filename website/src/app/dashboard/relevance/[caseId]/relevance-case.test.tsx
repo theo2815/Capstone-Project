@@ -209,6 +209,33 @@ it("shows no off-sale count, which the server stamps once and does not keep up t
   expect(screen.queryByText("Off sale")).not.toBeInTheDocument();
 });
 
+// RVF-18 (RVR-25): W1, approved 2026-11-17.
+const TOO_LONG = "Your reason is too long. Please keep it to 1,000 characters.";
+
+it("an over-long reason shows why under the box and keeps Send off", async () => {
+  renderCase();
+  await screen.findByRole("heading", { name: /off sale/ });
+  fireEvent.change(reasonField(), { target: { value: "x".repeat(1001) } });
+  const message = screen.getByText(TOO_LONG);
+  expect(message).toBeVisible();
+  expect(reasonField()).toHaveAttribute("aria-invalid", "true");
+  expect(reasonField().getAttribute("aria-describedby")).toContain(message.id);
+  expect(sendButton()).toBeDisabled();
+});
+
+it("the message goes at 1,000 characters", async () => {
+  renderCase();
+  await screen.findByRole("heading", { name: /off sale/ });
+  fireEvent.change(reasonField(), { target: { value: "x".repeat(1001) } });
+  expect(screen.getByText(TOO_LONG)).toBeVisible();
+  // The counter and the check count the same trimmed length: spaces around the reason do not count.
+  fireEvent.change(reasonField(), { target: { value: `  ${"x".repeat(1000)}  ` } });
+  expect(screen.queryByText(TOO_LONG)).not.toBeInTheDocument();
+  expect(screen.getByText("1,000/1,000")).toBeVisible();
+  expect(reasonField()).toHaveAttribute("aria-invalid", "false");
+  expect(sendButton()).toBeEnabled();
+});
+
 it("a current case that hides nothing and was never hidden by a check reads as not found", async () => {
   serverCase = { ...base, verdict: "CANT_TELL", action: "NONE" };
   renderCase();

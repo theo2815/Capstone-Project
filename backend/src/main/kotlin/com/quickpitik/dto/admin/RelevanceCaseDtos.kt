@@ -3,6 +3,7 @@ package com.quickpitik.dto.admin
 import com.quickpitik.entity.CaseAction
 import com.quickpitik.repository.RelevanceAlertRow
 import com.quickpitik.repository.RelevanceCaseRow
+import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
 import java.util.UUID
 
@@ -23,6 +24,9 @@ data class RelevanceCaseRowDto(
     // Junk share of the measured sample, rounded down; null while nothing was measured.
     val junkPercent: Int?,
     val decidedAt: String?,
+    // RVF-9 (RVR-15): the photographer had not consented when the case was applied. verdictNote keeps the case's own
+    // note, and reads NO_CONSENT only when it has none, so an older admin page still finds its no-consent cases.
+    val noConsent: Boolean = false,
 )
 
 data class RelevanceCaseDetailDto(
@@ -98,13 +102,14 @@ fun RelevanceCaseRow.toDto() = RelevanceCaseRowDto(
     photographerHandle = photographerHandle,
     photographerName = photographerName,
     verdict = verdict,
-    verdictNote = verdictNote,
+    verdictNote = verdictNote ?: "NO_CONSENT".takeIf { noConsent },
     action = action,
     appliedMode = appliedMode,
     wouldHave = appliedMode == "RECORD_ONLY" && action != null && action != CaseAction.NONE.name,
     batchPhotos = batchPhotos,
     junkPercent = measured?.takeIf { it > 0 }?.let { (junk ?: 0) * 100 / it },
     decidedAt = decidedAt?.toString(),
+    noConsent = noConsent || verdictNote == "NO_CONSENT",
 )
 
 fun RelevanceAlertRow.toDto() = RelevanceAlertDto(
@@ -122,8 +127,10 @@ fun RelevanceAlertRow.toDto() = RelevanceAlertDto(
 )
 
 // RV-2.5a: the admin's note on a case action (optional; blank is stored as none).
+// RVF-16 (NIT 1): Postgres refuses a NUL character in TEXT, so one is a 400 here, not a 500 at the write.
 data class RelevanceActionRequest(
     @field:Size(max = 1000)
+    @field:Pattern(regexp = "[^\\x00]*", message = "The note cannot contain a NUL character")
     val note: String? = null,
 )
 

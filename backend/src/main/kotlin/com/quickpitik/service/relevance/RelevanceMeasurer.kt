@@ -42,12 +42,18 @@ class RelevanceMeasurer(
     // Waits for every photo and returns how many measurements were written.
     fun measure(batchId: UUID, token: UUID, photos: List<PhotoToMeasure>): Int {
         val client = rekognition.getIfAvailable() ?: return 0
+        var refused = 0
         val runs = photos.map { photo ->
             try {
                 CompletableFuture.supplyAsync({ measureOne(client, batchId, token, photo) }, pool)
             } catch (ex: RejectedExecutionException) {
+                refused++
                 CompletableFuture.completedFuture(0) // pool full: the photo is still to measure next tick
             }
+        }
+        if (refused > 0) {
+            registry.counter("qp.relevance.measured", "result", "refused").increment(refused.toDouble())
+            log.warn("Relevance measure pool full batch={}: {} of {} photos refused (measured on a later tick)", batchId, refused, photos.size)
         }
         return runs.sumOf { run ->
             try {

@@ -77,6 +77,33 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf("APPLIED", "RECORD_ONLY", "NONE"), row(old, "stage", "applied_mode", "scan_state"))
     }
 
+    // RVF-8 (RVR-9): only a check that started in auto-hide can hide; promise test for "record-only hides nothing".
+    @Test
+    fun `a check that started in record-only applies as record-only after the switch to auto-hide`() {
+        val b = batch(photos = 600)
+        repeat(3) { photo(b) }
+        val c = case(b, "DECIDED", "JUNK_DUMP", started = "RECORD_ONLY")
+        val before = untouched()
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", null, false, "NONE"),
+            row(c, "stage", "applied_mode", "verdict_note", "no_consent", "scan_state"))
+        assertEquals(listOf(listOf("BIG_HIDE", "big_hide:$c", true, 600)), alertsOf(b))
+        assertEquals(before, untouched(), "no photo, hold row, payout flag, message or decision is touched")
+    }
+
+    @Test
+    fun `a case with no start mode applies as record-only`() {
+        val b = batch(photos = 600)
+        val c = case(b, "DECIDED", "MIXED", measured = 300, junk = 120, started = null)
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", null, false, "NONE"),
+            row(c, "stage", "applied_mode", "verdict_note", "no_consent", "scan_state"))
+    }
+
     @Test
     fun `a decided case in auto-hide becomes current with its target`() {
         val mixed = batch(photos = 600)
@@ -99,8 +126,25 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(before, untouched(), "no photo is touched in this task")
     }
 
+    // RVF-7 promise test (a missing or failed verdict never hides): a wrong event on words alone acts on nothing, even for
+    // a consenting photographer in auto-hide; it only raises its admin alert.
     @Test
-    fun `a photographer below the minimum Terms version is applied as record-only with NO_CONSENT`() {
+    fun `a words-only wrong event hides nothing in auto-hide`() {
+        val b = batch(photos = 600)
+        repeat(3) { photo(b) }
+        val c = case(b, "DECIDED", "CANT_TELL", note = "WORDS_ONLY")
+        val before = untouched()
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "AUTO_HIDE", "NONE", "WORDS_ONLY", "NONE"),
+            row(c, "stage", "applied_mode", "action", "verdict_note", "scan_state"))
+        assertEquals(listOf(listOf("WORDS_ONLY", "words_only:$c", false, 600)), alertsOf(b))
+        assertEquals(before, untouched(), "no photo, hold, flag, note or decision is touched")
+    }
+
+    @Test
+    fun `a photographer below the minimum Terms version is applied as record-only with the no-consent mark`() {
         val below = batch(photos = 600, terms = "1.6")
         val c = case(below, "DECIDED", "JUNK_DUMP")
         val none = batch(photos = 600, terms = null)
@@ -110,9 +154,22 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         listOf(c, n).forEach { service.applyCase(it, NOW) }
 
         for (id in listOf(c, n)) {
-            assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", "NO_CONSENT"), row(id, "stage", "applied_mode", "action", "verdict_note"))
+            assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", null, true),
+                row(id, "stage", "applied_mode", "action", "verdict_note", "no_consent"))
         }
         assertEquals(listOf(listOf("BIG_HIDE", "big_hide:$c", true, 600)), alertsOf(below))
+    }
+
+    // RVF-9 (RVR-15): no consent is its own mark, so a Can't tell case keeps the note that says why it was Can't tell.
+    @Test
+    fun `a no-consent can't tell case keeps its own note and carries the no-consent mark`() {
+        val b = batch(photos = 40, terms = "1.6")
+        val c = case(b, "DECIDED", "CANT_TELL", note = "SUSPICIOUS_WORDS")
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", "NONE", "SUSPICIOUS_WORDS", true),
+            row(c, "stage", "applied_mode", "action", "verdict_note", "no_consent"))
     }
 
     @Test
@@ -123,7 +180,7 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
 
             service(minVersion = min).applyCase(c, NOW)
 
-            assertEquals(listOf("RECORD_ONLY", "NO_CONSENT", "NONE"), row(c, "applied_mode", "verdict_note", "scan_state"), "min=$min")
+            assertEquals(listOf("RECORD_ONLY", null, true, "NONE"), row(c, "applied_mode", "verdict_note", "no_consent", "scan_state"), "min=$min")
         }
     }
 
@@ -272,6 +329,23 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf("APPLIED", "AUTO_HIDE", "HIDE_JUNK"), row(newer, "stage", "applied_mode", "action"))
     }
 
+    // RVF-25 review (P21): a check that started in record-only is still compared with the admin's restore, so it cannot
+    // become a current case that the next auto-hide check with the same verdict replaces and hides again.
+    @Test
+    fun `a check that started in record-only after an admin restore does not open the way to a new hide`() {
+        val b = batch(photos = 600)
+        case(b, "CLOSED", "JUNK_DUMP", applied = "AUTO_HIDE", closeReason = "RESTORED_BY_ADMIN")
+        val frozen = case(b, "DECIDED", "JUNK_DUMP", started = "RECORD_ONLY")
+        service().applyCase(frozen, NOW)
+        // One check in flight per batch: the next one exists only once the first is applied.
+        val next = case(b, "DECIDED", "JUNK_DUMP")
+        service().applyCase(next, NOW)
+
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(frozen, "stage", "close_reason"))
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(next, "stage", "close_reason"))
+        assertNull(cases.currentFor(b.id))
+    }
+
     @Test
     fun `a case whose event turned private is closed skipped`() {
         val b = batch(photos = 600)
@@ -358,14 +432,15 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         measured: Int = 40,
         junk: Int = 0,
         copyLow: Boolean? = false,
+        started: String? = "AUTO_HIDE",
     ): UUID {
         val photos = jdbc.queryForObject("SELECT photo_count FROM event_photographer WHERE event_id = ?", Int::class.java, b.event)
         return id(
             "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, verdict_note, " +
-                "copy_low, decided_at, applied_mode, action, applied_at, closed_at, close_reason, scan_state) " +
-                "VALUES (?, 'QUIET', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "copy_low, decided_at, applied_mode, action, applied_at, closed_at, close_reason, scan_state, started_mode) " +
+                "VALUES (?, 'QUIET', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             b.id, UPLOAD, photos, stage, measured, junk, verdict, note, copyLow, NOW,
-            applied, applied?.let { action(verdict) }, applied?.let { NOW }, closeReason?.let { NOW }, closeReason, scan,
+            applied, applied?.let { action(verdict) }, applied?.let { NOW }, closeReason?.let { NOW }, closeReason, scan, started,
         )
     }
 

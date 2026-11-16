@@ -107,6 +107,18 @@ it("a case shows the model's reason and the note when code overrode it", async (
   expect(within(drawer).queryByText(/Would have hidden/)).not.toBeInTheDocument();
 });
 
+// RVF-19 (RVR-27): a word read off a photo, or one long token in the reason, must not push the drawer sideways at 375 px.
+it("a 40-letter word and a long token carry the wrap classes", async () => {
+  const word = "A".repeat(40);
+  const token = "https://example.com/".padEnd(120, "x");
+  one = async () => detail(row, { topWords: [{ word, photos: 12 }], adminReason: `See ${token}` });
+  fixtures.search = "row=c1";
+  mount();
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByText(`See ${token}`)).toHaveClass("break-words");
+  expect(within(drawer).getByText(`${word} · 12`)).toHaveClass("break-all");
+});
+
 it("an unknown verdict from the server renders as text, not a crash", async () => {
   const odd = { ...row, verdict: "NEW_VERDICT", verdictNote: "NEW_NOTE", action: "HIDE_SOME" };
   list = async () => ({ items: [odd], total: 1, offset: 0, limit: 50 });

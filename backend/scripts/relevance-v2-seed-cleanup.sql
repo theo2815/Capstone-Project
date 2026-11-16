@@ -26,13 +26,33 @@
 --
 -- It prints one count per step.
 --
+-- It also refuses (RVF-17), before any delete, when a batch with a SEEDED case also holds a case that is not
+-- SEEDED: that is a real check, and deleting the batch's scores and words would break it.
+--
+-- DRY RUN BY DEFAULT (RVF-17). Without -v confirm=yes it does every step, prints the counts, then rolls back and
+-- deletes nothing. It first prints where it runs: the database, the server address, the newest migration and the
+-- counts of users and photos. SQL cannot tell staging from production: read that line before confirm=yes.
+--
 -- Run it on the local Docker database (PowerShell, from the repo root):
 --   Get-Content backend/scripts/relevance-v2-seed-cleanup.sql | docker exec -i quickpitik-postgres psql -X -U quickpitik -d quickpitik
+--   Add  -v confirm=yes  to delete.
 -- Run it on staging: railway connect (the staging Postgres), then
--- \i '<repo path with forward slashes>/backend/scripts/relevance-v2-seed-cleanup.sql'. If it stops with an error,
--- type ROLLBACK before anything else.
+-- \i '<repo path with forward slashes>/backend/scripts/relevance-v2-seed-cleanup.sql' (the dry run), then
+-- \set confirm yes and \i again. If it stops with an error, type ROLLBACK before anything else.
 
 \set ON_ERROR_STOP on
+
+\if :{?confirm}
+  \set qp_confirm :confirm
+  \unset confirm
+\else
+  \set qp_confirm no
+\endif
+
+\echo '== Where this runs (SQL cannot tell staging from production: check before confirm=yes)'
+SELECT current_database() AS database, inet_server_addr() AS server, inet_server_port() AS port,
+       (SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1) AS newest_migration,
+       (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM photos) AS photos;
 
 BEGIN;
 
@@ -41,6 +61,19 @@ SELECT id, batch_id FROM relevance_cases WHERE trigger = 'SEEDED';
 
 \echo '== Seeded cases found (rows)'
 SELECT count(*) AS seeded_cases, count(DISTINCT batch_id) AS seeded_batches FROM seeded_cases;
+
+DO $$
+DECLARE
+    real_batch uuid;
+BEGIN
+    SELECT c.batch_id INTO real_batch FROM relevance_cases c
+    WHERE c.batch_id IN (SELECT batch_id FROM seeded_cases) AND c.trigger <> 'SEEDED'
+    ORDER BY c.batch_id LIMIT 1;
+    IF real_batch IS NOT NULL THEN
+        RAISE EXCEPTION 'Refused: batch % also holds a real relevance case; the clean-up would delete its scores and words. Nothing was deleted.', real_batch;
+    END IF;
+END
+$$;
 
 DO $$
 DECLARE
@@ -92,5 +125,10 @@ DELETE FROM batch_relevance_words WHERE batch_id IN (SELECT batch_id FROM seeded
 \echo '== Deleted: relevance_cases (SEEDED; their relevance_case_photos and appeals go with them)'
 DELETE FROM relevance_cases WHERE id IN (SELECT id FROM seeded_cases);
 
+\if :qp_confirm
 COMMIT;
 \echo 'CLEANED. Every SEEDED case, its holds, notes, strikes and alerts, and the scores and words of its batch are gone.'
+\else
+ROLLBACK;
+\echo 'DRY RUN: nothing was written. Run again with -v confirm=yes to write.'
+\endif

@@ -7,8 +7,8 @@ import jakarta.persistence.Table
 import java.time.OffsetDateTime
 import java.util.UUID
 
-// RV-1.9: the values the kind CHECK of relevance_alerts allows (V105). The column stays a string.
-enum class AlertKind { BIG_HIDE, COPIED, APPEAL, THIRD_CASE }
+// RV-1.9: the values the kind CHECK of relevance_alerts allows (V105; WORDS_ONLY since V108). The column stays a string.
+enum class AlertKind { BIG_HIDE, COPIED, APPEAL, THIRD_CASE, WORDS_ONLY }
 
 // RV-1.9 (plan 5.11, R12): one stored admin alert (V105 relevance_alerts), written only by service/relevance through
 // RelevanceAlertRepository.raise. dedupe_key is unique, so a retry or a second server copy cannot raise it twice.

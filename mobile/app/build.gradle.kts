@@ -41,6 +41,12 @@ android {
             "GOOGLE_SERVER_CLIENT_ID",
             "\"${project.findProperty("QP_GOOGLE_SERVER_CLIENT_ID") ?: ""}\"",
         )
+        // The website the app's links open (Terms, the case page); see gradle.properties.
+        buildConfigField(
+            "String",
+            "WEBSITE_ORIGIN",
+            "\"${(project.findProperty("QP_WEBSITE_ORIGIN") ?: "https://quickpitik.com").toString().trimEnd('/')}\"",
+        )
         buildConfigField("boolean", "FUJI_SDK", fujiSdk.toString())
         if (fujiSdk) {
             ndk { abiFilters += "arm64-v8a" }

@@ -19,7 +19,8 @@
 -- relevance flag is on the account (an admin resolves or dismisses it first), while a photo
 -- relevance hold of a batch is not restored or an appeal is open (an admin restores the batch or
 -- each hidden photo and decides the appeal first; "keep hidden" does not clear it: the run keeps
--- the sold photos, hidden or not), and while the
+-- the sold photos, hidden or not; photos the photographer hid themselves do not count, the run
+-- releases those), and while the
 -- id is not an existing PHOTOGRAPHER. Read the counts in the error to tell the photographer
 -- what is left.
 --
@@ -35,6 +36,8 @@
 --     looked-up photo rows, cases, holds and appeals); relevance strikes (relevance_strikes).
 --   photographer_settings: handle becomes deleted-<id without dashes> (40 characters, longer
 --     than the app lets anyone choose); brand name, bio, place, cover and watermark cleared.
+--   Photos the photographer hid themselves through a relevance case are released first, as their
+--     own undo does; one still held by anything else stays hidden.
 --   Their remaining (sold) photos go to the bin, so nobody can buy them any more; buyers keep
 --     their downloads, as when a photographer bins a photo in the app.
 --   Coupons are switched off, not deleted: past orders keep the link to the coupon they used.
@@ -119,8 +122,9 @@ BEGIN
         RAISE EXCEPTION 'Refused: photographer % is under an upload review; close the relevance flag first (resolve or dismiss)', uid;
     END IF;
     -- RV-2.1: the same for Photo Relevance v2. The run keeps the sold photos, so a hide or an appeal must end first.
+    -- RVF-15: the photographer's own hides do not count; no admin can release them, so the confirmed run does.
     IF EXISTS (SELECT 1 FROM flag_hidden_photos h JOIN batch_relevance br ON br.id = h.batch_id
-               WHERE br.photographer_id = uid AND h.restored_at IS NULL)
+               WHERE br.photographer_id = uid AND h.restored_at IS NULL AND h.held_by <> 'PHOTOGRAPHER')
        OR EXISTS (SELECT 1 FROM relevance_appeals WHERE photographer_id = uid AND status = 'OPEN') THEN
         RAISE EXCEPTION 'Refused: photographer % has photos held by a photo relevance case or an open appeal; an admin must restore the batch or each hidden photo first (keeping a batch hidden does not clear this) and decide the appeal', uid;
     END IF;
@@ -167,6 +171,9 @@ UNION ALL SELECT 'saved_events', count(*) FROM saved_events WHERE user_id = :'qp
 UNION ALL SELECT 'cart_items', count(*) FROM cart_items WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'event_photo_alerts', count(*) FROM event_photo_alerts WHERE user_id = :'qp_user_id'
 UNION ALL SELECT 'liveness_sessions', count(*) FROM liveness_sessions WHERE user_id = :'qp_user_id'
+UNION ALL SELECT 'flag_hidden_photos held by the photographer (released first)', count(*) FROM flag_hidden_photos h
+    JOIN batch_relevance br ON br.id = h.batch_id
+    WHERE br.photographer_id = :'qp_user_id' AND h.held_by = 'PHOTOGRAPHER' AND h.restored_at IS NULL
 UNION ALL SELECT 'batch_relevance', count(*) FROM batch_relevance WHERE photographer_id = :'qp_user_id'
 UNION ALL SELECT 'relevance_strikes', count(*) FROM relevance_strikes WHERE photographer_id = :'qp_user_id';
 
@@ -207,6 +214,7 @@ DO $$
 DECLARE
     uid uuid := current_setting('qp.anonymise_user_id')::uuid;
     changed int;
+    released uuid[];
 BEGIN
     UPDATE users SET
         name = 'Deleted photographer',
@@ -222,6 +230,23 @@ BEGIN
     IF changed <> 1 THEN
         RAISE EXCEPTION 'Expected to anonymise 1 user row, changed %', changed;
     END IF;
+
+    -- RVF-15: end the photographer's own hides as their undo does (RelevanceHoldRepository.restoreByPhotographer, rows
+    -- locked in photo order), then put back what nothing else holds (unhideReleased). Two statements: the second must
+    -- see the first's stamps.
+    WITH r AS (
+        UPDATE flag_hidden_photos SET restored_at = now(), restored_by = 'PHOTOGRAPHER'
+        WHERE id IN (SELECT h.id FROM flag_hidden_photos h JOIN batch_relevance br ON br.id = h.batch_id
+                     WHERE br.photographer_id = uid AND h.held_by = 'PHOTOGRAPHER' AND h.restored_at IS NULL
+                     ORDER BY h.photo_id FOR UPDATE OF h)
+        RETURNING photo_id
+    )
+    SELECT array_agg(photo_id) INTO released FROM r;
+    UPDATE photos p
+    SET status = CASE WHEN p.watermark_s3_key IS NULL THEN 'PROCESSING' ELSE 'LIVE' END, processing_attempts = 0
+    WHERE p.id = ANY (released) AND p.status = 'HIDDEN'
+      AND NOT EXISTS (SELECT 1 FROM flags f WHERE f.target_kind = 'photo' AND f.target_id = p.id AND f.status = 'hidden')
+      AND NOT EXISTS (SELECT 1 FROM flag_hidden_photos o WHERE o.photo_id = p.id AND o.restored_at IS NULL);
 
     DELETE FROM refresh_tokens WHERE user_id = uid;
     DELETE FROM password_reset_tokens WHERE user_id = uid;

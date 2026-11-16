@@ -353,7 +353,7 @@ class RelevanceRecheckIntegrationTest : PostgresIntegrationTest() {
 
     private fun case(b: Batch, stage: String, verdict: String, applied: String? = null, scan: String = "NONE"): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, band, verdict, copy_low, " +
-            "decided_at, applied_mode, action, applied_at, scan_state) VALUES (?, 'QUIET', ?, 600, ?, 300, 30, 'MIXED', ?, false, ?, ?, ?, ?, ?)",
+            "decided_at, applied_mode, action, applied_at, scan_state, started_mode) VALUES (?, 'QUIET', ?, 600, ?, 300, 30, 'MIXED', ?, false, ?, ?, ?, ?, ?, 'AUTO_HIDE')",
         b.id, UPLOAD, stage, verdict, NOW, applied, applied?.let { action(verdict) }, applied?.let { NOW }, scan,
     )
 

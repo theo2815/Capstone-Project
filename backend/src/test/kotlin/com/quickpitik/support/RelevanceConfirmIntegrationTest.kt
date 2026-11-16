@@ -336,6 +336,68 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
             .items.map { it.caseId }.filter { it in setOf(first, second, once, unconfirmed) }.toSet())
     }
 
+    // RVF-12 (RVR-6): an admin restore of a confirmed case voids its strike; the row stays as a record.
+    @Test
+    fun `restoring a confirmed case voids its strike and it no longer counts`() {
+        val p = photographer()
+        val first = case(batch(p, "Void A"), noticeAt = OLD)
+        case(batch(p, "Void B"), noticeAt = OLD.plusHours(1))
+        checks().confirmDue()
+
+        adminService().restore(admin(), first, null)
+
+        assertEquals(2, strikeCount(p), "the voided strike is kept as a record")
+        assertNotNull(jdbc.queryForObject("SELECT voided_at FROM relevance_strikes WHERE case_id = ?", OffsetDateTime::class.java, first))
+        assertEquals(1, strikes.countSince(p, NOW.minusMonths(6)))
+        case(batch(p, "Void C"), noticeAt = OLD.plusHours(2))
+        checks().confirmDue()
+        assertEquals(listOf(RelevanceNotices.secondCase("Void B", 6), RelevanceNotices.secondCase("Void C", 6)), strikeNotes(p),
+            "the next confirmed case is the second, not the third")
+        assertEquals(0, thirdCaseAlerts(p))
+    }
+
+    @Test
+    fun `the Repeat cases filter leaves a voided strike out`() {
+        val p = photographer()
+        val first = case(batch(p), noticeAt = OLD)
+        val second = case(batch(p), noticeAt = OLD.plusHours(1))
+        checks().confirmDue()
+
+        adminService().restore(admin(), first, null)
+
+        val listed = cases.pageCurrentCases("all", true, NOW.minusMonths(6), OffsetLimitPageable(0, 1000)).content.map { it.caseId }
+        assertTrue(second !in listed, "one live strike is not a repeat")
+    }
+
+    @Test
+    fun `restoring a case that was never confirmed voids nothing`() {
+        val p = photographer()
+        strike(p, NOW.minusDays(1))
+        val c = case(batch(p), noticeAt = NOW)
+
+        adminService().restore(admin(), c, null)
+
+        assertNull(confirmedAt(c))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE photographer_id = ? AND voided_at IS NOT NULL",
+            Int::class.java, p))
+        assertEquals(1, strikes.countSince(p, NOW.minusMonths(6)))
+    }
+
+    @Test
+    fun `the admin case page counts only live strikes`() {
+        val p = photographer()
+        val first = case(batch(p), noticeAt = OLD)
+        val second = case(batch(p), noticeAt = OLD.plusHours(1))
+        checks().confirmDue()
+
+        adminService().restore(admin(), first, null)
+
+        assertEquals(1, adminService().case(second).photographerStrikes)
+    }
+
+    private fun admin(): UUID = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')",
+        "relconfirm-admin-${UUID.randomUUID()}@test.local")
+
     private data class Batch(val id: UUID, val event: UUID, val photographer: UUID)
 
     private fun props(mode: RelevanceMode) = RelevanceProperties(mode = mode,
@@ -369,14 +431,15 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
         val props = props(RelevanceMode.AUTO_HIDE)
         val notifier = RelevanceNotifier(cases, decisions(), switch(props), props, fixed(NOW), tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch(props), props, fixed(NOW), publisher,
-            confirmer(), decisions(), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
+            confirmer(), decisions(), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java), tx, adminService())
     }
 
     private fun adminService(): AdminRelevanceService {
         val props = props(RelevanceMode.AUTO_HIDE)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
             fixed(NOW), holds, photoRepo, decisions(), tx, switch(props), strikes, Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java),
-            Mockito.mock(com.quickpitik.repository.UserRepository::class.java))
+            Mockito.mock(com.quickpitik.repository.UserRepository::class.java), Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java),
+            Mockito.mock(RelevanceNotifier::class.java))
     }
 
     private fun fixed(at: OffsetDateTime): Clock = Clock.fixed(at.toInstant(), ZoneOffset.UTC)

@@ -35,6 +35,9 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -185,16 +188,47 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, notes(b).size)
     }
 
+    // RVF-14: the record-only half. A case applied in record-only still has no page and no appeal in any mode.
     @Test
     fun `in record-only no photo, hold, flag, message or e-mail changes`() {
         val b = batch()
-        val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL")
-        val recordOnly = service(mode = RelevanceMode.RECORD_ONLY)
+        val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", mode = "RECORD_ONLY")
 
-        assertEquals("NOTHING_TO_APPEAL", refused { tx.execute { recordOnly.file(b.photographer, c, "mine") } })
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.OFF)) {
+            assertEquals("NOTHING_TO_APPEAL", refused { tx.execute { service(mode).file(b.photographer, c, "mine") } }, "$mode")
+            assertFailsWith<NotFoundException> { tx.execute { service(mode).caseFor(b.photographer, c) } }
+        }
         assertNull(appeals.findByCaseId(c))
         assertEquals(0, notes(b).size)
         Mockito.verifyNoInteractions(publisher)
+    }
+
+    // RVF-14 (Q3): a case applied in auto-hide keeps its page and its appeal after the mode leaves auto-hide.
+    @Test
+    fun `a case applied in auto-hide is still shown to its photographer after the mode leaves auto-hide`() {
+        val b = batch()
+        val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", hidden = 40)
+
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.OFF)) {
+            val view = tx.execute { service(mode).caseFor(b.photographer, c) }!!
+            assertEquals(listOf(c, true, LocalDate.parse("2010-05-21")), listOf(view.caseId, view.current, view.appealDeadline), "$mode")
+        }
+    }
+
+    @Test
+    fun `an appeal can be filed after the mode leaves auto-hide`() {
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.OFF)) {
+            val b = batch()
+            val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", hidden = 40)
+
+            val view = tx.execute { service(mode).file(b.photographer, c, "These are mine") }!!
+
+            assertEquals("OPEN", view.appeal?.status, "$mode")
+            assertEquals("OPEN", appeals.findByCaseId(c)!!.status, "$mode")
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM relevance_alerts WHERE case_id = ? AND kind = 'APPEAL'",
+                Int::class.java, c), "$mode")
+            assertEquals(listOf("relevance:${appeals.findByCaseId(c)!!.id}:filed"), notes(b).map { it["notice_key"] }, "$mode")
+        }
     }
 
     @Test
@@ -290,6 +324,30 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         assertEquals("OPEN", appeals.findByCaseId(c)!!.status)
     }
 
+    // RVF-16 (NIT 2): a stranger is refused before the case is locked, so their call never waits on the owner's lock.
+    @Test
+    fun `a stranger's appeal waits for no lock on the case`() {
+        val b = batch()
+        val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        val stranger = batch().photographer
+        val locked = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val holder = pool.submit { tx.execute { cases.lockCase(c); locked.countDown(); release.await(30, TimeUnit.SECONDS) } }
+            assertTrue(locked.await(10, TimeUnit.SECONDS))
+
+            val call = pool.submit<Throwable?> { runCatching { tx.execute { service().file(stranger, c, "mine") } }.exceptionOrNull() }
+
+            assertTrue(call.get(3, TimeUnit.SECONDS) is NotFoundException)
+            release.countDown()
+            holder.get(10, TimeUnit.SECONDS)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
+
     @Test
     fun `the appeal queries find a case's appeal and an open appeal of the batch`() {
         val b = batch()
@@ -333,7 +391,7 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         val notifier = RelevanceNotifier(cases, decisions, switch, props, clock, tx, publisher)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, clock, publisher,
             com.quickpitik.service.relevance.RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions,
-            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java), tx, Mockito.mock(com.quickpitik.service.relevance.AdminRelevanceService::class.java))
     }
 
     private fun batch(): Batch {

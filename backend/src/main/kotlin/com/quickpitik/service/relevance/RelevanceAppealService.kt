@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -43,7 +44,8 @@ import java.util.UUID
 // auto-hide case of the photographer's own batch when it hides something (target HIDE_JUNK or HIDE_ALL, an admin's hide
 // of a Can't tell batch included) and its note started the clock (notice_at), through the last day the note names,
 // once per case, with no other appeal open on the batch. Filing stores the reason, raises one APPEAL alert, pings
-// admins and sends V2-T17. Deciding is RV-3.2b. With the mode not auto-hide, nothing runs and nothing can be appealed.
+// admins and sends V2-T17. Deciding is RV-3.2b. RVF-14 (Q3): in every mode, so leaving auto-hide keeps a case's page and
+// appeal; a case applied in record-only has neither, in any mode.
 @Service
 class RelevanceAppealService(
     private val cases: RelevanceCaseRepository,
@@ -57,25 +59,27 @@ class RelevanceAppealService(
     private val confirmer: RelevanceConfirmer,
     private val decisionLog: AdminDecisionLogService,
     private val payoutHold: RelevanceHoldService,
+    private val transactions: TransactionTemplate,
+    private val adminRelevance: AdminRelevanceService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     // Own auto-hide cases only, whatever their stage; anything else is not found.
     @Transactional(readOnly = true)
     fun caseFor(photographerId: UUID, caseId: UUID): PhotographerRelevanceCaseDto {
-        if (switch.mode != RelevanceMode.AUTO_HIDE) throw notFound()
         val row = cases.ownCase(caseId, photographerId)?.takeIf { it.appliedMode == AUTO } ?: throw notFound()
         return view(row, appeals.findByCaseId(caseId)?.let { appealView(it) })
     }
 
     @Transactional
     fun file(photographerId: UUID, caseId: UUID, reason: String): PhotographerRelevanceCaseDto {
-        if (switch.mode != RelevanceMode.AUTO_HIDE) throw nothingToAppeal()
         val text = reason.trim()
         // Postgres refuses a NUL character in TEXT: a 400 here, not a 500 at the insert.
         if (text.isEmpty() || text.length > MAX_REASON || '\u0000' in text) {
             throw ValidationException("An appeal reason must be 1 to 1,000 characters", field = "reason")
         }
+        // RVF-16 (NIT 2): a stranger is refused before the lock, so they never wait on the owner's case row.
+        cases.ownCase(caseId, photographerId) ?: throw notFound()
         cases.lockCase(caseId) ?: throw notFound()
         val row = cases.ownCase(caseId, photographerId) ?: throw notFound()
         if (appeals.findByCaseId(caseId) != null) {
@@ -112,10 +116,9 @@ class RelevanceAppealService(
     }
 
     // A.6 (addendum line 46): the page calls this when it shows the samples. The latest admin to open it is the one who
-    // may decide. In auto-hide only, as the admin's other acting routes.
+    // may decide. In every mode (RVF-14).
     @Transactional
     fun evidenceOpened(adminId: UUID, appealId: UUID): RelevanceAppealRowDto {
-        actionsOn()
         val appeal = appeals.lockAppeal(appealId) ?: throw appealNotFound()
         if (appeal.status != AppealStatus.OPEN.name) throw alreadyDecided()
         appeal.evidenceOpenedAt = clock.postgresTimestamp()
@@ -127,13 +130,27 @@ class RelevanceAppealService(
     // A.6: the admin decides an open appeal whose evidence they opened. Won: the case's target is lowered (winAppeal) and
     // V2-T18 goes out; closing a won whole-batch case APPEAL_WON when its scan has brought the good photos back is part c.
     // Lost: a whole-batch finding is confirmed at once (A.7) and V2-T19 goes out. The note stays with admins (G12).
-    @Transactional
+    // RVF-14 (Q3): in every mode. Outside auto-hide no tick scans, so a won case is closed as an admin restore closes it
+    // and the restore's loop puts the whole batch back after the commit (its own transactions would wait on this case row).
     fun decide(adminId: UUID, appealId: UUID, outcome: String, note: String?): RelevanceAppealRowDto {
-        actionsOn()
         val result = listOf(AppealStatus.WON, AppealStatus.LOST).firstOrNull { it.name == outcome }
             ?: throw ValidationException("outcome must be WON or LOST", field = "outcome")
         // Postgres refuses a NUL character in TEXT: a 400 here, not a 500 at the update.
         if (note != null && '\u0000' in note) throw ValidationException("The note cannot contain a NUL character", field = "note")
+        val restoreCase = transactions.execute { decideIn(adminId, appealId, result, note) }
+        if (restoreCase != null) {
+            try {
+                adminRelevance.restore(adminId, restoreCase, null)
+            } catch (ex: Exception) {
+                // The decision is stored and the case closed; the admin's Restore finishes the loop (RVF-11).
+                log.warn("Relevance appeal won outside auto-hide, photos still held until an admin restores · case={}: {}", restoreCase, ex.message)
+            }
+        }
+        return appeals.appealRow(appealId)!!.toDto()
+    }
+
+    // The decision's transaction; answers the case to restore after the commit, or null.
+    private fun decideIn(adminId: UUID, appealId: UUID, result: AppealStatus, note: String?): UUID? {
         // A plain row, not the entity: loading the entity before the lock would hand back a stale copy from the session.
         val caseId = appeals.appealRow(appealId)?.caseId ?: throw appealNotFound()
         // The case first, then the appeal: the same order as filing.
@@ -152,10 +169,12 @@ class RelevanceAppealService(
         val case = cases.findById(caseId).orElseThrow()
         val acting = case.appliedMode == AUTO && case.stage == CaseStage.APPLIED.name
         val wholeBatch = case.action == CaseAction.HIDE_ALL.name
+        val restoreNow = acting && result == AppealStatus.WON && switch.mode != RelevanceMode.AUTO_HIDE
         if (acting) {
+            if (restoreNow) cases.closeByAdmin(caseId, RESTORED_BY_ADMIN, adminId, now)
+            else if (result == AppealStatus.WON) cases.winAppeal(caseId)
             if (result == AppealStatus.WON) {
-                cases.winAppeal(caseId)
-                // RV-4.2 (A.6, A.8): a won appeal ends a copied case's payout hold.
+                // RV-4.2 (A.6, A.8): a won appeal ends a copied case's payout hold (Q15: FLAGS_DISABLED with the switch off).
                 payoutHold.end(caseId, adminId, restore = true)
             } else confirmer.confirm(caseId, now)
         }
@@ -165,20 +184,15 @@ class RelevanceAppealService(
         // notes would describe a hide that is gone. The appeal is still decided, so it never blocks a later one.
         if (acting) {
             val eventName = cases.ownCase(caseId, appeal.photographerId)!!.eventName
-            val text = if (result == AppealStatus.WON) RelevanceNotices.appealWon(eventName, wholeBatch)
+            // The whole batch goes back now outside auto-hide, so the second form ("going back on sale") is true there.
+            val text = if (result == AppealStatus.WON) RelevanceNotices.appealWon(eventName, wholeBatch && !restoreNow)
                 // RV-4.5a review: the payouts sentence only while a hold binds; an admin's hide never counts.
                 else RelevanceNotices.appealLost(eventName, copied = cases.liveHoldFlag(caseId) != null,
                     counts = case.verdictNote != ADMIN_HIDE)
             notifier.deliver(appeal.photographerId, caseId, "relevance:$appealId:${result.name.lowercase()}", text)
         }
         log.info("Relevance appeal decided appeal={} case={} outcome={}", appealId, caseId, result)
-        return appeals.appealRow(appealId)!!.toDto()
-    }
-
-    private fun actionsOn() {
-        if (switch.mode != RelevanceMode.AUTO_HIDE) {
-            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.RELEVANCE_ACTIONS_OFF, "Deciding appeals needs the relevance mode auto-hide")
-        }
+        return caseId.takeIf { restoreNow }
     }
 
     private fun appealNotFound() = NotFoundException("Relevance appeal not found", ErrorCodes.RELEVANCE_APPEAL_NOT_FOUND)
@@ -218,6 +232,7 @@ class RelevanceAppealService(
     private companion object {
         const val AUTO = "AUTO_HIDE"
         const val ADMIN_HIDE = "ADMIN_HIDE"
+        const val RESTORED_BY_ADMIN = "RESTORED_BY_ADMIN"
         const val MAX_REASON = 1000
         val HIDING = setOf(CaseAction.HIDE_JUNK.name, CaseAction.HIDE_ALL.name)
         val LIST_STATUSES = listOf("OPEN", "WON", "LOST", "all")

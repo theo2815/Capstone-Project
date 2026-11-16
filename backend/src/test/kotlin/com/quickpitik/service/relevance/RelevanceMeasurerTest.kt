@@ -1,5 +1,9 @@
 package com.quickpitik.service.relevance
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.PhotoToMeasure
@@ -12,16 +16,22 @@ import com.quickpitik.support.testTransactionTemplate
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.http.HttpStatus
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Clock
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class RelevanceMeasurerTest {
     private val batches = Mockito.mock(BatchRelevanceRepository::class.java)
@@ -136,6 +146,58 @@ class RelevanceMeasurerTest {
         measurer().measure(batchId, token, listOf(p))
 
         assertEquals(mapOf("read" to false, "aws" to false, "write" to true), open)
+    }
+
+    // RVF-10 (RVR-13): a pool shaped like the relevanceScan bean (2 workers, a queue of 60) whose workers are held by a
+    // latch, so it really refuses what it cannot take. The same-thread executor above never refuses.
+    @Test
+    fun `a full pool refuses a photo, logs it once and measures the rest`() {
+        val photos = List(63) { photo() }
+        val (measured, warnings) = pooledMeasure(photos) { counted("refused") >= 1.0 }
+
+        assertEquals(62, measured)
+        assertEquals(1.0, counted("refused"))
+        Mockito.verify(storage, Mockito.never()).getBytes(photos.last().s3Key)
+        assertEquals(1, warnings.size, warnings.toString())
+        assertTrue(warnings.single().contains("1 of 63"), warnings.toString())
+    }
+
+    @Test
+    fun `a turn of exactly the pool's size refuses nothing`() {
+        val (measured, warnings) = pooledMeasure(List(62) { photo() }) { it.threadPoolExecutor.queue.size == 60 && it.activeCount == 2 }
+
+        assertEquals(62, measured)
+        assertEquals(0.0, counted("refused"))
+        assertEquals(emptyList(), warnings)
+    }
+
+    // Runs measure() on its own thread; the workers wait until `full` holds (or 10 s pass), then every photo goes through.
+    private fun pooledMeasure(photos: List<PhotoToMeasure>, full: (ThreadPoolTaskExecutor) -> Boolean): Pair<Int, List<String>> {
+        val pool = ThreadPoolTaskExecutor().apply { corePoolSize = 2; maxPoolSize = 2; queueCapacity = 60; initialize() }
+        val release = CountDownLatch(1)
+        photos.forEach { p ->
+            Mockito.`when`(storage.getBytes(p.s3Key)).thenAnswer { release.await(10, TimeUnit.SECONDS); bytesOf(p) }
+        }
+        Mockito.`when`(client.imageCheck(anyArg())).thenReturn(ImageCheck(1.0, 1.0, 1.0, 1.0, emptyList()))
+        Mockito.`when`(batches.saveMeasurement(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg(),
+            Mockito.anyDouble(), Mockito.anyDouble())).thenReturn(1)
+        val logger = LoggerFactory.getLogger(RelevanceMeasurer::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            val measurer = RelevanceMeasurer(batches, storage, provider, pool, RelevanceProperties(), clock, testTransactionTemplate(), registry)
+            val run = CompletableFuture.supplyAsync { measurer.measure(batchId, token, photos) }
+            val deadline = System.nanoTime() + 10_000_000_000L
+            while (!full(pool) && System.nanoTime() < deadline) Thread.sleep(5)
+            release.countDown()
+            val measured = run.get(10, TimeUnit.SECONDS)
+            return measured to appender.list.filter { it.level == Level.WARN }.map { it.formattedMessage }
+        } finally {
+            release.countDown()
+            logger.detachAppender(appender)
+            appender.stop()
+            pool.shutdown()
+        }
     }
 
     private fun verifyNoScoresOrRetry() {

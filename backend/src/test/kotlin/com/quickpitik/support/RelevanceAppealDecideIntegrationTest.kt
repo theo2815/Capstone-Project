@@ -13,6 +13,13 @@ import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RelevanceHoldRepository
+import com.quickpitik.repository.UserRepository
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.service.relevance.AdminRelevanceService
+import com.quickpitik.service.relevance.RelevancePhotographerHideService
+import com.quickpitik.service.storage.StorageService
+import com.quickpitik.common.ErrorCodes
 import com.quickpitik.service.relevance.AnthropicClient
 import com.quickpitik.service.relevance.RelevanceCheckService
 import com.quickpitik.service.relevance.RelevanceMeasurer
@@ -70,6 +77,7 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var holds: RelevanceHoldRepository
     @Autowired private lateinit var photoRepo: PhotoRepository
     @Autowired private lateinit var decisionLog: AdminDecisionLogService
+    @Autowired private lateinit var users: UserRepository
     private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
 
     @Test
@@ -302,17 +310,157 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
+    // RVF-14 (Q3): an appeal on a case applied in auto-hide is decided whatever the mode is now.
     @Test
-    fun `with the mode off or in record-only nothing is opened or decided`() {
-        val (_, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+    fun `a lost appeal is decided and confirmed after the mode leaves auto-hide`() {
+        val admin = admin()
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.OFF)) {
+            val (b, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+            opened(admin, appeal, mode)
+
+            assertEquals("LOST", decide(admin, appeal, "LOST", mode = mode).status, "$mode")
+
+            assertNotNull(row(c, "confirmed_at").single(), "$mode")
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c), "$mode")
+            assertEquals(listOf("APPLIED", "HIDE_ALL"), row(c, "stage", "action"), "$mode")
+            assertEquals(listOf(RelevanceNotices.appealLost("Rel Run", copied = false)), notesOf(b), "$mode")
+        }
+    }
+
+    // RVF-14: outside auto-hide no tick scans the batch, so an accepted appeal puts the whole batch back at once and
+    // closes the case as an admin restore does. The photographer's own hide stays (G8).
+    @Test
+    fun `a won appeal outside auto-hide puts every automatic and admin hold back and closes the case`() {
+        val admin = admin()
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.OFF)) {
+            val (b, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+            val auto = heldPhoto(b, c, "AUTO", sharpness = 10.0)
+            val byAdmin = heldPhoto(b, c, "ADMIN", sharpness = 50.0)
+            val own = heldPhoto(b, c, "PHOTOGRAPHER", sharpness = 50.0)
+            opened(admin, appeal, mode)
+
+            assertEquals("WON", decide(admin, appeal, "WON", mode = mode).status, "$mode")
+
+            assertEquals(listOf("LIVE", "LIVE", "HIDDEN"), listOf(auto, byAdmin, own).map(::status), "$mode")
+            assertEquals(listOf("CLOSED", "RESTORED_BY_ADMIN", admin, null),
+                row(c, "stage", "close_reason", "closed_by", "confirmed_at"), "$mode")
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id = ?", Int::class.java, c), "$mode")
+            assertEquals(listOf(RelevanceNotices.appealWon("Rel Run", wholeBatch = false)), notesOf(b), "$mode")
+        }
+    }
+
+    // The record-only half of the old mode test: a case applied in record-only is decided and never acted on.
+    @Test
+    fun `with the mode off or in record-only a case applied in record-only is never acted on`() {
         val admin = admin()
         for (mode in listOf(RelevanceMode.OFF, RelevanceMode.RECORD_ONLY)) {
-            val s = service(mode)
-            assertEquals("RELEVANCE_ACTIONS_OFF", refused { tx.execute { s.evidenceOpened(admin, appeal) } })
-            assertEquals("RELEVANCE_ACTIONS_OFF", refused { tx.execute { s.decide(admin, appeal, "LOST", null) } })
+            for (outcome in listOf("WON", "LOST")) {
+                val (b, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL", mode = "RECORD_ONLY")
+                opened(admin, appeal, mode)
+
+                assertEquals(outcome, decide(admin, appeal, outcome, mode = mode).status, "$mode $outcome")
+
+                assertEquals(listOf("APPLIED", "HIDE_ALL", "NONE", null), row(c, "stage", "action", "scan_state", "confirmed_at"), "$mode $outcome")
+                assertEquals(0, notes(b).size, "$mode $outcome")
+            }
         }
-        assertEquals(listOf(null, "OPEN"), listOf(appeals.findById(appeal).get().evidenceOpenedAt, appeals.findById(appeal).get().status))
-        assertNull(row(c, "confirmed_at").single())
+    }
+
+    // RVF-14 promise: with the mode off the tick returns first. The rows are ones the auto-hide tick would act on: a
+    // note owed and a live photo of a whole-batch hide, and a case whose 14 days are over.
+    @Test
+    fun `with the mode off the tick changes nothing for a case applied in auto-hide`() {
+        assertTickLeavesAlone(RelevanceMode.OFF)
+    }
+
+    @Test
+    fun `in record-only the tick hides nothing more and confirms nothing for such a case`() {
+        assertTickLeavesAlone(RelevanceMode.RECORD_ONLY)
+    }
+
+    @Test
+    fun `a won appeal outside auto-hide queues no scan and calls no provider`() {
+        val admin = admin()
+        for (mode in listOf(RelevanceMode.RECORD_ONLY, RelevanceMode.OFF)) {
+            val (b, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+            heldPhoto(b, c, "AUTO", sharpness = 10.0)
+            @Suppress("UNCHECKED_CAST")
+            val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>
+            opened(admin, appeal, mode)
+
+            service(mode, provider = provider).decide(admin, appeal, "WON", null)
+
+            assertEquals(listOf("HIDE_ALL", "NONE"), row(c, "action", "scan_state"), "$mode: the target is not lowered and no scan queued")
+            Mockito.verifyNoInteractions(provider)
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM relevance_photo_checks WHERE batch_id = ?", Int::class.java, b.id),
+                "$mode: nothing new measured")
+        }
+    }
+
+    @Test
+    fun `a restore loop that fails leaves the decision stored and the route answers 200`() {
+        val (b, c, appeal) = appealed(verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        val held = heldPhoto(b, c, "AUTO", sharpness = 10.0)
+        val admin = admin()
+        opened(admin, appeal, RelevanceMode.RECORD_ONLY)
+        val failing = Mockito.mock(AdminRelevanceService::class.java)
+        Mockito.`when`(failing.restore(admin, c, null)).thenThrow(IllegalStateException("connection dropped"))
+
+        val decided = service(RelevanceMode.RECORD_ONLY, restorer = failing).decide(admin, appeal, "WON", null)
+
+        assertEquals("WON", decided.status)
+        Mockito.verify(failing).restore(admin, c, null)
+        assertEquals(listOf("CLOSED", "RESTORED_BY_ADMIN"), row(c, "stage", "close_reason"))
+        assertEquals("HIDDEN", status(held), "the admin's Restore finishes it")
+        assertEquals(listOf(RelevanceNotices.appealWon("Rel Run", wholeBatch = false)), notesOf(b))
+    }
+
+    // RVF-14: the case rules stay. A case applied in record-only has no page, no appeal and no hide, whatever the mode.
+    @Test
+    fun `a case applied in record-only is refused on every photographer route in every mode`() {
+        val b = batch()
+        val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", mode = "RECORD_ONLY")
+        val p = heldPhoto(b, c, "AUTO", sharpness = 10.0)
+        val hides = RelevancePhotographerHideService(cases, holds, photoRepo, RelevanceProperties(junk = RelevanceProperties.Junk(blurCutoff = 20.0)),
+            Mockito.mock(StorageService::class.java), StorageProperties(), CLOCK, tx)
+        val page = PaginationParams(0, 50)
+
+        for (mode in RelevanceMode.entries) {
+            val s = service(mode)
+            assertFailsWith<NotFoundException>("$mode") { tx.execute { s.caseFor(b.photographer, c) } }
+            assertEquals("NOTHING_TO_APPEAL", assertFailsWith<com.quickpitik.exception.ConflictException>("$mode") {
+                tx.execute { s.file(b.photographer, c, "mine") } }.code)
+        }
+        assertFailsWith<NotFoundException> { hides.blurry(b.photographer, c, page) }
+        assertFailsWith<NotFoundException> { hides.hidden(b.photographer, c, page) }
+        assertEquals(ErrorCodes.RELEVANCE_ACTIONS_OFF, refused { hides.hide(b.photographer, c, listOf(p)) })
+        assertEquals(ErrorCodes.RELEVANCE_ACTIONS_OFF, refused { hides.unhide(b.photographer, c, listOf(p)) })
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_appeals WHERE case_id = ?", Int::class.java, c))
+        assertEquals(listOf("AUTO"), jdbc.queryForList("SELECT held_by FROM flag_hidden_photos WHERE batch_id = ?", String::class.java, b.id))
+        assertEquals(0, notes(b).size)
+    }
+
+    private fun assertTickLeavesAlone(mode: RelevanceMode) {
+        val owes = batch()
+        val owing = case(owes, verdict = "JUNK_DUMP", action = "HIDE_ALL", noticeAt = null)
+        val live = id("INSERT INTO photos (event_id, photographer_id, s3_key, thumbnail_s3_key, watermark_s3_key, price_php, status) " +
+            "VALUES (?, ?, ?, 'reldecide/thumb', 'reldecide/wm', 125, 'LIVE')", owes.event, owes.photographer, "reldecide/${UUID.randomUUID()}")
+        val due = batch()
+        val overdue = case(due, verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        val heldBefore = heldPhoto(due, overdue, "AUTO", sharpness = 10.0)
+
+        checks(mode, aiEnabled = false).tick()
+
+        assertEquals(listOf("LIVE", "HIDDEN"), listOf(live, heldBefore).map(::status), "$mode")
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos WHERE batch_id IN (?, ?)", Int::class.java,
+            owes.id, due.id), "$mode: no hold row added or stamped")
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos WHERE restored_at IS NOT NULL AND batch_id = ?",
+            Int::class.java, due.id), "$mode")
+        assertEquals(listOf(0, 0), listOf(notes(owes).size, notes(due).size), "$mode")
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_strikes WHERE case_id IN (?, ?)", Int::class.java,
+            owing, overdue), "$mode")
+        assertEquals(listOf("APPLIED", "NONE", null, null), row(owing, "stage", "scan_state", "notice_at", "confirmed_at"), "$mode")
+        assertEquals(listOf("APPLIED", "HIDE_ALL", "NONE", null), row(overdue, "stage", "action", "scan_state", "confirmed_at"), "$mode")
     }
 
     @Test
@@ -392,28 +540,36 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
     // Pages through every appeal of the status: the container is shared with other classes' rows.
     private fun all(status: String) = tx.execute { service().listAppeals(status, PaginationParams(0, 200)) }!!.items
 
-    private fun decide(admin: UUID, appeal: UUID, outcome: String, note: String? = null) =
-        tx.execute { service().decide(admin, appeal, outcome, note) }!!
+    // No outer transaction: deciding runs its own, then (outside auto-hide) the restore's, as on the route.
+    private fun decide(admin: UUID, appeal: UUID, outcome: String, note: String? = null, mode: RelevanceMode = RelevanceMode.AUTO_HIDE) =
+        service(mode).decide(admin, appeal, outcome, note)
 
     private fun confirmer() = RelevanceConfirmer(cases, strikes, alerts, events, Mockito.mock(RelevanceNotifier::class.java),
         RelevanceProperties(), publisher)
 
-    private fun opened(admin: UUID, appeal: UUID) = tx.execute { service().evidenceOpened(admin, appeal) }
+    private fun opened(admin: UUID, appeal: UUID, mode: RelevanceMode = RelevanceMode.AUTO_HIDE) =
+        tx.execute { service(mode).evidenceOpened(admin, appeal) }
 
     private fun refused(block: () -> Unit): String = assertFailsWith<ApiException> { block() }.let {
         assertEquals(HttpStatus.CONFLICT, it.status)
         it.code
     }
 
-    private fun service(mode: RelevanceMode = RelevanceMode.AUTO_HIDE): RelevanceAppealService {
+    @Suppress("UNCHECKED_CAST")
+    private fun service(
+        mode: RelevanceMode = RelevanceMode.AUTO_HIDE,
+        provider: ObjectProvider<RekognitionAiClient> = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>,
+        restorer: AdminRelevanceService? = null,
+    ): RelevanceAppealService {
         val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
-        @Suppress("UNCHECKED_CAST")
-        val provider = Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>
         val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false), provider)
         val decisions = AdminDecisionLogService(decisionRows, messages, publisher)
         val notifier = RelevanceNotifier(cases, decisions, switch, props, CLOCK, tx, publisher)
+        val payoutHold = Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java)
+        val admin = restorer ?: AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java),
+            StorageProperties(), CLOCK, holds, photoRepo, decisions, tx, switch, strikes, payoutHold, users, appeals, notifier)
         return RelevanceAppealService(cases, appeals, alerts, notifier, switch, props, CLOCK, publisher,
-            RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions, Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
+            RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher), decisions, payoutHold, tx, admin)
     }
 
     // The tick's hold and scan steps (not the whole tick: its other steps would act on other classes' rows), until the
@@ -427,17 +583,20 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         }
     }
 
-    private fun checks(): RelevanceCheckService {
-        val props = RelevanceProperties(mode = RelevanceMode.AUTO_HIDE, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
+    // The real notifier and confirmer, so a tick that sent a note or confirmed a case would show in the rows.
+    private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, aiEnabled: Boolean = true): RelevanceCheckService {
+        val props = RelevanceProperties(mode = mode, junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0))
         @Suppress("UNCHECKED_CAST")
         val provider = (Mockito.mock(ObjectProvider::class.java) as ObjectProvider<RekognitionAiClient>)
             .also { Mockito.`when`(it.getIfAvailable()).thenReturn(Mockito.mock(RekognitionAiClient::class.java)) }
-        val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = true), provider)
+        val switch = RelevanceSwitch(props, AdminProperties(flagsEnabled = true), AiApiProperties(enabled = aiEnabled), provider)
+        val notifier = RelevanceNotifier(cases, decisionLog, switch, props, Clock.systemUTC(), tx, publisher)
         return RelevanceCheckService(batchRepo, cases, props, switch, Clock.systemUTC(), tx, SimpleMeterRegistry(),
             Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts, publisher,
             LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"), holds, photoRepo, decisionLog,
-            ThreadPoolTaskExecutor().apply { initialize() }, Mockito.mock(RelevanceNotifier::class.java),
-            Mockito.mock(RelevanceConfirmer::class.java), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
+            ThreadPoolTaskExecutor().apply { initialize() }, notifier,
+            RelevanceConfirmer(cases, strikes, alerts, events, notifier, props, publisher),
+            Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java))
     }
 
     // A measured photo of the batch, hidden and held under the case.
@@ -464,11 +623,12 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
         return Batch(id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, photographer), event, photographer)
     }
 
-    private fun case(b: Batch, verdict: String, action: String, mode: String = "AUTO_HIDE", note: String? = null): UUID = id(
+    private fun case(b: Batch, verdict: String, action: String, mode: String = "AUTO_HIDE", note: String? = null,
+                     noticeAt: OffsetDateTime? = NOW): UUID = id(
         "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, verdict_note, decided_at, " +
             "applied_mode, action, applied_at, measured, junk, hidden_photos, notice_at) " +
             "VALUES (?, 'QUIET', ?, 1000, 'APPLIED', ?, ?, ?, ?, ?, ?, 300, 40, 40, ?)",
-        b.id, NOW, verdict, note, NOW, mode, action, NOW, NOW,
+        b.id, NOW, verdict, note, NOW, mode, action, NOW, noticeAt,
     )
 
     // A current case of a new batch with an open appeal (rows written as the filing route writes them).

@@ -30,7 +30,9 @@ internal fun settle(
         model == CaseVerdict.JUNK_DUMP && band != CaseBand.OVER -> "CONTRADICTS"
         model == CaseVerdict.FITS && band !in setOf(CaseBand.UNDER, CaseBand.SMALL, CaseBand.UNKNOWN) -> "CONTRADICTS"
         model == CaseVerdict.COPIED && copyLow != true -> "CONTRADICTS"
-        model == CaseVerdict.WRONG_EVENT && !(sharedRace && (dateLow == true || wordsPhotos * 2 >= photos)) -> "THIN_EVIDENCE"
+        // RVF-7 (RVR-10): only the date rule carries a wrong event; words on half the photos alone go to an admin.
+        model == CaseVerdict.WRONG_EVENT && !(sharedRace && dateLow == true) ->
+            if (sharedRace && wordsPhotos * 2 >= photos) "WORDS_ONLY" else "THIN_EVIDENCE"
         band == CaseBand.SMALL && model !in setOf(CaseVerdict.FITS, CaseVerdict.CANT_TELL) -> "SMALL_BATCH"
         "words_suspicious" in answer.evidenceUsed -> "SUSPICIOUS_WORDS"
         else -> null

@@ -164,14 +164,44 @@ it("an admin-hidden case reads its note as words", async () => {
   expect(within(d).queryByText("ADMIN_HIDE")).not.toBeInTheDocument();
 });
 
-it("a case that is no longer current offers no batch restore", async () => {
+// RVF-19: the junk a won appeal left held can be released; the server refuses while a newer case is current.
+const CLOSED_RESTORE = "Puts back on sale the photos of this batch that are still held. The case stays closed as it is, and no payout hold changes. Photos the photographer hid stay hidden.";
+it("a closed case with a releasable hold can be restored", async () => {
+  const user = userEvent.setup();
   rows = [];
-  one = async () => detail(autoHide, "CLOSED");
+  one = async () => detail(autoHide, "CLOSED", { closeReason: "APPEAL_WON" });
   holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  post = async () => ({ photoId: "p1", status: "LIVE" });
   mount();
   const d = await drawer();
-  await within(d).findByRole("list", { name: "Held photos" });
-  expect(buttons(d)).toEqual(["Close"]);
+  await within(d).findByRole("button", { name: "Restore batch…" });
+  expect(actionButtons(d)).toEqual([expect.stringMatching(/^Restore photo/), "Restore batch…"]);
+  // The server only releases what is still held: the case keeps its close and no payout hold ends.
+  await user.click(within(d).getByRole("button", { name: "Restore batch…" }));
+  expect(screen.getByText(CLOSED_RESTORE)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await user.click(within(d).getByRole("button", { name: /^Restore photo/ }));
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/photos/p1/restore"));
+  // The photographer's own hide is not the admin's to release: nothing to offer.
+  cleanup();
+  client.clear();
+  holds = async () => ({ items: [{ ...hold("p1"), heldBy: "PHOTOGRAPHER" }], total: 1, offset: 0, limit: 100 });
+  mount();
+  const own = await drawer();
+  await within(own).findByRole("list", { name: "Held photos" });
+  expect(buttons(own)).toEqual(["Close"]);
+});
+
+it("a refused closed-case restore shows the server's message", async () => {
+  const user = userEvent.setup();
+  rows = [];
+  one = async () => detail(autoHide, "CLOSED", { closeReason: "SUPERSEDED" });
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  post = async () => { throw new ApiError([{ code: "INVALID_STATE_TRANSITION", message: "This action does not fit the case's current state" }], 409); };
+  mount();
+  await user.click(await within(await drawer()).findByRole("button", { name: "Restore batch…" }));
+  await user.click(screen.getByRole("button", { name: "Confirm restore" }));
+  await waitFor(() => expect(toasts()).toEqual(["This action does not fit the case's current state"]));
 });
 
 it("a record-only case with a hold offers only the restores", async () => {
@@ -347,22 +377,20 @@ it("a case closed as restored by an admin that still holds photos offers Restore
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Restore batch…" }));
-  // AdminRelevanceService.restore also ends a Copied case's payout hold.
-  expect(screen.getByText("Puts back on sale every photo this case hid in the batch. The case closes as restored by an admin and does not count. A Copied case's payout hold ends too. Photos the photographer hid stay hidden.")).toBeInTheDocument();
+  // A repeat restore of a closed case only releases what is left (RVF-19).
+  expect(screen.getByText(CLOSED_RESTORE)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm restore" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/restore");
   await waitFor(() => expect(toasts()).toEqual(["Could not restore the batch. The case was read again: if photos are still held, press Restore batch again to finish the rest."]));
-  // Closed for another reason, or with nothing left held: no Restore.
-  for (const [reason, items] of [["SUPERSEDED", [hold("p1")]], ["RESTORED_BY_ADMIN", [hold("p1", "2003-02-16T00:00:00Z")]]] as const) {
-    cleanup();
-    client.clear();
-    one = async () => detail(autoHide, "CLOSED", { closeReason: reason });
-    holds = async () => ({ items: [...items], total: 1, offset: 0, limit: 100 });
-    mount();
-    const closed = await drawer();
-    await within(closed).findByRole("list", { name: "Held photos" });
-    expect(buttons(closed)).toEqual(["Close"]);
-  }
+  // Nothing left held: no Restore.
+  cleanup();
+  client.clear();
+  one = async () => detail(autoHide, "CLOSED", { closeReason: "RESTORED_BY_ADMIN" });
+  holds = async () => ({ items: [hold("p1", "2003-02-16T00:00:00Z")], total: 1, offset: 0, limit: 100 });
+  mount();
+  const closed = await drawer();
+  await within(closed).findByRole("list", { name: "Held photos" });
+  expect(buttons(closed)).toEqual(["Close"]);
 });
 
 // RV-4.5b: a no-consent case (record-only, NO_CONSENT) that would have hidden the batch.
@@ -418,6 +446,21 @@ it("a no-consent case that would have hidden the batch offers Hide batch", async
   const closed = await drawer();
   await within(closed).findByText("No photo of this batch is held.");
   expect(actionButtons(closed)).toEqual([]);
+});
+
+// RVF-9: the mark is its own field, so the case keeps its own note; the page shows both.
+it("a no-consent case with its own note still offers the no-consent actions", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "tab=all&row=c1";
+  rows = [{ ...noConsent("JUNK_DUMP"), verdictNote: "SUSPICIOUS_WORDS", noConsent: true }];
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Hide batch…" });
+  expect(actionButtons(d)).toEqual(["Hide batch…"]);
+  expect(within(d).getByText("Words read off the photos seemed to tell the model what to answer.")).toBeInTheDocument();
+  expect(within(d).getByText("The photographer has not accepted the Terms that allow automatic hiding.")).toBeInTheDocument();
+  await user.click(within(d).getByRole("button", { name: "Hide batch…" }));
+  expect(screen.getByText(NO_CONSENT_HIDE)).toBeInTheDocument();
 });
 
 it("a no-consent Copied case offers Hold payouts until a hold was placed", async () => {

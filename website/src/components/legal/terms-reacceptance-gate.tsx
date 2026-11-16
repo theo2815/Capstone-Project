@@ -27,6 +27,22 @@ export function TermsReacceptanceGate() {
   const [error, setError] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const open = user?.termsAcceptanceRequired === true;
+  const wasOpen = useRef(false);
+  // RVR-20: accept, and print, the version the server will check; the approved copy names the bundle's.
+  const version = user?.legalCurrentVersion ?? LEGAL_VERSION;
+  const named = (text: string) => text.replace(`version ${LEGAL_VERSION}`, `version ${version}`);
+
+  // NIT 8: once the prompt closes, put focus in the page (the layout made it inert while open).
+  useEffect(() => {
+    if (wasOpen.current && !open) {
+      const main = document.querySelector<HTMLElement>("main");
+      if (main) {
+        main.tabIndex = -1;
+        main.focus();
+      }
+    }
+    wasOpen.current = open;
+  }, [open]);
 
   // The shared Modal has no focus trap; keep Tab inside the prompt.
   useEffect(() => {
@@ -52,7 +68,7 @@ export function TermsReacceptanceGate() {
     setBusy(true);
     setError(null);
     try {
-      setUser(await acceptTerms(LEGAL_VERSION));
+      setUser(await acceptTerms(version));
     } catch (err) {
       // The server words every refusal (409 CONSENT_VERSION_MISMATCH asks for a reload).
       setError(err instanceof Error ? err.message : null);
@@ -69,7 +85,7 @@ export function TermsReacceptanceGate() {
   return (
     <Modal isOpen={open} onClose={noop} title={LEGAL_COPY.reacceptTitle} hideClose escDisabled>
       <div ref={bodyRef} className="space-y-5 font-sans text-sm leading-relaxed text-ink-soft">
-        <p>{LEGAL_COPY.reacceptBody}</p>
+        <p>{named(LEGAL_COPY.reacceptBody)}</p>
         <p>
           <LegalText text={LEGAL_COPY.reacceptLinks} newTab />
         </p>
@@ -85,7 +101,7 @@ export function TermsReacceptanceGate() {
           >
             {LEGAL_COPY.reacceptButton}
           </button>
-          <p className="text-slate">{LEGAL_COPY.reacceptButtonLine}</p>
+          <p className="text-slate">{named(LEGAL_COPY.reacceptButtonLine)}</p>
           <p className="text-slate">
             {LEGAL_COPY.reacceptSignOutLead}{" "}
             <button

@@ -9,7 +9,11 @@ import com.quickpitik.dto.photographer.PhotographerBlurryPhotoDto
 import com.quickpitik.dto.photographer.PhotographerRelevanceCaseDto
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.relevance.RelevanceAppealService
+import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
+import com.quickpitik.service.ratelimit.RateLimiter
+import com.quickpitik.service.ratelimit.acquireOrThrow
 import com.quickpitik.service.relevance.RelevancePhotographerHideService
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -29,6 +33,7 @@ import java.util.UUID
 class MePhotographerRelevanceController(
     private val appeals: RelevanceAppealService,
     private val hides: RelevancePhotographerHideService,
+    private val rateLimiter: RateLimiter,
 ) {
     @GetMapping("/cases/{caseId}")
     fun case(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID): PhotographerRelevanceCaseDto =
@@ -39,7 +44,11 @@ class MePhotographerRelevanceController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable caseId: UUID,
         @RequestBody body: FileAppealRequest,
-    ): PhotographerRelevanceCaseDto = appeals.file(principal.userId, caseId, body.reason)
+        response: HttpServletResponse,
+    ): PhotographerRelevanceCaseDto {
+        limit(principal, response)
+        return appeals.file(principal.userId, caseId, body.reason)
+    }
 
     @GetMapping("/cases/{caseId}/blurry")
     fun blurry(
@@ -60,10 +69,22 @@ class MePhotographerRelevanceController(
 
     // The service checks the 1 to 200 ids (PhotoIdsRequest's own cap is the photo library's 500).
     @PostMapping("/cases/{caseId}/hide")
-    fun hide(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID, @RequestBody body: PhotoIdsRequest): PhotoActionResponse =
-        hides.hide(principal.userId, caseId, body.photoIds)
+    fun hide(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID, @RequestBody body: PhotoIdsRequest,
+        response: HttpServletResponse): PhotoActionResponse {
+        limit(principal, response)
+        return hides.hide(principal.userId, caseId, body.photoIds)
+    }
 
     @PostMapping("/cases/{caseId}/unhide")
-    fun unhide(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID, @RequestBody body: PhotoIdsRequest): PhotoActionResponse =
-        hides.unhide(principal.userId, caseId, body.photoIds)
+    fun unhide(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID, @RequestBody body: PhotoIdsRequest,
+        response: HttpServletResponse): PhotoActionResponse {
+        limit(principal, response)
+        return hides.unhide(principal.userId, caseId, body.photoIds)
+    }
+
+    // RVF-16 (RVR-17, Q8): the writes share the photographer's media-upload budget (20 a minute); the reads are not limited.
+    private fun limit(principal: AuthPrincipal, response: HttpServletResponse) {
+        response.setHeader("Cache-Control", "private, no-store")
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+    }
 }

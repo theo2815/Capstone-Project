@@ -35,5 +35,13 @@ describe("UploadLayout", () => {
     render(<UploadLayout><p>upload page</p></UploadLayout>);
     expect(screen.getByText("upload page")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText("upload page").closest("[inert]")).toBeNull();
+  });
+
+  it("the page behind is inert while the prompt is open", () => {
+    useAuthStore.getState().setUser(photographer(true));
+    render(<UploadLayout><p>upload page</p></UploadLayout>);
+    expect(screen.getByText("upload page").closest("[inert]")).not.toBeNull();
+    expect(screen.getByRole("dialog").closest("[inert]")).toBeNull();
   });
 });

@@ -472,7 +472,8 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         UPDATE relevance_cases SET action = 'HIDE_ALL', verdict_note = 'ADMIN_HIDE', applied_mode = 'AUTO_HIDE'
         WHERE id = :id AND stage = 'APPLIED' AND (
               (applied_mode = 'AUTO_HIDE' AND verdict = 'CANT_TELL' AND action = 'NONE')
-           OR (applied_mode = 'RECORD_ONLY' AND verdict_note = 'NO_CONSENT' AND verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED')))
+           OR (applied_mode = 'RECORD_ONLY' AND (no_consent OR verdict_note = 'NO_CONSENT')
+               AND verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED')))
     """, nativeQuery = true)
     fun markAdminHide(@Param("id") id: UUID): Int
 
@@ -489,8 +490,9 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun findAdminRestoresLeft(@Param("since") since: OffsetDateTime): List<UUID>
 
     // RV-2.2a (P4): a case auto-hide could not act on because the photographer has not accepted the minimum Terms.
+    // RVF-9: its own mark, so the case keeps its note.
     @Modifying
-    @Query(value = "UPDATE relevance_cases SET verdict_note = 'NO_CONSENT' WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'RECORD_ONLY'", nativeQuery = true)
+    @Query(value = "UPDATE relevance_cases SET no_consent = TRUE WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'RECORD_ONLY'", nativeQuery = true)
     fun markNoConsent(@Param("id") id: UUID): Int
 
     // RV-2.2a (A.3 step 5, P8): queue the full scan. Only an auto-hide case is ever scanned (P14, P18).
@@ -550,7 +552,7 @@ private const val HOLDS_CLAIM =
 private const val CASE_ROW = """c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", e.name AS "eventName",
     ps.handle AS "photographerHandle", u.name AS "photographerName", c.verdict AS "verdict", c.verdict_note AS "verdictNote",
     c.action AS "action", c.applied_mode AS "appliedMode", c.batch_photos AS "batchPhotos", c.measured AS "measured",
-    c.junk AS "junk", c.decided_at AS "decidedAt""""
+    c.junk AS "junk", c.decided_at AS "decidedAt", c.no_consent AS "noConsent""""
 
 private const val CASE_FROM = """FROM relevance_cases c
     JOIN batch_relevance br ON br.id = c.batch_id
@@ -567,7 +569,7 @@ private const val LIVE_HOLD = "FROM relevance_cases c JOIN flags f ON f.id = c.h
     "WHERE c.id = :id AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL"
 
 private const val CASE_REPEAT = "(:repeat = false OR (c.confirmed_at IS NOT NULL AND (SELECT count(*) FROM relevance_strikes s " +
-    "WHERE s.photographer_id = br.photographer_id AND s.confirmed_at > :since) >= 2))"
+    "WHERE s.photographer_id = br.photographer_id AND s.confirmed_at > :since AND s.voided_at IS NULL) >= 2))"
 
 interface RelevanceCaseRow {
     val caseId: UUID
@@ -584,6 +586,7 @@ interface RelevanceCaseRow {
     val measured: Int?
     val junk: Int?
     val decidedAt: Instant?
+    val noConsent: Boolean
 }
 
 interface SamplePhotoRow {

@@ -32,8 +32,13 @@ interface RelevanceStrikeRepository : JpaRepository<RelevanceStrike, UUID> {
     """, nativeQuery = true)
     fun lockPhotographerOf(@Param("caseId") caseId: UUID): UUID?
 
-    // RV-4.1 (A.7, G6): the ladder counts a photographer's strikes across events, confirmed after :since.
-    @Query(value = "SELECT count(*) FROM relevance_strikes WHERE photographer_id = :photographerId AND confirmed_at > :since",
-        nativeQuery = true)
+    // RV-4.1 (A.7, G6): the ladder counts a photographer's live strikes across events, confirmed after :since (RVF-12).
+    @Query(value = "SELECT count(*) FROM relevance_strikes WHERE photographer_id = :photographerId AND confirmed_at > :since " +
+        "AND voided_at IS NULL", nativeQuery = true)
     fun countSince(@Param("photographerId") photographerId: UUID, @Param("since") since: OffsetDateTime): Int
+
+    // RVF-12 (RVR-6): an admin restore of a confirmed case voids its strike; the row stays as a record.
+    @Modifying
+    @Query(value = "UPDATE relevance_strikes SET voided_at = :now WHERE case_id = :caseId AND voided_at IS NULL", nativeQuery = true)
+    fun voidForCase(@Param("caseId") caseId: UUID, @Param("now") now: OffsetDateTime): Int
 }

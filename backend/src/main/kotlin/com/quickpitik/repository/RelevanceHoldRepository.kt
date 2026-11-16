@@ -82,7 +82,7 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
                      JOIN relevance_photo_checks k ON k.photo_id = h.photo_id
                      WHERE h.batch_id = :batchId AND h.held_by IN ('AUTO', 'ADMIN') AND h.restored_at IS NULL
                        AND (k.measure_error IS NOT NULL OR (k.measured_at IS NOT NULL AND NOT COALESCE(($JUNK_PREDICATE), false)))
-                     ORDER BY h.photo_id LIMIT :chunk)
+                     ORDER BY h.photo_id LIMIT :chunk FOR UPDATE OF h)
         RETURNING photo_id
     """, nativeQuery = true)
     fun restoreNotJunkChunk(
@@ -95,11 +95,13 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
     ): List<UUID>
 
     // Restore step for target NONE: stamp up to :chunk live holds of this kind as restored by :restoredBy.
+    // RVF-11: the three chunk restores lock their rows in photo order, as the hides take them, so a restore and a hide
+    // of the same batch wait for each other instead of deadlocking.
     @Query(value = """
         UPDATE flag_hidden_photos SET restored_at = :now, restored_by = :restoredBy
         WHERE id IN (SELECT id FROM flag_hidden_photos
                      WHERE batch_id = :batchId AND held_by = :heldBy AND restored_at IS NULL
-                     ORDER BY photo_id LIMIT :chunk)
+                     ORDER BY photo_id LIMIT :chunk FOR UPDATE)
         RETURNING photo_id
     """, nativeQuery = true)
     fun restoreChunk(
@@ -116,7 +118,7 @@ interface RelevanceHoldRepository : Repository<BatchRelevance, UUID> {
         UPDATE flag_hidden_photos SET restored_at = :now, restored_by = 'ADMIN'
         WHERE id IN (SELECT id FROM flag_hidden_photos
                      WHERE batch_id = :batchId AND held_by IN ('AUTO', 'ADMIN') AND restored_at IS NULL
-                     ORDER BY photo_id LIMIT :chunk)
+                     ORDER BY photo_id LIMIT :chunk FOR UPDATE)
         RETURNING photo_id
     """, nativeQuery = true)
     fun restoreByAdminChunk(@Param("batchId") batchId: UUID, @Param("now") now: OffsetDateTime, @Param("chunk") chunk: Int): List<UUID>

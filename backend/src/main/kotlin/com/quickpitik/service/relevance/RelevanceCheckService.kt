@@ -146,7 +146,9 @@ class RelevanceCheckService(
             // The event may have turned Private after the list was read: skip the turn, pay nothing, close nothing (G9).
             if (!batches.stillAllowed(row.batchId)) return
             if (transactions.execute { cases.startScanTurn(row.caseId, now) } != 1) return
-            val todo = batches.nextUnmeasured(row.eventId, row.photographerId, props.scan.photosPerTurn)
+            // RVF-10 (RVR-13): the relevanceScan pool takes workers + measures-per-tick photos at once; more would be refused.
+            val perTurn = minOf(props.scan.photosPerTurn, props.check.workers + props.check.measuresPerTick)
+            val todo = batches.nextUnmeasured(row.eventId, row.photographerId, perTurn)
             if (todo.isNotEmpty()) {
                 val measured = measurer.measure(row.batchId, token, todo)
                 registry.counter("qp.relevance.scan.measured").increment(measured.toDouble())
@@ -231,13 +233,21 @@ class RelevanceCheckService(
             return emptyList()
         }
         val verdict = CaseVerdict.valueOf(case.verdict!!)
-        val autoHide = switch.mode == RelevanceMode.AUTO_HIDE
+        // RVF-8 (RVR-9): only a check that started in auto-hide can hide; one with no start mode predates V108.
+        val autoHide = switch.mode == RelevanceMode.AUTO_HIDE && case.startedMode == RelevanceMode.AUTO_HIDE.name
         // P4: auto-hide acts only for a photographer who accepted the minimum Terms; unset means nobody has.
         val consented = autoHide && legal.minVersionOrNull()?.let { atLeast(batches.photographerTermsVersion(case.batchId), it) } == true
         val mode = if (consented) RelevanceMode.AUTO_HIDE else RelevanceMode.RECORD_ONLY
         val current = cases.currentFor(case.batchId)
+        // RVF-7 (RVR-10, owner 2026-11-16): a wrong event on words alone always reaches an admin, so its alert is raised
+        // before the comparator can close the case.
+        val wordsOnly = listOfNotNull(AlertKind.WORDS_ONLY.takeIf {
+            case.verdictNote == WORDS_ONLY && raiseAlert(case.batchId, case.id, it, case.batchPhotos, mode == RelevanceMode.RECORD_ONLY, now)
+        })
         // A.3 (P21): with no current case, an admin's last decision on the batch is what the new case is compared with.
-        val comparator = current ?: if (autoHide) cases.lastClosedByAdmin(case.batchId) else null
+        // By the server's mode, not autoHide: a check that started in record-only must not become a current case that
+        // the next auto-hide check replaces, which would undo the admin's restore (RVF-25 review).
+        val comparator = current ?: if (switch.mode == RelevanceMode.AUTO_HIDE) cases.lastClosedByAdmin(case.batchId) else null
         if (comparator != null) {
             // A failed check changes nothing; a Can't tell never lifts a real hide; the same verdict again is one alert
             // per verdict change, not per check (R7, P8). Each hands its copy and date results to the current case so
@@ -267,7 +277,7 @@ class RelevanceCheckService(
                     if (reason == "SAME_VERDICT" && verdict in SCANNED) cases.queueScan(current.id)
                 }
                 log.info("Relevance check closed case={} reason={}", case.id, reason)
-                return emptyList()
+                return wordsOnly
             }
         }
         // G7: a Fits or Mixed re-check lifts a current auto-hide junk dump to HIDE_JUNK, so the junk stays hidden photo by
@@ -294,7 +304,7 @@ class RelevanceCheckService(
         // In auto-hide only the copied alert is raised here; the big-hide alert waits for the photos actually hidden.
         val raise = if (consented) listOfNotNull((AlertKind.COPIED to case.batchPhotos).takeIf { verdict == CaseVerdict.COPIED })
             else wouldHaveAlerts(case, verdict, action)
-        return raise.filter { (kind, photos) ->
+        return wordsOnly + raise.filter { (kind, photos) ->
             raiseAlert(case.batchId, case.id, kind, photos, mode == RelevanceMode.RECORD_ONLY, now)
         }.map { it.first }
     }
@@ -553,7 +563,7 @@ class RelevanceCheckService(
                 // RVF-4: a RETRY starts from the latest case (a skipped batch may have no current one), its sample and round.
                 val latest = if (fresh.trigger == RETRY) cases.latestFor(id) ?: return@execute false else null
                 val case = cases.saveAndFlush(RelevanceCase(batchId = id, trigger = fresh.trigger, uploadAt = uploadAt,
-                    batchPhotos = fresh.photoCount, sampleRound = (current ?: latest)?.sampleRound ?: 1))
+                    batchPhotos = fresh.photoCount, sampleRound = (current ?: latest)?.sampleRound ?: 1, startedMode = switch.mode.name))
                 if (current != null) cases.copySample(case.id, current.id)
                 else if (latest == null || cases.copySample(case.id, latest.id) == 0) {
                     cases.pickSample(case.id, fresh.eventId, fresh.photographerId, 1, props.check.sampleSize)
@@ -668,6 +678,8 @@ class RelevanceCheckService(
         const val AUTO = "AUTO"
         // RV-2.5b: the verdict_note of a case an admin hid from the page.
         const val ADMIN_HIDE = "ADMIN_HIDE"
+        // RVF-7: the verdict_note of a wrong event on printed words alone (settle()).
+        const val WORDS_ONLY = "WORDS_ONLY"
         const val MODEL_COLUMN = 60
         // Verdict notes of a check that got no usable answer (plan 5.11).
         val FAILED_CALL = setOf("CALL_FAILED", "CUT_OFF", "BAD_JSON", "UNKNOWN_VALUE")

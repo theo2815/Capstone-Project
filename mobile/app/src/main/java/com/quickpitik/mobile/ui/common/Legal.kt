@@ -9,6 +9,7 @@ import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.data.local.BIB_NOTICE_VERSION
 import com.quickpitik.mobile.data.local.FaceConsentPrefs
 import com.quickpitik.mobile.data.local.faceNoticeNeeded
@@ -57,7 +59,7 @@ import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.Typography
 
 // The legal text lives only on the website; the app opens it (plan D1).
-const val WEBSITE_ORIGIN = "https://quickpitik.com"
+const val WEBSITE_ORIGIN = BuildConfig.WEBSITE_ORIGIN
 const val PRIVACY_URL = "$WEBSITE_ORIGIN/privacy"
 const val TERMS_URL = "$WEBSITE_ORIGIN/terms"
 const val PHOTO_DELETION_URL = "$WEBSITE_ORIGIN/account/photo-deletion/new"
@@ -220,7 +222,9 @@ internal fun TermsReacceptanceDialog(
                 error?.let { Text(it, style = Typography.bodySmall, color = ErrorRed, modifier = Modifier.padding(top = 8.dp)) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Not ready to accept? ", style = Typography.bodySmall, color = Slate)
-                    TextButton(onClick = onSignOut) { Text("Sign out", color = Ink, textDecoration = TextDecoration.Underline) }
+                    // No inner padding: the full stop follows the link as on the website; the tap stays 48dp tall.
+                    TextButton(onClick = onSignOut, contentPadding = PaddingValues(0.dp)) { Text("Sign out", color = Ink, textDecoration = TextDecoration.Underline) }
+                    Text(".", style = Typography.bodySmall, color = Slate)
                 }
             }
         },

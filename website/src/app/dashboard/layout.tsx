@@ -5,6 +5,7 @@ import { ProtectedRoute } from "@/components/auth/protected-route";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { TermsReacceptanceGate } from "@/components/legal/terms-reacceptance-gate";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { useAuthStore } from "@/store/auth-store";
 
 // Photographer-only gate + persistent dashboard shell. Most /dashboard/*
 // pages render inside DashboardShell (SiteHeader + sticky rail + content).
@@ -23,6 +24,7 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname() ?? "";
   const isFocused = FOCUSED_PATTERNS.some((re) => re.test(pathname));
+  const termsRequired = useAuthStore((s) => s.user?.termsAcceptanceRequired === true);
 
   // Boundary mounts INSIDE DashboardShell so an error inside a page only
   // blanks the page area — the rail stays navigable so the photographer
@@ -35,7 +37,10 @@ export default function DashboardLayout({
   return (
     <ProtectedRoute allowedRoles={["PHOTOGRAPHER"]}>
       <TermsReacceptanceGate />
-      {isFocused ? guarded : <DashboardShell>{guarded}</DashboardShell>}
+      {/* The prompt portals to <body>; the page behind it cannot be reached while it is open. */}
+      <div inert={termsRequired} className="contents">
+        {isFocused ? guarded : <DashboardShell>{guarded}</DashboardShell>}
+      </div>
     </ProtectedRoute>
   );
 }

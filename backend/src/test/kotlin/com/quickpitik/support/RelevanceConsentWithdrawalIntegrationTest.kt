@@ -66,15 +66,15 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var tx: TransactionTemplate
 
     @Test
-    fun `a photographer who withdrew is applied as record-only with the no-consent note`() {
+    fun `a photographer who withdrew is applied as record-only with the no-consent mark`() {
         val b = batch(photos = 600)
         val c = decided(b, "JUNK_DUMP")
         adminRelevance.withdrawConsent(admin(), b.photographer)
 
         checks().applyCase(c, NOW)
 
-        assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", "NO_CONSENT", "NONE"),
-            row(c, "stage", "applied_mode", "action", "verdict_note", "scan_state"))
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", "HIDE_ALL", null, true, "NONE"),
+            row(c, "stage", "applied_mode", "action", "verdict_note", "no_consent", "scan_state"))
         // The same "would have" alert as today's no-consent path.
         assertEquals(listOf(listOf("BIG_HIDE", true, 600)), alertsOf(b))
         assertEquals(0, messages(b))
@@ -275,7 +275,9 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
 
     private fun adminService() = AdminRelevanceService(cases, alerts, batchRepo, props(RelevanceMode.AUTO_HIDE, 1000, 10),
         Mockito.mock(com.quickpitik.service.storage.StorageService::class.java), com.quickpitik.config.StorageProperties(), Clock.systemUTC(),
-        holds, photoRepo, decisionLog, tx, switch(RelevanceMode.AUTO_HIDE), strikes, hold(), users)
+        holds, photoRepo, decisionLog, tx, switch(RelevanceMode.AUTO_HIDE), strikes, hold(), users,
+        Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java),
+        Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java))
 
     // A measured photo of the batch, hidden and held AUTO under the case.
     private fun held(b: Batch, caseId: UUID, sharpness: Double): UUID {
@@ -321,8 +323,8 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
 
     // A case waiting for the apply step.
     private fun decided(b: Batch, verdict: String): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at) " +
-            "VALUES (?, 'QUIET', ?, (SELECT photo_count FROM event_photographer WHERE event_id = ?), 'DECIDED', 40, 0, ?, false, ?)",
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, started_mode) " +
+            "VALUES (?, 'QUIET', ?, (SELECT photo_count FROM event_photographer WHERE event_id = ?), 'DECIDED', 40, 0, ?, false, ?, 'AUTO_HIDE')",
         b.id, UPLOAD, b.event, verdict, NOW)
 
     // A current case applied in auto-hide before the withdrawal.

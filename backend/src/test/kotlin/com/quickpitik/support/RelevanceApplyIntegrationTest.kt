@@ -108,6 +108,46 @@ class RelevanceApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals("APPLIED", row(c, "stage").single())
     }
 
+    // RVF-7 (RVR-10): a wrong event on printed words alone is Can't tell with the note WORDS_ONLY, and always reaches an
+    // admin as one alert, even when the comparator closes the case.
+    @Test
+    fun `a words-only wrong event raises one WORDS_ONLY alert in record-only`() {
+        val b = batch(photos = 40)
+        val c = case(b, "DECIDED", "CANT_TELL", note = "WORDS_ONLY")
+
+        service().applyCase(c, NOW)
+
+        assertEquals(listOf("APPLIED", "RECORD_ONLY", "NONE"), row(c, "stage", "applied_mode", "action"))
+        assertEquals(listOf(listOf("WORDS_ONLY", "words_only:$c", true, 40)), alertsOf(b))
+    }
+
+    @Test
+    fun `a words-only wrong event that is closed as the same verdict still raises its alert`() {
+        val b = batch(photos = 40)
+        val old = case(b, "APPLIED", "CANT_TELL", applied = true)
+        val new = case(b, "DECIDED", "CANT_TELL", note = "WORDS_ONLY")
+
+        service().applyCase(new, NOW)
+
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(new, "stage", "close_reason"))
+        assertEquals(old, cases.currentFor(b.id)?.id)
+        assertEquals(listOf(listOf("WORDS_ONLY", "words_only:$new", true, 40)), alertsOf(b))
+    }
+
+    @Test
+    fun `applying a words-only case twice raises the alert once`() {
+        val b = batch(photos = 40)
+        val c = case(b, "DECIDED", "CANT_TELL", note = "WORDS_ONLY")
+        val service = service()
+        service.applyCase(c, NOW)
+
+        // A second server copy that read the case before the first one committed.
+        jdbc.update("UPDATE relevance_cases SET stage = 'DECIDED', applied_mode = NULL, action = NULL, applied_at = NULL WHERE id = ?", c)
+        service.applyCase(c, NOW)
+
+        assertEquals(listOf(listOf("WORDS_ONLY", "words_only:$c", true, 40)), alertsOf(b))
+    }
+
     @Test
     fun `a failed check with a current case is closed with no result and changes nothing`() {
         val b = batch(photos = 600)

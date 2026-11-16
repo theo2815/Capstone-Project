@@ -927,7 +927,7 @@ private fun NotificationsInboxDialog(
 }
 
 @Composable
-private fun InboxRow(
+internal fun InboxRow(
     message: PhotographerMessageDto,
     onMarkRead: () -> Unit,
     onRemove: () -> Unit,

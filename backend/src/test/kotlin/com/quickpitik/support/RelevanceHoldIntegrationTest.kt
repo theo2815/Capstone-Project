@@ -372,8 +372,10 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
         assertEquals("open", flagsOf(b).single()["status"])
     }
 
+    // RVF-14 (Q15): appeals are decided in every mode now, but accepting one ends the payout hold, so a held case's won
+    // decision is refused as its restore is.
     @Test
-    fun `with the flags switch off a restore with no hold works and deciding an appeal is refused by the mode`() {
+    fun `with the flags switch off a restore with no hold works and a won decision on a held case is refused and says why`() {
         val b = batch()
         val c = applied(b, verdict = "JUNK_DUMP")
         val held = applied(batch(b.photographer))
@@ -383,12 +385,15 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
             "SELECT id, batch_id, ?, 'These are mine', now(), ? FROM relevance_cases WHERE id = ?", b.photographer, admin, held)
 
         admin(RelevanceMode.AUTO_HIDE, flagsEnabled = false).restore(admin, c, null)
-        // RelevanceSwitch falls back to record-only with the flags switch off, so no appeal is decided, held or not.
-        val refused = assertFailsWith<ApiException> { tx.execute { appealService(flagsEnabled = false).decide(admin, appeal, "WON", null) } }
+        // RelevanceSwitch falls back to record-only with the flags switch off.
+        val refused = assertFailsWith<ApiException> { appealService(flagsEnabled = false).decide(admin, appeal, "WON", null) }
 
         assertEquals("RESTORED_BY_ADMIN", row(c, "close_reason").single())
-        assertEquals(ErrorCodes.RELEVANCE_ACTIONS_OFF, refused.code)
+        assertEquals(ErrorCodes.FLAGS_DISABLED, refused.code)
+        assertEquals(true, refused.message!!.contains("payout hold"), refused.message)
         assertEquals("OPEN", jdbc.queryForObject("SELECT status FROM relevance_appeals WHERE id = ?", String::class.java, appeal))
+        assertEquals(listOf("APPLIED", "HIDE_ALL"), row(held, "stage", "action"))
+        assertEquals("open", flagsOf(b).single()["status"])
     }
 
     @Test
@@ -428,13 +433,15 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
     private fun admin(mode: RelevanceMode, flagsEnabled: Boolean = true): AdminRelevanceService {
         val props = props(mode)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
-            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled), users)
+            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled), users,
+            Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java), Mockito.mock(RelevanceNotifier::class.java))
     }
 
     private fun appealService(flagsEnabled: Boolean = true): RelevanceAppealService {
         val props = props(RelevanceMode.AUTO_HIDE)
         return RelevanceAppealService(cases, appeals, alerts, Mockito.mock(RelevanceNotifier::class.java), switch(RelevanceMode.AUTO_HIDE, flagsEnabled),
-            props, Clock.systemUTC(), publisher, Mockito.mock(RelevanceConfirmer::class.java), decisionLog, hold(flagsEnabled = flagsEnabled))
+            props, Clock.systemUTC(), publisher, Mockito.mock(RelevanceConfirmer::class.java), decisionLog, hold(flagsEnabled = flagsEnabled),
+            tx, admin(RelevanceMode.AUTO_HIDE, flagsEnabled))
     }
 
     private fun admin(): UUID = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')",
@@ -454,8 +461,8 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
 
     // A Copied case waiting for the apply step.
     private fun decided(b: Batch): UUID = id(
-        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at) " +
-            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, 'COPIED', true, ?)", b.id, UPLOAD, UPLOAD)
+        "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, measured, junk, verdict, copy_low, decided_at, started_mode) " +
+            "VALUES (?, 'QUIET', ?, 40, 'DECIDED', 40, 0, 'COPIED', true, ?, 'AUTO_HIDE')", b.id, UPLOAD, UPLOAD)
 
     // A current Copied case, applied in `mode`.
     private fun applied(b: Batch, mode: String = "AUTO_HIDE", verdict: String = "COPIED", stage: String = "APPLIED",

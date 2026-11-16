@@ -16,6 +16,7 @@ import com.quickpitik.dto.admin.RelevanceRestoreDto
 import com.quickpitik.dto.admin.RelevanceSampleDto
 import com.quickpitik.dto.admin.RelevanceWordDto
 import com.quickpitik.dto.admin.toDto
+import com.quickpitik.entity.AppealStatus
 import com.quickpitik.entity.CaseAction
 import com.quickpitik.entity.CaseStage
 import com.quickpitik.entity.CaseVerdict
@@ -29,6 +30,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RelevanceAlertRepository
+import com.quickpitik.repository.RelevanceAppealRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.repository.RelevanceStrikeRepository
@@ -42,6 +44,7 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
+import java.time.OffsetDateTime
 import java.util.UUID
 
 // RV-1.10 (plan 5.11): the reads behind the admin Photo Relevance page, and marking an alert seen. It reads cases,
@@ -64,6 +67,8 @@ class AdminRelevanceService(
     private val strikes: RelevanceStrikeRepository,
     private val payoutHold: RelevanceHoldService,
     private val users: UserRepository,
+    private val appeals: RelevanceAppealRepository,
+    private val notifier: RelevanceNotifier,
 ) {
 
     // RV-L7 part a (legal 1.7): the photographer withdrew the consent to automatic actions, in any mode. From then on the
@@ -149,16 +154,25 @@ class AdminRelevanceService(
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun restore(adminId: UUID, caseId: UUID, note: String?): RelevanceRestoreDto {
         val now = clock.postgresTimestamp()
+        // RVF-11: a closed case's restore is logged with the first chunk it releases, so a repeat click logs nothing.
+        var logWhenReleased: RelevanceCase? = null
         val batchId = transactions.execute {
             val case = load(caseId)
             when {
                 case.stage == CaseStage.APPLIED.name -> {
                     if (cases.closeByAdmin(case.id, RESTORED_BY_ADMIN, adminId, now) != 1) throw wrongState()
                     logDecision(adminId, case, "relevance_restored", note)
+                    closeOpenAppeal(adminId, case, note, now)
+                    // RVF-12: a confirmed case's strike stops counting; a case never confirmed has none to void. The
+                    // photographer's row is locked first (case, then user, as the confirmer) so a concurrent count sees it.
+                    strikes.lockPhotographerOf(case.id)
+                    strikes.voidForCase(case.id, now)
                     // RV-4.2: a copied case's payout hold ends with it (the case row is held by the close above).
                     payoutHold.end(case.id, adminId, restore = true)
                 }
-                case.stage == CaseStage.CLOSED.name && case.closeReason == RESTORED_BY_ADMIN && cases.currentFor(case.batchId) == null -> Unit
+                // RVF-11: any closed case of a batch with no current case, so the junk a won appeal left held can be
+                // released. A repeat click of an admin restore stays unlogged.
+                isClosedWithNoCurrent(case) -> if (case.closeReason != RESTORED_BY_ADMIN) logWhenReleased = case
                 else -> throw wrongState()
             }
             case.batchId
@@ -167,7 +181,10 @@ class AdminRelevanceService(
         while (true) {
             // A newer case that became current meanwhile owns the holds from now on.
             val n = transactions.execute {
-                if (cases.currentFor(batchId) != null) 0 else unhide(holds.restoreByAdminChunk(batchId, now, props.hide.chunkSize))
+                val released = if (cases.currentFor(batchId) != null) 0 else unhide(holds.restoreByAdminChunk(batchId, now, props.hide.chunkSize))
+                if (released > 0) logWhenReleased?.let { logDecision(adminId, it, "relevance_restored", note) }
+                logWhenReleased = null
+                released
             }!!
             if (n == 0) break
             restored += n
@@ -198,12 +215,13 @@ class AdminRelevanceService(
         return cases.caseRow(caseId)!!.toDto()
     }
 
-    // RV-2.5a: one photo of the current case's batch comes back by the one restore rule; another hold or a hidden photo
-    // flag may still keep it, and the answer says so. Its rows take the case, so this case never hides it again.
+    // RV-2.5a: one photo of the current case's batch (RVF-11: or of a closed case's batch with no current case) comes back
+    // by the one restore rule; another hold or a hidden photo flag may still keep it, and the answer says so. Its rows take
+    // the case, so this case never hides it again.
     @Transactional
     fun restorePhoto(adminId: UUID, caseId: UUID, photoId: UUID): RelevancePhotoRestoreDto {
         val case = load(caseId)
-        if (case.stage != CaseStage.APPLIED.name) throw wrongState()
+        if (case.stage != CaseStage.APPLIED.name && !isClosedWithNoCurrent(case)) throw wrongState()
         val batch = batches.findById(case.batchId).orElseThrow()
         holds.photoStatusInBatch(photoId, batch.eventId, batch.photographerId)
             ?: throw NotFoundException("Photo not found in this batch", ErrorCodes.PHOTO_NOT_FOUND)
@@ -223,6 +241,24 @@ class AdminRelevanceService(
                 it.status, (it.watermarkKey ?: it.thumbnailKey)?.let { key -> storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) })
         }, result.totalElements, page)
     }
+
+    // RVF-13 (Q5): the restore accepts the case's open appeal, so it no longer blocks the batch's next one, and the
+    // photographer gets V2-T18's second form under the decide route's key, so it is sent once. The case row is held by
+    // the close, so the order is the case, then the appeal, as in filing and deciding. Only an auto-hide case has one.
+    private fun closeOpenAppeal(adminId: UUID, case: RelevanceCase, note: String?, now: OffsetDateTime) {
+        val appeal = appeals.lockByCaseId(case.id)?.takeIf { it.status == AppealStatus.OPEN.name } ?: return
+        appeal.status = AppealStatus.WON.name
+        appeal.decidedAt = now
+        appeal.decidedBy = adminId
+        appeal.decisionNote = note?.trim()?.ifBlank { null }
+        appeals.save(appeal)
+        decisionLog.logUserDecision(adminId, appeal.photographerId, "relevance_appeal_won", appeal.decisionNote,
+            meta = mapOf("caseId" to case.id.toString(), "appealId" to appeal.id.toString()))
+        val eventName = cases.ownCase(case.id, appeal.photographerId)!!.eventName
+        notifier.deliver(appeal.photographerId, case.id, "relevance:${appeal.id}:won", RelevanceNotices.appealWon(eventName, wholeBatch = false))
+    }
+
+    private fun isClosedWithNoCurrent(case: RelevanceCase) = case.stage == CaseStage.CLOSED.name && cases.currentFor(case.batchId) == null
 
     private fun load(caseId: UUID): RelevanceCase = cases.findById(caseId).orElseThrow {
         NotFoundException("Relevance case not found", ErrorCodes.RELEVANCE_CASE_NOT_FOUND)
