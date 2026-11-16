@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import { useAdminUserActions } from "@/hooks/use-admin-users";
+import { useEffect, useId, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { adminUserKeys, useAdminUserActions } from "@/hooks/use-admin-users";
 import { useToast } from "@/hooks/use-toast";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
+import { CONSENT_WITHDRAWAL_TEXT } from "@/lib/admin-relevance";
+import { ApiError } from "@/lib/api";
+import { clearRelevanceConsentWithdrawal, recordRelevanceConsentWithdrawal, type AdminUserDetail } from "@/lib/api-admin";
+import { formatLongDate } from "@/lib/format";
+import { useAuthStore } from "@/store/auth-store";
+import { AdminConfirmModal } from "./admin-form-modal";
 import { AdminRejectModal } from "./admin-reject-modal";
 import { AdminResetVerificationModal } from "./admin-reset-verification-modal";
 import { AdminSuspendModal } from "./admin-suspend-modal";
@@ -164,6 +171,8 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         </div>
       )}
 
+      {row.role === "PHOTOGRAPHER" && <ConsentWithdrawal row={row} locked={submitting} />}
+
       <AdminRejectModal
 
         submitting={submitting}
@@ -195,6 +204,74 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         photographerName={displayName}
       />
     </aside>
+  );
+}
+
+// RV-L7 part c: record or clear the photographer's e-mailed withdrawal of the consent to automatic hides and
+// holds. The state shown is always the server's: the answer is written into the detail cache, then refetched.
+function ConsentWithdrawal({ row, locked }: { row: AdminUserRow; locked: boolean }) {
+  const T = CONSENT_WITHDRAWAL_TEXT;
+  const qc = useQueryClient();
+  const { showToast } = useToast();
+  const headingId = useId();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  const withdrawnAt = row.relevanceConsentWithdrawnAt ?? null;
+  const withdrawn = withdrawnAt !== null;
+
+  // The shared Modal does not return focus; the one action button keeps its element across both states.
+  useEffect(() => {
+    if (wasOpen.current && !open) actionRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+
+  async function handleConfirm() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const answer = await (withdrawn ? clearRelevanceConsentWithdrawal : recordRelevanceConsentWithdrawal)(row.userId);
+      const key = adminUserKeys.detail(useAuthStore.getState().user?.id ?? null, row.userId);
+      qc.setQueryData<AdminUserDetail | null>(key, (detail) =>
+        detail ? { ...detail, relevanceConsentWithdrawnAt: answer.consentWithdrawnAt } : detail);
+      void qc.invalidateQueries({ queryKey: key }); // the decision log gained an entry
+      setOpen(false);
+      showToast({ kind: "success", message: withdrawn ? T.cleared : T.recorded });
+    } catch (error) {
+      showToast({ kind: "error", message: error instanceof ApiError
+        ? error.errors[0]?.message ?? error.message
+        : withdrawn ? T.clearFailed : T.recordFailed });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby={headingId} className="mt-6 pt-5 border-t border-line">
+      <p id={headingId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+        {T.title}
+      </p>
+      <p className="font-sans text-sm text-ink-soft mt-2">
+        {withdrawn
+          ? <>{T.withdrawnOn} <span className="tnum">{formatLongDate(withdrawnAt)}</span>. {T.withdrawnAfter}</>
+          : T.notWithdrawn}
+      </p>
+      <button ref={actionRef} type="button" disabled={locked} onClick={() => setOpen(true)} className={`${secondaryBtn} mt-4`}>
+        {withdrawn ? T.clear : T.record}
+      </button>
+      <AdminConfirmModal
+        open={open}
+        submitting={busy}
+        pendingLabel={withdrawn ? T.clearing : T.recording}
+        onClose={() => setOpen(false)}
+        onConfirm={handleConfirm}
+        title={withdrawn ? T.clearTitle : T.recordTitle}
+        confirmLabel={withdrawn ? T.clear : T.record}
+      >
+        <p className="font-sans text-sm text-ink-soft">{withdrawn ? T.clearConfirm : T.recordConfirm}</p>
+      </AdminConfirmModal>
+    </section>
   );
 }
 

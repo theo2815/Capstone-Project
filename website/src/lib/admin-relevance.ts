@@ -345,3 +345,23 @@ export const APPEAL_TEXT = {
   // A case closed meanwhile (an admin restored the batch): the server records the decision only, sends no note.
   confirmClosed: "The case is already closed, so this only records your decision. The photographer is not told. This cannot be undone.",
 } as const;
+
+// RV-L7 part c: the photographer page's control for a withdrawn consent to automatic actions (legal 1.7).
+export const CONSENT_WITHDRAWAL_TEXT = {
+  title: "Automatic actions",
+  notWithdrawn: "Consent to automatic hides and payout holds: not withdrawn.",
+  record: "Record withdrawal",
+  recordTitle: "Record that this photographer withdrew consent?",
+  recordConfirm: 'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are.',
+  recording: "Recording…",
+  recorded: "Withdrawal recorded",
+  recordFailed: "Couldn't record the withdrawal — please try again.",
+  withdrawnOn: "Consent withdrawn on",
+  withdrawnAfter: "Automatic hides and payout holds are off for this photographer; admins review each case.",
+  clear: "Clear withdrawal",
+  clearTitle: "Clear the withdrawal?",
+  clearConfirm: "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms.",
+  clearing: "Clearing…",
+  cleared: "Withdrawal cleared",
+  clearFailed: "Couldn't clear the withdrawal — please try again.",
+} as const;
