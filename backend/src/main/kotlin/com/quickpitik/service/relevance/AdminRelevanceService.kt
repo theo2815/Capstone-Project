@@ -155,6 +155,10 @@ class AdminRelevanceService(
                 case.stage == CaseStage.APPLIED.name -> {
                     if (cases.closeByAdmin(case.id, RESTORED_BY_ADMIN, adminId, now) != 1) throw wrongState()
                     logDecision(adminId, case, "relevance_restored", note)
+                    // RVF-12: a confirmed case's strike stops counting; a case never confirmed has none to void. The
+                    // photographer's row is locked first (case, then user, as the confirmer) so a concurrent count sees it.
+                    strikes.lockPhotographerOf(case.id)
+                    strikes.voidForCase(case.id, now)
                     // RV-4.2: a copied case's payout hold ends with it (the case row is held by the close above).
                     payoutHold.end(case.id, adminId, restore = true)
                 }

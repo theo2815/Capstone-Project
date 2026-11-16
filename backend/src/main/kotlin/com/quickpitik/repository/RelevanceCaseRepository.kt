@@ -569,7 +569,7 @@ private const val LIVE_HOLD = "FROM relevance_cases c JOIN flags f ON f.id = c.h
     "WHERE c.id = :id AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL"
 
 private const val CASE_REPEAT = "(:repeat = false OR (c.confirmed_at IS NOT NULL AND (SELECT count(*) FROM relevance_strikes s " +
-    "WHERE s.photographer_id = br.photographer_id AND s.confirmed_at > :since) >= 2))"
+    "WHERE s.photographer_id = br.photographer_id AND s.confirmed_at > :since AND s.voided_at IS NULL) >= 2))"
 
 interface RelevanceCaseRow {
     val caseId: UUID
