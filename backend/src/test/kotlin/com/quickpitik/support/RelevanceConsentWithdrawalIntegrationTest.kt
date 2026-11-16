@@ -106,9 +106,9 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
         repeat(3) { service.reconcileHolds() }
 
         assertEquals(3, hidden(b))
-        // The query that picks the work and the guard read before each chunk both leave the case out.
-        assertTrue(cases.findHoldTargets().none { it.caseId == c })
-        assertEquals(false, cases.isHoldTarget(c, "HIDE_ALL"))
+        // The case stays a target (so restores still run), marked withdrawn; the guard read before each hiding chunk says no.
+        assertEquals(true, cases.findHoldTargets().single { it.caseId == c }.withdrawn)
+        assertEquals(false, cases.isHideTarget(c, "HIDE_ALL"))
         assertEquals(3L, holds.countLiveHolds(b.id, "AUTO"))
         assertEquals(listOf(null), row(c, "hide_finished_at"))
         // The scan queue skips the photographer too: a queued scan would only raise a target nothing acts on.
@@ -130,6 +130,60 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
 
         assertNull(jdbc.queryForObject("SELECT hold_flag_id FROM relevance_cases WHERE id = ?", UUID::class.java, c))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM flags WHERE target_id = ?", Int::class.java, b.photographer))
+    }
+
+    // Review of PR 171: the withdrawal stops only steps that take one more photo off sale; restores still run.
+    @Test
+    fun `a won appeal on a whole-batch case still puts the good photos back for a photographer who withdrew`() {
+        val b = batch(photos = 0)
+        val c = applied(b, "JUNK_DUMP", "HIDE_ALL")
+        val clean = List(2) { held(b, c, sharpness = 50.0) }
+        val junk = held(b, c, sharpness = 10.0)
+        adminRelevance.withdrawConsent(admin(), b.photographer)
+        // Uploaded and measured as junk after the withdrawal: the post-appeal scan must not hide it.
+        val later = measured(b, sharpness = 10.0)
+        win(b, c)
+        assertEquals(listOf("HIDE_JUNK", "QUEUED"), row(c, "action", "scan_state"))
+
+        val check = checks(scanning = true)
+        repeat(10) {
+            check.reconcileHolds()
+            if (row(c, "stage").single() != "CLOSED") check.scanTurns()
+        }
+
+        assertEquals(listOf("LIVE", "LIVE"), clean.map(::status))
+        assertEquals("HIDDEN", status(junk), "what was hidden stays hidden unless the scan clears it")
+        assertEquals("LIVE", status(later))
+        assertEquals(listOf("CLOSED", "APPEAL_WON"), row(c, "stage", "close_reason"))
+    }
+
+    @Test
+    fun `a won appeal on a mixed case still puts the photos back for a photographer who withdrew`() {
+        val b = batch(photos = 0)
+        val c = applied(b, "MIXED", "HIDE_JUNK", scan = "FINISHED")
+        val junk = held(b, c, sharpness = 10.0)
+        adminRelevance.withdrawConsent(admin(), b.photographer)
+        win(b, c)
+        assertEquals(listOf("NONE"), row(c, "action"))
+
+        checks().reconcileHolds()
+
+        assertEquals("LIVE", status(junk))
+        assertEquals(0L, holds.countLiveHolds(b.id, "AUTO"))
+    }
+
+    @Test
+    fun `an admin's hide still takes the photos off sale for a photographer who withdrew`() {
+        val b = batch(photos = 3)
+        val c = applied(b, "CANT_TELL", "NONE")
+        val admin = admin()
+        adminRelevance.withdrawConsent(admin, b.photographer)
+
+        tx.execute { adminService().hideBatch(admin, c, null) }
+        checks().reconcileHolds()
+
+        assertEquals(3, hidden(b))
+        assertEquals(3L, holds.countLiveHolds(b.id, "ADMIN"))
     }
 
     @Test
@@ -200,18 +254,52 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
         junk = RelevanceProperties.Junk(blurCutoff = 20.0, darkCutoff = 5.0), check = RelevanceProperties.Check(maxBatchesPerTick = 10_000),
         hide = RelevanceProperties.Hide(chunkSize = chunkSize, chunksPerTick = chunksPerTick))
 
-    private fun switch(mode: RelevanceMode, chunkSize: Int = 1000, chunksPerTick: Int = 10) =
-        RelevanceSwitch(props(mode, chunkSize, chunksPerTick), AdminProperties(flagsEnabled = true), AiApiProperties(enabled = false))
+    private fun switch(mode: RelevanceMode, chunkSize: Int = 1000, chunksPerTick: Int = 10, scanning: Boolean = false): RelevanceSwitch {
+        @Suppress("UNCHECKED_CAST")
+        val provider = (Mockito.mock(org.springframework.beans.factory.ObjectProvider::class.java)
+            as org.springframework.beans.factory.ObjectProvider<com.quickpitik.service.ai.RekognitionAiClient>)
+            .also { Mockito.`when`(it.getIfAvailable()).thenReturn(Mockito.mock(com.quickpitik.service.ai.RekognitionAiClient::class.java)) }
+        return RelevanceSwitch(props(mode, chunkSize, chunksPerTick), AdminProperties(flagsEnabled = true), AiApiProperties(enabled = scanning), provider)
+    }
 
     private fun hold(mode: RelevanceMode = RelevanceMode.AUTO_HIDE) =
         RelevanceHoldService(cases, strikes, systemFlags, adminFlags, decisionLog, switch(mode), tx, AdminProperties(flagsEnabled = true), users)
 
-    private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, chunkSize: Int = 1000, chunksPerTick: Int = 10) =
-        RelevanceCheckService(batchRepo, cases, props(mode, chunkSize, chunksPerTick), switch(mode, chunkSize, chunksPerTick), Clock.systemUTC(),
+    private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, chunkSize: Int = 1000, chunksPerTick: Int = 10, scanning: Boolean = false) =
+        RelevanceCheckService(batchRepo, cases, props(mode, chunkSize, chunksPerTick), switch(mode, chunkSize, chunksPerTick, scanning), Clock.systemUTC(),
             tx, SimpleMeterRegistry(), Mockito.mock(RelevanceMeasurer::class.java), Mockito.mock(AnthropicClient::class.java), events, alerts,
             Mockito.mock(ApplicationEventPublisher::class.java), LegalProperties(currentVersion = "1.7", photographerMinVersion = "1.7"),
-            holds, photoRepo, decisionLog, SyncTaskExecutor(), Mockito.mock(RelevanceNotifier::class.java),
+            holds, photoRepo, decisionLog, if (scanning) org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor().apply { initialize() } else SyncTaskExecutor(),
+            Mockito.mock(RelevanceNotifier::class.java),
             Mockito.mock(RelevanceConfirmer::class.java), hold(mode))
+
+    private fun adminService() = AdminRelevanceService(cases, alerts, batchRepo, props(RelevanceMode.AUTO_HIDE, 1000, 10),
+        Mockito.mock(com.quickpitik.service.storage.StorageService::class.java), com.quickpitik.config.StorageProperties(), Clock.systemUTC(),
+        holds, photoRepo, decisionLog, tx, switch(RelevanceMode.AUTO_HIDE), strikes, hold(), users)
+
+    // A measured photo of the batch, hidden and held AUTO under the case.
+    private fun held(b: Batch, caseId: UUID, sharpness: Double): UUID {
+        val photo = measured(b, sharpness, status = "HIDDEN")
+        jdbc.update("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, 'AUTO', ?, ?)", b.id, photo, caseId, NOW)
+        return photo
+    }
+
+    private fun measured(b: Batch, sharpness: Double, status: String = "LIVE"): UUID {
+        val photo = id("INSERT INTO photos (event_id, photographer_id, s3_key, thumbnail_s3_key, watermark_s3_key, price_php, status) " +
+            "VALUES (?, ?, ?, 'relwd/thumb', 'relwd/wm', 125, ?)", b.event, b.photographer, "relwd/${UUID.randomUUID()}", status)
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, measured_at, fg_sharpness, sharpness, brightness, person_conf, race_conf) " +
+            "VALUES (?, ?, ?, ?, ?, 50, 0.9, 0.9)", photo, b.id, NOW, sharpness, sharpness)
+        return photo
+    }
+
+    // The rows an admin's WON decision leaves (RelevanceAppealService.decide): the appeal won, the target lowered.
+    private fun win(b: Batch, caseId: UUID) {
+        jdbc.update("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason, status, decided_at) VALUES (?, ?, ?, 'mine', 'WON', ?)",
+            caseId, b.id, b.photographer, NOW)
+        tx.execute { cases.winAppeal(caseId) }
+    }
+
+    private fun status(photo: UUID): String = jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, photo)!!
 
     private fun admin(): UUID = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Adm', 'ADMIN')",
         "relwd-admin-${UUID.randomUUID()}@test.local")
