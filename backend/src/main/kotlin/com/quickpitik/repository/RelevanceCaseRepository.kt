@@ -182,14 +182,18 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun lastClosedByAdmin(@Param("batchId") batchId: UUID): RelevanceCase?
 
     // RV-2.2b, RV-2.3b (A.2, P18): the current auto-hide cases whose batch holds must follow their target: every HIDE_ALL
-    // and HIDE_JUNK case, and a NONE case only while its batch has a live automatic hold left to restore.
+    // and HIDE_JUNK case, and a NONE case only while its batch has a live automatic hold left to restore. RV-L7 part a:
+    // withdrawn marks a photographer who withdrew the consent to automatic actions: the hold step hides nothing more for
+    // them (isHideTarget) but still restores, so a won appeal or a lowered target still puts photos back.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId",
                (c.hide_finished_at IS NOT NULL) AS "hideFinished", c.action AS "action",
                (c.scan_state = 'FINISHED') AS "scanFinished",
                CASE WHEN c.verdict_note = 'ADMIN_HIDE' THEN 'ADMIN' ELSE 'AUTO' END AS "heldBy",
-               EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON') AS "appealWon"
+               EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'WON') AS "appealWon",
+               (u.relevance_consent_withdrawn_at IS NOT NULL) AS "withdrawn"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN users u ON u.id = br.photographer_id
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE'
           AND (c.action IN ('HIDE_ALL', 'HIDE_JUNK') OR EXISTS (
               SELECT 1 FROM flag_hidden_photos h WHERE h.batch_id = c.batch_id AND h.held_by = 'AUTO' AND h.restored_at IS NULL))
@@ -199,12 +203,15 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
 
     // RV-2.3a (A.4, S3, P14, P18): current auto-hide cases whose full scan is queued or running, least recently served first.
     // Only batches still allowed (invariant 12, the conditions of BatchRelevanceRepository.stillAllowed), so a batch that
-    // is not allowed takes no turn slot; its case stays as it is (G9) and the scan goes on once it is allowed again.
+    // is not allowed takes no turn slot; its case stays as it is (G9) and the scan goes on once it is allowed again. RV-L7
+    // part a: a photographer who withdrew the consent to automatic actions is scanned only for a HIDE_JUNK case (Mixed, or
+    // a whole-batch case whose appeal was won), whose scan can only put photos back: nothing more is hidden for them.
     @Query(value = """
         SELECT c.id AS "caseId", c.batch_id AS "batchId", br.event_id AS "eventId", br.photographer_id AS "photographerId"
         FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
         JOIN events e ON e.id = br.event_id AND e.deleted_at IS NULL AND e.hidden_at IS NULL AND e.visibility = 'PUBLIC'
         JOIN users u ON u.id = br.photographer_id AND u.suspended_at IS NULL
+            AND (u.relevance_consent_withdrawn_at IS NULL OR c.action = 'HIDE_JUNK')
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.scan_state IN ('QUEUED', 'RUNNING')
         ORDER BY c.scan_served_at ASC NULLS FIRST, c.applied_at, c.id
         LIMIT :limit
@@ -242,6 +249,17 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
                        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND action = :action)
     """, nativeQuery = true)
     fun isHoldTarget(@Param("id") id: UUID, @Param("action") action: String): Boolean
+
+    // RV-L7 part a: isHoldTarget for a chunk that hides: also no automatic hide for a photographer who withdrew the consent
+    // to automatic actions, read before each chunk (a withdrawal after the targets were read stops the next chunk). An
+    // admin's own hide (ADMIN_HIDE) still goes ahead.
+    @Query(value = """
+        SELECT EXISTS (SELECT 1 FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+                       JOIN users u ON u.id = br.photographer_id
+                       WHERE c.id = :id AND c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.action = :action
+                         AND (c.verdict_note = 'ADMIN_HIDE' OR u.relevance_consent_withdrawn_at IS NULL))
+    """, nativeQuery = true)
+    fun isHideTarget(@Param("id") id: UUID, @Param("action") action: String): Boolean
 
     // RV-2.4 (A.4, G5): the full scan has the last word on the 10% line, once. Right after finishScan, with the counts in
     // hand: a Fits case at or over the line becomes Mixed (HIDE_JUNK); a Mixed case under it becomes Fits (NONE), and the
@@ -409,11 +427,12 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun setHoldFlag(@Param("id") id: UUID, @Param("flagId") flagId: UUID): Int
 
     // RV-4.2: current auto-hide Copied cases whose hold was never placed (hold_flag_id is set once and never cleared, so an
-    // ended hold is never placed again), oldest first.
+    // ended hold is never placed again), oldest first. RV-L7 part a: never for a photographer who withdrew the consent.
     @Query(value = """
-        SELECT id FROM relevance_cases
-        WHERE stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict = 'COPIED' AND hold_flag_id IS NULL
-        ORDER BY applied_at, id LIMIT :limit
+        SELECT c.id FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
+        JOIN users u ON u.id = br.photographer_id AND u.relevance_consent_withdrawn_at IS NULL
+        WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.verdict = 'COPIED' AND c.hold_flag_id IS NULL
+        ORDER BY c.applied_at, c.id LIMIT :limit
     """, nativeQuery = true)
     fun findHoldDue(@Param("limit") limit: Int): List<UUID>
 
@@ -604,6 +623,8 @@ interface HoldTarget {
     val heldBy: String
     // RV-3.2 part c: the case's appeal was won, so it closes APPEAL_WON once the scan and the restore are done.
     val appealWon: Boolean
+    // RV-L7 part a: the photographer withdrew the consent to automatic actions.
+    val withdrawn: Boolean
 }
 
 // RV-2.4 (P8, A.4): the batch aliased br has no open appeal. One predicate for the due query and the scan flip.

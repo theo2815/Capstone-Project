@@ -9,6 +9,7 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.RelevanceAlertDto
 import com.quickpitik.dto.admin.RelevanceCaseDetailDto
 import com.quickpitik.dto.admin.RelevanceCaseRowDto
+import com.quickpitik.dto.admin.RelevanceConsentWithdrawalDto
 import com.quickpitik.dto.admin.RelevanceHiddenPhotoDto
 import com.quickpitik.dto.admin.RelevancePhotoRestoreDto
 import com.quickpitik.dto.admin.RelevanceRestoreDto
@@ -20,6 +21,7 @@ import com.quickpitik.entity.CaseStage
 import com.quickpitik.entity.CaseVerdict
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.entity.RelevanceCase
+import com.quickpitik.entity.Role
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.NotFoundException
 import org.springframework.http.HttpStatus
@@ -31,6 +33,7 @@ import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.repository.RelevanceStrikeRepository
 import com.quickpitik.repository.SamplePhotoRow
+import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.events.postgresTimestamp
 import com.quickpitik.service.storage.StorageService
@@ -60,7 +63,37 @@ class AdminRelevanceService(
     private val switch: RelevanceSwitch,
     private val strikes: RelevanceStrikeRepository,
     private val payoutHold: RelevanceHoldService,
+    private val users: UserRepository,
 ) {
+
+    // RV-L7 part a (legal 1.7): the photographer withdrew the consent to automatic actions, in any mode. From then on the
+    // consent rule at apply and the automatic hide, scan and payout hold steps leave them out; nothing already hidden or
+    // held changes. A second call keeps the first date and logs nothing.
+    @Transactional
+    fun withdrawConsent(adminId: UUID, photographerId: UUID): RelevanceConsentWithdrawalDto {
+        requirePhotographer(photographerId)
+        if (users.markRelevanceConsentWithdrawn(photographerId, clock.postgresTimestamp()) == 1) {
+            decisionLog.logUserDecision(adminId, photographerId, "relevance_consent_withdrawn")
+        }
+        return consentWithdrawal(photographerId)
+    }
+
+    @Transactional
+    fun clearConsentWithdrawal(adminId: UUID, photographerId: UUID): RelevanceConsentWithdrawalDto {
+        requirePhotographer(photographerId)
+        if (users.clearRelevanceConsentWithdrawn(photographerId) == 1) {
+            decisionLog.logUserDecision(adminId, photographerId, "relevance_consent_withdrawal_cleared")
+        }
+        return consentWithdrawal(photographerId)
+    }
+
+    private fun requirePhotographer(id: UUID) {
+        if (users.findById(id).orElse(null)?.role != Role.PHOTOGRAPHER) {
+            throw NotFoundException(code = ErrorCodes.USER_NOT_FOUND, message = "Photographer not found")
+        }
+    }
+
+    private fun consentWithdrawal(id: UUID) = RelevanceConsentWithdrawalDto(id, users.relevanceConsentWithdrawnAt(id)?.toString())
 
     // RV-2.5b (G10): the admin closes a current Can't tell case LOOKS_FINE, in any mode. The case is then the batch's
     // comparator (P21), so the next Can't tell is closed SAME_VERDICT. A case that hides photos (an admin hide) is
