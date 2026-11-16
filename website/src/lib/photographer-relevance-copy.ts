@@ -78,7 +78,7 @@ export function blurryText(c: PhotographerRelevanceCase): CaseText {
 // V2-T17, V2-T18, V2-T19: the appeal's state, as the inbox notes word it ("Session 2" choices 6 and 7).
 // RV-4.5a review: as the inbox notes, the payout sentence only while a hold binds, the confirmed-case one only if it counts.
 export function appealText(c: PhotographerRelevanceCase): CaseText | null {
-  const copied = c.verdict === "COPIED" && c.payoutHoldBinds !== false;
+  const copied = c.payoutHoldBinds ?? c.verdict === "COPIED";
   switch (c.appeal?.status) {
     case "OPEN":
       return { title: "Appeal received", outcome: [], body: [

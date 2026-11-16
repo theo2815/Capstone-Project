@@ -41,3 +41,13 @@ it("a lost appeal says it counts as a confirmed case unless the hide was an admi
     "You can still complain to the National Privacy Commission or the Department of Trade and Industry.",
   ]);
 });
+
+it("a live hold on a case that is not Copied still shows the payout sentence, as the inbox notes do", () => {
+  for (const verdict of ["JUNK_DUMP", "WRONG_EVENT"] as const) {
+    expect(appealText(copiedCase("OPEN", { verdict, payoutHoldBinds: true }))!.body).toContain(ON_HOLD_OPEN);
+    expect(appealText(copiedCase("LOST", { verdict, payoutHoldBinds: true }))!.body).toContain(ON_HOLD_LOST);
+    // An older server without the field keeps the verdict rule.
+    expect(appealText(copiedCase("OPEN", { verdict }))!.body).not.toContain(ON_HOLD_OPEN);
+    expect(appealText(copiedCase("LOST", { verdict }))!.body).not.toContain(ON_HOLD_LOST);
+  }
+});
