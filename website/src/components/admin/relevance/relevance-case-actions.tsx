@@ -12,6 +12,7 @@ import { serverMessage } from "@/lib/admin-flags";
 import {
   CONSEQUENCES_TEXT,
   HIDDEN_PHOTOS_EMPTY,
+  NO_CONSENT_HIDE_CONFIRM,
   PHOTO_RESTORED,
   PHOTO_RESTORE_FAILED,
   PHOTO_STILL_HIDDEN,
@@ -91,7 +92,9 @@ export function RelevanceCaseActions({
           confirmLabel={open.confirmLabel}
           submitting={isPending}
         >
-          <p className="font-sans text-sm text-ink-soft">{open.confirm}</p>
+          <p className="font-sans text-sm text-ink-soft">
+            {confirming === "hide_batch" && row.verdictNote === "NO_CONSENT" ? NO_CONSENT_HIDE_CONFIRM : open.confirm}
+          </p>
           <p className="font-sans text-sm text-ink">{row.eventName}</p>
         </AdminConfirmModal>
       )}

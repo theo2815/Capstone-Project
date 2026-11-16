@@ -369,6 +369,16 @@ it("a case closed as restored by an admin that still holds photos offers Restore
 const noConsent = (verdict: string): RelevanceCaseRow =>
   ({ ...autoHide, verdict, verdictNote: "NO_CONSENT", appliedMode: "RECORD_ONLY", wouldHave: true });
 const actionButtons = (el: HTMLElement) => buttons(el).filter((b) => b !== "Close");
+const NO_CONSENT_HIDE = "Takes every photo of this batch off sale as your decision, a chunk at a time over the next minutes. New uploads to the batch are taken off sale too. The photographer is told a person took the photos off sale and may appeal. It does not count as a confirmed case. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.";
+const CANT_TELL_HIDE = "Takes every photo of this batch off sale, a chunk at a time over the next minutes. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.";
+
+it("a can't tell case keeps its own Hide batch confirm", async () => {
+  const user = userEvent.setup();
+  mount();
+  await user.click(await within(await drawer()).findByRole("button", { name: "Hide batch…" }));
+  expect(screen.getByText(CANT_TELL_HIDE)).toBeInTheDocument();
+  expect(screen.queryByText(NO_CONSENT_HIDE)).not.toBeInTheDocument();
+});
 
 it("a no-consent case that would have hidden the batch offers Hide batch", async () => {
   const user = userEvent.setup();
@@ -379,6 +389,9 @@ it("a no-consent case that would have hidden the batch offers Hide batch", async
   await within(d).findByRole("button", { name: "Hide batch…" });
   expect(actionButtons(d)).toEqual(["Hide batch…"]);
   await user.click(within(d).getByRole("button", { name: "Hide batch…" }));
+  // Its own confirm: the admin's decision, new uploads too, the photographer may appeal, no confirmed case.
+  expect(screen.getByText(NO_CONSENT_HIDE)).toBeInTheDocument();
+  expect(screen.queryByText(CANT_TELL_HIDE)).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm hide batch" }));
   await waitFor(() => expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/hide-batch"));
   // Wrong event would have hidden it too; Mixed and Fits would not, and a record-only case without the note stays inert.
@@ -419,6 +432,8 @@ it("a no-consent Copied case offers Hold payouts until a hold was placed", async
   expect(actionButtons(d)).toEqual(["Hide batch…", "Hold payouts"]);
   await user.click(within(d).getByRole("button", { name: "Hold payouts" }));
   expect(api.post).not.toHaveBeenCalled();
+  // Before a hide there is nothing to appeal (RelevanceAppealService.file needs a hiding case): only End hold lifts it then.
+  expect(screen.getByText("Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, a won appeal lifts it too. Works only while the relevance mode is auto-hide.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm hold payouts" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/hold-payouts");
   // The server has not answered: the action is still offered and nothing was said.

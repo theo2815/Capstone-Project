@@ -232,12 +232,16 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
   hold_payouts: {
     label: "Hold payouts",
     title: "Hold payouts",
-    confirm: "Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold or a won appeal lifts it. Works only while the relevance mode is auto-hide.",
+    // An appeal needs a hiding case (RelevanceAppealService.file), so before a hide only End hold lifts it.
+    confirm: "Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, a won appeal lifts it too. Works only while the relevance mode is auto-hide.",
     confirmLabel: "Confirm hold payouts",
     done: "Payouts held",
     failed: "Could not hold the payouts — check the case before retrying.",
   },
 };
+
+// RV-4.5b: Hide batch on a no-consent case (ADMIN_HIDE holds new uploads, V2-T24 note opens an appeal, never confirmed).
+export const NO_CONSENT_HIDE_CONFIRM = "Takes every photo of this batch off sale as your decision, a chunk at a time over the next minutes. New uploads to the batch are taken off sale too. The photographer is told a person took the photos off sale and may appeal. It does not count as a confirmed case. Works only while the relevance mode is auto-hide. You can restore the batch or photos one by one.";
 
 // RV-4.3: the consequences of a confirmed case (A.7, A.8).
 export const CONSEQUENCES_TEXT = {
