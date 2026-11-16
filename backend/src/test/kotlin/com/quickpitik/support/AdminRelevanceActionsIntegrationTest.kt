@@ -37,6 +37,9 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
@@ -124,21 +127,96 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `restore is refused for an unknown case or a case in the wrong state`() {
+    fun `a case still being checked is still refused`() {
         assertEquals(ErrorCodes.RELEVANCE_CASE_NOT_FOUND, assertThrows<NotFoundException> { admin.restore(adminId, UUID.randomUUID(), null) }.code)
         val b = batch()
         val decided = case(b, "JUNK_DUMP", stage = "DECIDED")
-        val superseded = case(b, "JUNK_DUMP", stage = "CLOSED", closeReason = "SUPERSEDED")
-        // A restored case whose batch has a newer current case: restoring again would undo the newer case's hide.
-        val other = batch()
-        val restored = case(other, "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN")
-        case(other, "COPIED")
+        val held = hidden(b, "AUTO", null)
 
-        for (id in listOf(decided, superseded, restored)) {
+        val ex = assertThrows<ApiException> { admin.restore(adminId, decided, null) }
+        assertEquals(HttpStatus.CONFLICT to ErrorCodes.INVALID_STATE_TRANSITION, ex.status to ex.code)
+        val single = assertThrows<ApiException> { admin.restorePhoto(adminId, decided, held) }
+        assertEquals(HttpStatus.CONFLICT to ErrorCodes.INVALID_STATE_TRANSITION, single.status to single.code)
+        assertEquals("HIDDEN", status(held))
+        assertEquals(emptyList(), decisionsOf(b))
+    }
+
+    @Test
+    fun `a closed case is still refused while a newer case is current`() {
+        // Restoring through an older case would undo the newer case's hide.
+        val b = batch()
+        val closed = listOf("RESTORED_BY_ADMIN", "APPEAL_WON", "SUPERSEDED").map { case(b, "MIXED", stage = "CLOSED", closeReason = it) }
+        val current = case(b, "COPIED")
+        val held = hidden(b, "AUTO", current)
+
+        for (id in closed) {
             val ex = assertThrows<ApiException> { admin.restore(adminId, id, null) }
             assertEquals(HttpStatus.CONFLICT to ErrorCodes.INVALID_STATE_TRANSITION, ex.status to ex.code)
+            val single = assertThrows<ApiException> { admin.restorePhoto(adminId, id, held) }
+            assertEquals(HttpStatus.CONFLICT to ErrorCodes.INVALID_STATE_TRANSITION, single.status to single.code)
         }
-        assertEquals(emptyList(), decisionsOf(b) + decisionsOf(other))
+        assertEquals("HIDDEN", status(held))
+        assertEquals(emptyList(), decisionsOf(b))
+    }
+
+    @Test
+    fun `an admin can restore the junk a won appeal left hidden`() {
+        val b = batch()
+        val c = wonAppealCase(b)
+        val junk = List(2) { hidden(b, "AUTO", c) }
+        val own = hidden(b, "PHOTOGRAPHER", null)
+
+        assertEquals(2, admin.restore(adminId, c, "  Junk was fine  ").restoredPhotos)
+
+        assertEquals(listOf("LIVE", "LIVE", "HIDDEN"), (junk + own).map(::status))
+        assertEquals(listOf("ADMIN"), jdbc.queryForList(
+            "SELECT DISTINCT restored_by FROM flag_hidden_photos WHERE batch_id = ? AND held_by = 'AUTO'", String::class.java, b.id))
+        assertEquals(listOf("CLOSED", "APPEAL_WON"), row(c, "stage", "close_reason"), "the restore closes nothing")
+        assertEquals(listOf(listOf(adminId, "relevance_restored", "Junk was fine", c.toString())), decisionsOf(b))
+    }
+
+    @Test
+    fun `a single photo of such a closed case can be restored`() {
+        val b = batch()
+        val c = wonAppealCase(b)
+        val one = hidden(b, "AUTO", c)
+        val rest = hidden(b, "AUTO", c)
+
+        assertEquals(one to "LIVE", admin.restorePhoto(adminId, c, one).let { it.photoId to it.status })
+
+        assertEquals("HIDDEN", status(rest))
+        assertEquals(listOf(listOf(adminId, "relevance_photo_restored", null, c.toString())), decisionsOf(b))
+    }
+
+    @Test
+    fun `a restore and a hide of the same batch both finish`() {
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            repeat(20) { round ->
+                val b = batch()
+                val c = case(b, "JUNK_DUMP")
+                // Every other hold live (the restore takes it), the rest restored automatically (the hide arms it again).
+                List(40) { hidden(b, "AUTO", c) }.forEachIndexed { i, p ->
+                    if (i % 2 == 1) jdbc.update("UPDATE flag_hidden_photos SET restored_at = ?, restored_by = 'AUTO' WHERE photo_id = ?", NOW, p)
+                }
+                val start = CountDownLatch(1)
+                val restore = pool.submit<Unit> {
+                    start.await()
+                    tx.execute { holds.restoreByAdminChunk(b.id, NOW, 1000).takeIf { it.isNotEmpty() }?.let { photos.lockIdsForUpdate(it); holds.unhideReleased(it) } }
+                }
+                val hide = pool.submit<Unit> {
+                    start.await()
+                    tx.execute { holds.hideChunk(b.id, c, b.event, b.photographer, "AUTO", NOW, 1000).takeIf { it.isNotEmpty() }?.let { photos.lockIdsForUpdate(it); holds.hidePhotos(it) } }
+                }
+                start.countDown()
+                // A deadlock aborts one of the two with an exception; get() rethrows it.
+                restore.get(30, TimeUnit.SECONDS)
+                hide.get(30, TimeUnit.SECONDS)
+                assertEquals(40, jdbc.queryForObject("SELECT count(*) FROM flag_hidden_photos WHERE batch_id = ?", Int::class.java, b.id), "round $round")
+            }
+        } finally {
+            pool.shutdownNow()
+        }
     }
 
     @Test
@@ -239,7 +317,7 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         val b = batch()
         val c = case(b, "COPIED")
         val stranger = hidden(batch(), "AUTO", null)
-        val closed = case(batch(), "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN")
+        val closed = batch().let { other -> case(other, "JUNK_DUMP", stage = "CLOSED", closeReason = "RESTORED_BY_ADMIN").also { case(other, "COPIED") } }
 
         assertEquals(ErrorCodes.PHOTO_NOT_FOUND, assertThrows<NotFoundException> { admin.restorePhoto(adminId, c, stranger) }.code)
         val ex = assertThrows<ApiException> { admin.restorePhoto(adminId, closed, stranger) }
@@ -594,6 +672,15 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         b.id, UPLOAD, stage, verdict, note, NOW, mode.takeIf { stage != "DECIDED" }, action(verdict).takeIf { stage != "DECIDED" },
         NOW.takeIf { stage != "DECIDED" }, closeReason?.let { closedAt }, closeReason,
     )
+
+    // A Mixed case closed APPEAL_WON the way the tick closes it (RelevanceJunkHoldsIntegrationTest): a finished scan and a
+    // won appeal. Its junk keeps its holds with no current case.
+    private fun wonAppealCase(b: Batch): UUID = case(b, "MIXED").also { c ->
+        jdbc.update("UPDATE relevance_cases SET scan_state = 'FINISHED' WHERE id = ?", c)
+        jdbc.update("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason, status) VALUES (?, ?, ?, 'Mine', 'WON')",
+            c, b.id, b.photographer)
+        assertEquals(1, tx.execute { cases.closeWonAppeal(c, NOW) })
+    }
 
     private fun action(verdict: String) = when (verdict) {
         "MIXED" -> "HIDE_JUNK"

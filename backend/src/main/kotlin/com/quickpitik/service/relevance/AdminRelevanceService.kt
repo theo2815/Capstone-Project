@@ -158,7 +158,9 @@ class AdminRelevanceService(
                     // RV-4.2: a copied case's payout hold ends with it (the case row is held by the close above).
                     payoutHold.end(case.id, adminId, restore = true)
                 }
-                case.stage == CaseStage.CLOSED.name && case.closeReason == RESTORED_BY_ADMIN && cases.currentFor(case.batchId) == null -> Unit
+                // RVF-11: any closed case of a batch with no current case, so the junk a won appeal left held can be
+                // released. A repeat click of an admin restore stays unlogged.
+                isClosedWithNoCurrent(case) -> if (case.closeReason != RESTORED_BY_ADMIN) logDecision(adminId, case, "relevance_restored", note)
                 else -> throw wrongState()
             }
             case.batchId
@@ -198,12 +200,13 @@ class AdminRelevanceService(
         return cases.caseRow(caseId)!!.toDto()
     }
 
-    // RV-2.5a: one photo of the current case's batch comes back by the one restore rule; another hold or a hidden photo
-    // flag may still keep it, and the answer says so. Its rows take the case, so this case never hides it again.
+    // RV-2.5a: one photo of the current case's batch (RVF-11: or of a closed case's batch with no current case) comes back
+    // by the one restore rule; another hold or a hidden photo flag may still keep it, and the answer says so. Its rows take
+    // the case, so this case never hides it again.
     @Transactional
     fun restorePhoto(adminId: UUID, caseId: UUID, photoId: UUID): RelevancePhotoRestoreDto {
         val case = load(caseId)
-        if (case.stage != CaseStage.APPLIED.name) throw wrongState()
+        if (case.stage != CaseStage.APPLIED.name && !isClosedWithNoCurrent(case)) throw wrongState()
         val batch = batches.findById(case.batchId).orElseThrow()
         holds.photoStatusInBatch(photoId, batch.eventId, batch.photographerId)
             ?: throw NotFoundException("Photo not found in this batch", ErrorCodes.PHOTO_NOT_FOUND)
@@ -223,6 +226,8 @@ class AdminRelevanceService(
                 it.status, (it.watermarkKey ?: it.thumbnailKey)?.let { key -> storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) })
         }, result.totalElements, page)
     }
+
+    private fun isClosedWithNoCurrent(case: RelevanceCase) = case.stage == CaseStage.CLOSED.name && cases.currentFor(case.batchId) == null
 
     private fun load(caseId: UUID): RelevanceCase = cases.findById(caseId).orElseThrow {
         NotFoundException("Relevance case not found", ErrorCodes.RELEVANCE_CASE_NOT_FOUND)

@@ -193,6 +193,9 @@ class AdminRelevanceServiceTest {
     @Test
     fun `a single restore refuses a case that is not current`() {
         val case = appliedCase(action = "HIDE_ALL").apply { stage = "CLOSED"; closeReason = "SUPERSEDED" }
+        // RVF-11: a closed case is refused only while its batch has a newer current case.
+        val newer = appliedCase(action = "HIDE_ALL")
+        Mockito.`when`(cases.currentFor(case.batchId)).thenReturn(newer)
         val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> {
             service.restorePhoto(UUID.randomUUID(), case.id, UUID.randomUUID())
         }
