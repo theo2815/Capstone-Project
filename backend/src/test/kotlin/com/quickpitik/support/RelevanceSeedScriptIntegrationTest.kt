@@ -240,6 +240,22 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
+    fun `the clean-up keeps a Terms acceptance made during the sitting`() {
+        val targets = sixBatches()
+        val accepted = OffsetDateTime.parse("2002-02-02T02:02:02Z")
+        val during = OffsetDateTime.parse("2003-03-03T03:03:03Z")
+        targets.values.forEach { jdbc.update("UPDATE users SET terms_version = '1.5', terms_accepted_at = ? WHERE id = ?", accepted, it.photographer) }
+        assertEquals(0, seed(targets, "-v", "terms_version=$MIN_VERSION").exitCode)
+        val renewed = targets.getValue("FITS").photographer
+        jdbc.update("UPDATE users SET terms_version = '9.9', terms_accepted_at = ? WHERE id = ?", during, renewed)
+
+        assertEquals(0, cleanup().exitCode)
+
+        assertEquals("9.9" to during.toInstant(), termsOf(renewed))
+        assertEquals(listOf("1.5" to accepted.toInstant()), targets.filterKeys { it != "FITS" }.values.map { termsOf(it.photographer) }.distinct())
+    }
+
+    @Test
     fun `the clean-up puts back an empty Terms version as empty`() {
         val targets = sixBatches()
 
