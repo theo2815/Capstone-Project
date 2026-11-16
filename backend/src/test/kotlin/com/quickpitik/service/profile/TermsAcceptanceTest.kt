@@ -78,11 +78,12 @@ class TermsAcceptanceTest {
     }
 
     @Test
-    fun `a blank minimum in the yml counts as unset`() {
+    fun `the yml minimum is the current version and a blank minimum counts as unset`() {
         val env = StandardEnvironment()
         YamlPropertySourceLoader().load("yml", ClassPathResource("application.yml")).forEach { env.propertySources.addLast(it) }
         val bound = Binder.get(env).bind("app.legal", LegalProperties::class.java).get()
-        assertNull(bound.minVersionOrNull())
+        assertEquals("1.7", bound.minVersionOrNull())
+        assertEquals("1.7", bound.currentVersion)
         assertTrue(javaClass.getResource("/application.yml")!!.readText().contains("photographer-min-version:"))
 
         val blank = Binder(MapConfigurationPropertySource(mapOf("app.legal.current-version" to "1.5", "app.legal.photographer-min-version" to " ")))

@@ -134,10 +134,10 @@ app:
   # (V91). No env var on purpose: it changes with the text, in code. The
   # website's LEGAL_VERSION must equal it; "-draft" until the owner approves.
   legal:
-    current-version: "1.6"
+    current-version: "1.7"
     # RV-L4 (P5): photographers who accepted a version below this must accept the current Terms again at sign-in.
-    # Empty = nobody is asked. Set in code together with the legal 1.7 texts, by RV-L7. No env var, like current-version.
-    photographer-min-version:
+    # Empty = nobody is asked. Set to 1.7 with the legal 1.7 texts (RV-L7). No env var, like current-version.
+    photographer-min-version: "1.7"
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
