@@ -29,11 +29,13 @@ class CartItemEntity(
     var eventId: UUID,
 
     /**
-     * The photo's price when this row was written. **Not** the displayed or
-     * charged price — `CartService.toDto` renders and `OrderService.create`
-     * charges the live `photos.price_php`. Its one live use is
-     * `CartService.add`, which compares against it to raise
-     * CART_ITEM_PRICE_CHANGED (H-4) when a runner re-adds a re-priced photo.
+     * The price the runner was last shown for this photo. **Not** the charged
+     * price: `OrderService.create` always charges the live `photos.price_php`.
+     * Uses: `CartService.add` raises CART_ITEM_PRICE_CHANGED (H-4) on a re-add
+     * of a re-priced photo; the cart shows "went up from ₱X" while the live
+     * price is higher (AA-R14); a cart read lowers it to a lower live price
+     * (AF-18 F5); checkout refuses a rise once when the client sends no
+     * expected price, then raises it (AF-12, `OrderService.requireExpectedPrices`).
      */
     @Column(name = "price_php_at_add", nullable = false, precision = 12, scale = 2)
     var pricePhpAtAdd: BigDecimal,
