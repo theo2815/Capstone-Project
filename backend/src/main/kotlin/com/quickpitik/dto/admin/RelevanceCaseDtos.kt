@@ -3,6 +3,7 @@ package com.quickpitik.dto.admin
 import com.quickpitik.entity.CaseAction
 import com.quickpitik.repository.RelevanceAlertRow
 import com.quickpitik.repository.RelevanceCaseRow
+import jakarta.validation.constraints.Pattern
 import jakarta.validation.constraints.Size
 import java.util.UUID
 
@@ -126,8 +127,10 @@ fun RelevanceAlertRow.toDto() = RelevanceAlertDto(
 )
 
 // RV-2.5a: the admin's note on a case action (optional; blank is stored as none).
+// RVF-16 (NIT 1): Postgres refuses a NUL character in TEXT, so one is a 400 here, not a 500 at the write.
 data class RelevanceActionRequest(
     @field:Size(max = 1000)
+    @field:Pattern(regexp = "[^\\x00]*", message = "The note cannot contain a NUL character")
     val note: String? = null,
 )
 

@@ -7,6 +7,7 @@ import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.repository.FlagRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -20,7 +21,7 @@ import java.util.UUID
 // shortcut: the open-flag check is read-then-insert, so two simultaneous raises of
 // the same finding can write two rows; add a partial unique index if admins see doubles.
 @Service
-class SystemFlagService(private val flagRepository: FlagRepository) {
+class SystemFlagService(private val flagRepository: FlagRepository, private val clock: Clock) {
 
     /** Writes an open flag unless the same (kind, target, reason, reporter) is still open or escalated. */
     @Transactional
@@ -59,7 +60,7 @@ class SystemFlagService(private val flagRepository: FlagRepository) {
     @Transactional
     fun holdPayouts(userId: UUID, note: String): UUID = flagRepository.save(
         Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = userId, reason = SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
-            note = note.take(NOTE_MAX)).apply { payoutHoldAt = OffsetDateTime.now() },
+            note = note.take(NOTE_MAX)).apply { payoutHoldAt = OffsetDateTime.now(clock) },
     ).id
 
     // RV-4.5a: an open relevance flag of its own for one copied case, not yet holding; the admin's hold then goes on it

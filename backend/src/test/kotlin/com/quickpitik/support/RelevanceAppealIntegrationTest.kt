@@ -35,6 +35,9 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -319,6 +322,30 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
 
         assertNotNull(jdbc.queryForObject("SELECT suspended_at FROM users WHERE id = ?", OffsetDateTime::class.java, b.photographer))
         assertEquals("OPEN", appeals.findByCaseId(c)!!.status)
+    }
+
+    // RVF-16 (NIT 2): a stranger is refused before the case is locked, so their call never waits on the owner's lock.
+    @Test
+    fun `a stranger's appeal waits for no lock on the case`() {
+        val b = batch()
+        val c = case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL")
+        val stranger = batch().photographer
+        val locked = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val holder = pool.submit { tx.execute { cases.lockCase(c); locked.countDown(); release.await(30, TimeUnit.SECONDS) } }
+            assertTrue(locked.await(10, TimeUnit.SECONDS))
+
+            val call = pool.submit<Throwable?> { runCatching { tx.execute { service().file(stranger, c, "mine") } }.exceptionOrNull() }
+
+            assertTrue(call.get(3, TimeUnit.SECONDS) is NotFoundException)
+            release.countDown()
+            holder.get(10, TimeUnit.SECONDS)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
     }
 
     @Test

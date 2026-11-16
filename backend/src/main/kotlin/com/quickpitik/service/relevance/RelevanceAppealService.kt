@@ -78,6 +78,8 @@ class RelevanceAppealService(
         if (text.isEmpty() || text.length > MAX_REASON || '\u0000' in text) {
             throw ValidationException("An appeal reason must be 1 to 1,000 characters", field = "reason")
         }
+        // RVF-16 (NIT 2): a stranger is refused before the lock, so they never wait on the owner's case row.
+        cases.ownCase(caseId, photographerId) ?: throw notFound()
         cases.lockCase(caseId) ?: throw notFound()
         val row = cases.ownCase(caseId, photographerId) ?: throw notFound()
         if (appeals.findByCaseId(caseId) != null) {

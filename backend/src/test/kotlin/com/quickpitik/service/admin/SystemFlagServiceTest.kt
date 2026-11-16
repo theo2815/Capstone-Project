@@ -9,6 +9,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
+import java.time.Clock
+import java.time.Instant
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,7 +34,7 @@ class SystemFlagServiceTest {
         stubOpen()
     }
 
-    private fun service() = SystemFlagService(flagRepository)
+    private fun service() = SystemFlagService(flagRepository, Clock.fixed(Instant.parse("2010-05-07T02:00:00Z"), ZoneOffset.UTC))
 
     // The rows the duplicate lookup returns: only open or escalated flags of this target and reason.
     private fun stubOpen(vararg rows: Flag, reason: SystemFlagReason = SystemFlagReason.PROFILE_IMAGE_FLAGGED) {
@@ -136,6 +140,14 @@ class SystemFlagServiceTest {
         val note = saved().note
         assertEquals(2000, note.length)
         assertTrue(note.endsWith("b".repeat(20)))
+    }
+
+    // RVF-16 (NIT 3): the hold's time comes from the injected clock, not the system time.
+    @Test
+    fun `a payout hold is stamped with the injected clock`() {
+        service().holdPayouts(targetId, "copied")
+
+        assertEquals(OffsetDateTime.parse("2010-05-07T02:00:00Z"), saved().payoutHoldAt)
     }
 
     @Test
