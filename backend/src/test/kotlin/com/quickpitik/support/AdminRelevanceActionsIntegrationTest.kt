@@ -187,6 +187,19 @@ class AdminRelevanceActionsIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf(listOf(adminId, "relevance_restored", "Junk was fine", c.toString())), decisionsOf(b))
     }
 
+    // RVF-25 review: a repeat click on such a closed case releases nothing, so it writes no second log row.
+    @Test
+    fun `a second restore of such a closed case logs nothing more`() {
+        val b = batch()
+        val c = wonAppealCase(b)
+        hidden(b, "AUTO", c)
+
+        assertEquals(1, admin.restore(adminId, c, null).restoredPhotos)
+        assertEquals(0, admin.restore(adminId, c, null).restoredPhotos)
+
+        assertEquals(listOf("relevance_restored"), decisionsOf(b).map { it[1] })
+    }
+
     @Test
     fun `a single photo of such a closed case can be restored`() {
         val b = batch()

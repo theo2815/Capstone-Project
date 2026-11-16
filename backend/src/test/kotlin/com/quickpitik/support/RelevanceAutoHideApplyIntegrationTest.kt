@@ -329,6 +329,23 @@ class RelevanceAutoHideApplyIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf("APPLIED", "AUTO_HIDE", "HIDE_JUNK"), row(newer, "stage", "applied_mode", "action"))
     }
 
+    // RVF-25 review (P21): a check that started in record-only is still compared with the admin's restore, so it cannot
+    // become a current case that the next auto-hide check with the same verdict replaces and hides again.
+    @Test
+    fun `a check that started in record-only after an admin restore does not open the way to a new hide`() {
+        val b = batch(photos = 600)
+        case(b, "CLOSED", "JUNK_DUMP", applied = "AUTO_HIDE", closeReason = "RESTORED_BY_ADMIN")
+        val frozen = case(b, "DECIDED", "JUNK_DUMP", started = "RECORD_ONLY")
+        service().applyCase(frozen, NOW)
+        // One check in flight per batch: the next one exists only once the first is applied.
+        val next = case(b, "DECIDED", "JUNK_DUMP")
+        service().applyCase(next, NOW)
+
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(frozen, "stage", "close_reason"))
+        assertEquals(listOf("CLOSED", "SAME_VERDICT"), row(next, "stage", "close_reason"))
+        assertNull(cases.currentFor(b.id))
+    }
+
     @Test
     fun `a case whose event turned private is closed skipped`() {
         val b = batch(photos = 600)

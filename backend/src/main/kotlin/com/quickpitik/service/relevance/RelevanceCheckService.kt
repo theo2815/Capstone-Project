@@ -245,7 +245,9 @@ class RelevanceCheckService(
             case.verdictNote == WORDS_ONLY && raiseAlert(case.batchId, case.id, it, case.batchPhotos, mode == RelevanceMode.RECORD_ONLY, now)
         })
         // A.3 (P21): with no current case, an admin's last decision on the batch is what the new case is compared with.
-        val comparator = current ?: if (autoHide) cases.lastClosedByAdmin(case.batchId) else null
+        // By the server's mode, not autoHide: a check that started in record-only must not become a current case that
+        // the next auto-hide check replaces, which would undo the admin's restore (RVF-25 review).
+        val comparator = current ?: if (switch.mode == RelevanceMode.AUTO_HIDE) cases.lastClosedByAdmin(case.batchId) else null
         if (comparator != null) {
             // A failed check changes nothing; a Can't tell never lifts a real hide; the same verdict again is one alert
             // per verdict change, not per check (R7, P8). Each hands its copy and date results to the current case so

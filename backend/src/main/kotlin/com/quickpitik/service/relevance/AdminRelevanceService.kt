@@ -154,6 +154,8 @@ class AdminRelevanceService(
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun restore(adminId: UUID, caseId: UUID, note: String?): RelevanceRestoreDto {
         val now = clock.postgresTimestamp()
+        // RVF-11: a closed case's restore is logged with the first chunk it releases, so a repeat click logs nothing.
+        var logWhenReleased: RelevanceCase? = null
         val batchId = transactions.execute {
             val case = load(caseId)
             when {
@@ -170,7 +172,7 @@ class AdminRelevanceService(
                 }
                 // RVF-11: any closed case of a batch with no current case, so the junk a won appeal left held can be
                 // released. A repeat click of an admin restore stays unlogged.
-                isClosedWithNoCurrent(case) -> if (case.closeReason != RESTORED_BY_ADMIN) logDecision(adminId, case, "relevance_restored", note)
+                isClosedWithNoCurrent(case) -> if (case.closeReason != RESTORED_BY_ADMIN) logWhenReleased = case
                 else -> throw wrongState()
             }
             case.batchId
@@ -179,7 +181,10 @@ class AdminRelevanceService(
         while (true) {
             // A newer case that became current meanwhile owns the holds from now on.
             val n = transactions.execute {
-                if (cases.currentFor(batchId) != null) 0 else unhide(holds.restoreByAdminChunk(batchId, now, props.hide.chunkSize))
+                val released = if (cases.currentFor(batchId) != null) 0 else unhide(holds.restoreByAdminChunk(batchId, now, props.hide.chunkSize))
+                if (released > 0) logWhenReleased?.let { logDecision(adminId, it, "relevance_restored", note) }
+                logWhenReleased = null
+                released
             }!!
             if (n == 0) break
             restored += n
