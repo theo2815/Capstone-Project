@@ -562,6 +562,81 @@ class AccountDeletionScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(0, count("SELECT count(*) FROM relevance_appeals WHERE batch_id = ?", batch))
     }
 
+    // RVF-15 (RVR-4 b): no admin can release a photographer's own hide, so the run ends it itself, as the app's undo does.
+    private class OwnHide(val batch: UUID, val case: UUID)
+
+    private fun ownHide(s: Studio): OwnHide {
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", s.event, s.photographer)
+        val case = id(
+            "INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage) " +
+                "VALUES (?, 'QUIET', TIMESTAMPTZ '2003-02-03 04:05:06+00', 40, 'APPLIED')",
+            batch,
+        )
+        jdbc.update("UPDATE photos SET status = 'HIDDEN', watermark_s3_key = 'del/wm.jpg' WHERE id = ?", s.soldPhoto)
+        jdbc.update("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, 'PHOTOGRAPHER', ?, now())",
+            batch, s.soldPhoto, case)
+        return OwnHide(batch, case)
+    }
+
+    private fun photoStatus(photo: UUID): String = jdbc.queryForObject("SELECT status FROM photos WHERE id = ?", String::class.java, photo)!!
+
+    @Test
+    fun `a photographer's own hide does not refuse the deletion, and the photo is put back before it is binned`() {
+        val s = seedStudio()
+        ownHide(s)
+
+        val dry = anonymise(s.photographer)
+
+        assertEquals(0, dry.exitCode, dry.stderr)
+        assertTrue(Regex("""flag_hidden_photos held by the photographer \(released first\)\s*\|\s*1\s""").containsMatchIn(dry.stdout), dry.stdout)
+        assertEquals("HIDDEN", photoStatus(s.soldPhoto), "a dry run changes nothing")
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals("LIVE", photoStatus(s.soldPhoto))
+        assertEquals(1, count("SELECT count(*) FROM photos WHERE id = ? AND deleted_at IS NOT NULL", s.soldPhoto))
+        assertEquals(0, count("SELECT count(*) FROM flag_hidden_photos WHERE photo_id = ?", s.soldPhoto))
+    }
+
+    @Test
+    fun `an automatic hold still refuses the deletion`() {
+        for (kind in listOf("AUTO", "ADMIN")) {
+            val s = seedStudio()
+            val own = ownHide(s)
+            jdbc.update("INSERT INTO flag_hidden_photos (batch_id, photo_id, held_by, case_id, hidden_at) VALUES (?, ?, ?, ?, now())",
+                own.batch, s.soldPhoto, kind, own.case)
+
+            assertRefusedUnchanged(s.photographer)
+            assertEquals("HIDDEN", photoStatus(s.soldPhoto), kind)
+            assertEquals(2, count("SELECT count(*) FROM flag_hidden_photos WHERE batch_id = ? AND restored_at IS NULL", own.batch), kind)
+        }
+    }
+
+    @Test
+    fun `an open appeal still refuses it`() {
+        val s = seedStudio()
+        val own = ownHide(s)
+        jdbc.update("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason) VALUES (?, ?, ?, 'mine')", own.case, own.batch, s.photographer)
+
+        assertRefusedUnchanged(s.photographer)
+        assertEquals("HIDDEN", photoStatus(s.soldPhoto))
+    }
+
+    // The one restore rule: the photo comes back only through the conditional UPDATE, so a second hold keeps it hidden.
+    @Test
+    fun `a photo that a hidden-photo flag also holds stays hidden`() {
+        val s = seedStudio()
+        ownHide(s)
+        jdbc.update("INSERT INTO flags (target_kind, target_id, reason, status) VALUES ('photo', ?, 'other', 'hidden')", s.soldPhoto)
+
+        val result = anonymise(s.photographer, confirm = "yes")
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertEquals("HIDDEN", photoStatus(s.soldPhoto))
+        assertEquals(1, count("SELECT count(*) FROM photos WHERE id = ? AND deleted_at IS NOT NULL", s.soldPhoto))
+    }
+
     private fun assertRefusedUnchanged(photographer: UUID) {
         val before = email(photographer)
         val result = anonymise(photographer, confirm = "yes")
