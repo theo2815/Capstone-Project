@@ -129,10 +129,10 @@ function AppealForm({ c, outcome }: { c: PhotographerRelevanceCase; outcome: str
         />
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p id="relevance-appeal-hint" className="text-sm text-slate">{APPEAL_FORM.hint}</p>
-          <Kicker as="p" tone="soft" tnum aria-hidden="true" className={cn(tooLong && "text-error")}>{APPEAL_FORM.counter(reason.length)}</Kicker>
+          <Kicker as="p" tone="soft" tnum aria-hidden="true" className={cn(tooLong && "text-error")}>{APPEAL_FORM.counter(trimmed.length)}</Kicker>
         </div>
       </fieldset>
-      <FieldError id="relevance-appeal-error" message={error} />
+      <FieldError id="relevance-appeal-error" message={tooLong ? APPEAL_FORM.tooLong : error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
         <button type="button" disabled={busy} onClick={() => { setReason(""); setError(null); }} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
           {APPEAL_FORM.cancel}

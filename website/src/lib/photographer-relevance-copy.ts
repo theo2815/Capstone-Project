@@ -23,7 +23,13 @@ const offSaleIn = (eventName: string) => `Your photos in ${eventName} are off sa
 
 // The note texts of a hiding case, by verdict (V2-T11 to V2-T14, V2-T23). `eventDate` is V2-T13's {eventDate}; without
 // it the wrong-event body is left out whole, so its "So our system…" sentence never stands first.
+// RVF-18: like appealText, it follows lostAppealCounts and payoutHoldBinds; a missing field reads as before.
 export function hiddenCaseText(c: PhotographerRelevanceCase, eventDate: string | null): CaseText {
+  // An admin's hide (V2-T24): no "our system", no confirmed-case or payout sentence (the appeal block adds those).
+  if (c.lostAppealCounts === false && (c.verdict === "JUNK_DUMP" || c.verdict === "WRONG_EVENT" || c.verdict === "COPIED"))
+    return { title: offSaleIn(c.eventName), outcome: [WIN_RESCAN], body: [
+      `Our automatic check found a problem with your photos in ${c.eventName}.`,
+      "A person at QuickPitik looked at the results and has taken all your photos in this event off sale.", NEW_TOO] };
   switch (c.verdict) {
     case "MIXED":
       return { title: "Some of your photos are off sale", outcome: [], body: [checked(c),
@@ -33,6 +39,9 @@ export function hiddenCaseText(c: PhotographerRelevanceCase, eventDate: string |
         `Many of your ${c.batchPhotos} photos in ${c.eventName} seem to be from a different event: their camera dates are far from the event's date (${eventDate}), or the words printed in them name a different race.`,
         ALL_OFF, NEW_TOO] : [] };
     case "COPIED":
+      // An automatic Copied hide whose payout hold has ended: V2-T14's first sentence and the shared "So our system…".
+      if (c.payoutHoldBinds === false) return { title: offSaleIn(c.eventName), outcome: [CONFIRMED], body: [
+        `Many of your ${c.batchPhotos} photos in ${c.eventName} match photos that another photographer uploaded.`, ALL_OFF] };
       return { title: "Photos off sale and payouts on hold", outcome: [CONFIRMED], body: [
         `Many of your ${c.batchPhotos} photos in ${c.eventName} match photos that another photographer uploaded.`,
         "So our system has taken all your photos in this event off sale, and your payouts are on hold.",
@@ -110,6 +119,7 @@ export const APPEAL_FORM = {
   line: (appealBy: string) => `You can appeal until ${appealBy}, 14 days from our message. You can appeal this decision once. A person at QuickPitik will look at photos from the check and decide within 14 days.`,
   label: "Why do you think this decision is wrong?",
   hint: "Up to 1,000 characters. You cannot add files.",
+  tooLong: "Your reason is too long. Please keep it to 1,000 characters.", // W1 (RVF-18), approved 2026-11-17
   counter: (typed: number) => `${typed.toLocaleString("en-US")}/1,000`,
   send: "Send appeal",
   cancel: "Cancel",
