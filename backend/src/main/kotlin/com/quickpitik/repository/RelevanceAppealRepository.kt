@@ -20,6 +20,10 @@ interface RelevanceAppealRepository : JpaRepository<RelevanceAppeal, UUID> {
     @Query(value = "SELECT * FROM relevance_appeals WHERE id = :id FOR UPDATE", nativeQuery = true)
     fun lockAppeal(@Param("id") id: UUID): RelevanceAppeal?
 
+    // RVF-13: an admin restore locks the case's appeal by its case, without loading it first (a stale copy).
+    @Query(value = "SELECT * FROM relevance_appeals WHERE case_id = :caseId FOR UPDATE", nativeQuery = true)
+    fun lockByCaseId(@Param("caseId") caseId: UUID): RelevanceAppeal?
+
     // RV-3.2 part b: the admin's appeals list, newest first; :status is OPEN, WON, LOST or all (the service checks it).
     // The event and the people are left joins, so an appeal whose event was deleted stays listed.
     @Query(value = "SELECT $APPEAL_ROW $APPEAL_FROM WHERE (:status = 'all' OR a.status = :status) ORDER BY a.created_at DESC, a.id",

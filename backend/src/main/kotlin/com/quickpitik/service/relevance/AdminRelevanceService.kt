@@ -16,6 +16,7 @@ import com.quickpitik.dto.admin.RelevanceRestoreDto
 import com.quickpitik.dto.admin.RelevanceSampleDto
 import com.quickpitik.dto.admin.RelevanceWordDto
 import com.quickpitik.dto.admin.toDto
+import com.quickpitik.entity.AppealStatus
 import com.quickpitik.entity.CaseAction
 import com.quickpitik.entity.CaseStage
 import com.quickpitik.entity.CaseVerdict
@@ -29,6 +30,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.BatchRelevanceRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.RelevanceAlertRepository
+import com.quickpitik.repository.RelevanceAppealRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceHoldRepository
 import com.quickpitik.repository.RelevanceStrikeRepository
@@ -42,6 +44,7 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Clock
+import java.time.OffsetDateTime
 import java.util.UUID
 
 // RV-1.10 (plan 5.11): the reads behind the admin Photo Relevance page, and marking an alert seen. It reads cases,
@@ -64,6 +67,8 @@ class AdminRelevanceService(
     private val strikes: RelevanceStrikeRepository,
     private val payoutHold: RelevanceHoldService,
     private val users: UserRepository,
+    private val appeals: RelevanceAppealRepository,
+    private val notifier: RelevanceNotifier,
 ) {
 
     // RV-L7 part a (legal 1.7): the photographer withdrew the consent to automatic actions, in any mode. From then on the
@@ -155,6 +160,7 @@ class AdminRelevanceService(
                 case.stage == CaseStage.APPLIED.name -> {
                     if (cases.closeByAdmin(case.id, RESTORED_BY_ADMIN, adminId, now) != 1) throw wrongState()
                     logDecision(adminId, case, "relevance_restored", note)
+                    closeOpenAppeal(adminId, case, note, now)
                     // RVF-12: a confirmed case's strike stops counting; a case never confirmed has none to void. The
                     // photographer's row is locked first (case, then user, as the confirmer) so a concurrent count sees it.
                     strikes.lockPhotographerOf(case.id)
@@ -229,6 +235,22 @@ class AdminRelevanceService(
             RelevanceHiddenPhotoDto(it.photoId, it.heldBy, it.hiddenAt?.toString(), it.restoredAt?.toString(), it.restoredBy,
                 it.status, (it.watermarkKey ?: it.thumbnailKey)?.let { key -> storage.presignedGetUrl(key, storageProperties.presignedTtl.thumbnail) })
         }, result.totalElements, page)
+    }
+
+    // RVF-13 (Q5): the restore accepts the case's open appeal, so it no longer blocks the batch's next one, and the
+    // photographer gets V2-T18's second form under the decide route's key, so it is sent once. The case row is held by
+    // the close, so the order is the case, then the appeal, as in filing and deciding. Only an auto-hide case has one.
+    private fun closeOpenAppeal(adminId: UUID, case: RelevanceCase, note: String?, now: OffsetDateTime) {
+        val appeal = appeals.lockByCaseId(case.id)?.takeIf { it.status == AppealStatus.OPEN.name } ?: return
+        appeal.status = AppealStatus.WON.name
+        appeal.decidedAt = now
+        appeal.decidedBy = adminId
+        appeal.decisionNote = note?.trim()?.ifBlank { null }
+        appeals.save(appeal)
+        decisionLog.logUserDecision(adminId, appeal.photographerId, "relevance_appeal_won", appeal.decisionNote,
+            meta = mapOf("caseId" to case.id.toString(), "appealId" to appeal.id.toString()))
+        val eventName = cases.ownCase(case.id, appeal.photographerId)!!.eventName
+        notifier.deliver(appeal.photographerId, case.id, "relevance:${appeal.id}:won", RelevanceNotices.appealWon(eventName, wholeBatch = false))
     }
 
     private fun isClosedWithNoCurrent(case: RelevanceCase) = case.stage == CaseStage.CLOSED.name && cases.currentFor(case.batchId) == null

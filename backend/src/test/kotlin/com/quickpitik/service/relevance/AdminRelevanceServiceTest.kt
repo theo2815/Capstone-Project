@@ -41,7 +41,8 @@ class AdminRelevanceServiceTest {
         decisionLog, com.quickpitik.support.testTransactionTemplate(),
         RelevanceSwitch(props, com.quickpitik.config.AdminProperties(flagsEnabled = true), com.quickpitik.config.AiApiProperties()),
         Mockito.mock(com.quickpitik.repository.RelevanceStrikeRepository::class.java), Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java),
-        Mockito.mock(com.quickpitik.repository.UserRepository::class.java))
+        Mockito.mock(com.quickpitik.repository.UserRepository::class.java),
+        Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java), Mockito.mock(RelevanceNotifier::class.java))
 
     @Test
     fun `the hidden tab lists cases with an action, marked would-have in record-only`() {

@@ -275,7 +275,9 @@ class RelevanceConsentWithdrawalIntegrationTest : PostgresIntegrationTest() {
 
     private fun adminService() = AdminRelevanceService(cases, alerts, batchRepo, props(RelevanceMode.AUTO_HIDE, 1000, 10),
         Mockito.mock(com.quickpitik.service.storage.StorageService::class.java), com.quickpitik.config.StorageProperties(), Clock.systemUTC(),
-        holds, photoRepo, decisionLog, tx, switch(RelevanceMode.AUTO_HIDE), strikes, hold(), users)
+        holds, photoRepo, decisionLog, tx, switch(RelevanceMode.AUTO_HIDE), strikes, hold(), users,
+        Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java),
+        Mockito.mock(com.quickpitik.service.relevance.RelevanceNotifier::class.java))
 
     // A measured photo of the batch, hidden and held AUTO under the case.
     private fun held(b: Batch, caseId: UUID, sharpness: Double): UUID {

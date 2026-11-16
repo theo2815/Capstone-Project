@@ -438,7 +438,8 @@ class RelevanceConfirmIntegrationTest : PostgresIntegrationTest() {
         val props = props(RelevanceMode.AUTO_HIDE)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
             fixed(NOW), holds, photoRepo, decisions(), tx, switch(props), strikes, Mockito.mock(com.quickpitik.service.relevance.RelevanceHoldService::class.java),
-            Mockito.mock(com.quickpitik.repository.UserRepository::class.java))
+            Mockito.mock(com.quickpitik.repository.UserRepository::class.java), Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java),
+            Mockito.mock(RelevanceNotifier::class.java))
     }
 
     private fun fixed(at: OffsetDateTime): Clock = Clock.fixed(at.toInstant(), ZoneOffset.UTC)

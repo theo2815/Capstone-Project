@@ -290,7 +290,8 @@ class AdminRelevanceNoConsentIntegrationTest : PostgresIntegrationTest() {
 
     private fun service(mode: RelevanceMode = RelevanceMode.AUTO_HIDE) = AdminRelevanceService(cases, alerts, batches, props(mode),
         Mockito.mock(StorageService::class.java), StorageProperties(), Clock.systemUTC(), holds, photos, decisions, tx, switch(mode),
-        strikes, payoutHold(mode), users)
+        strikes, payoutHold(mode), users, Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java),
+        Mockito.mock(RelevanceNotifier::class.java))
 
     private fun checks(): RelevanceCheckService {
         val mode = RelevanceMode.AUTO_HIDE

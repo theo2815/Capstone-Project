@@ -428,7 +428,8 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
     private fun admin(mode: RelevanceMode, flagsEnabled: Boolean = true): AdminRelevanceService {
         val props = props(mode)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
-            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled), users)
+            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled), users,
+            Mockito.mock(com.quickpitik.repository.RelevanceAppealRepository::class.java), Mockito.mock(RelevanceNotifier::class.java))
     }
 
     private fun appealService(flagsEnabled: Boolean = true): RelevanceAppealService {
