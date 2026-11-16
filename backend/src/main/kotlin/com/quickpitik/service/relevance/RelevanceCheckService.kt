@@ -497,8 +497,8 @@ class RelevanceCheckService(
         }
         val counts = sampleCounts(scores, props)
         val band = band(case.batchPhotos, scores.size, counts, props)
-        // A RULES re-check decides on the sample it copied: it never pays for a second round (P9).
-        if (case.sampleRound.toInt() == 1 && case.trigger != RULES && band != CaseBand.SMALL && band != CaseBand.UNKNOWN &&
+        // A RULES re-check or a RETRY decides on the sample it copied: it never pays for a second round (P9, RVF-4).
+        if (case.sampleRound.toInt() == 1 && case.trigger != RULES && case.trigger != RETRY && band != CaseBand.SMALL && band != CaseBand.UNKNOWN &&
             nearDumpLine(counts, props)) {
             val picked = transactions.execute {
                 if (cases.startRoundTwo(row.caseId, token) != 1) return@execute -1
@@ -516,7 +516,8 @@ class RelevanceCheckService(
     private fun startChecks() {
         val now = clock.postgresTimestamp()
         val quietCutoff = now.minusMinutes(props.quietMinutes)
-        val due = batches.findCheckDue(quietCutoff, now, props.check.countTrigger, props.check.maxBatchesPerTick)
+        val due = batches.findCheckDue(quietCutoff, now, props.check.countTrigger, now.minusMinutes(props.check.retryAfterMinutes),
+            props.check.maxRetries, props.check.maxBatchesPerTick)
         if (due.isEmpty()) return
         val timer = Timer.start(registry)
         var started = 0
@@ -543,14 +544,19 @@ class RelevanceCheckService(
         try {
             return transactions.execute { status ->
                 // Another copy may have started this check after our due list was read.
-                val fresh = batches.findCheckDueFor(id, token, quietCutoff, props.check.countTrigger) ?: return@execute false
+                val fresh = batches.findCheckDueFor(id, token, quietCutoff, props.check.countTrigger,
+                    now.minusMinutes(props.check.retryAfterMinutes), props.check.maxRetries) ?: return@execute false
                 val uploadAt = fresh.lastUploadAt.atOffset(ZoneOffset.UTC)
                 // RULES (P9): the current case's sample and round, so the re-check costs one model call and no AWS call.
                 val current = if (fresh.trigger == RULES) cases.currentFor(id) ?: return@execute false else null
+                // RVF-4: a RETRY starts from the latest case (a skipped batch may have no current one), its sample and round.
+                val latest = if (fresh.trigger == RETRY) cases.latestFor(id) ?: return@execute false else null
                 val case = cases.saveAndFlush(RelevanceCase(batchId = id, trigger = fresh.trigger, uploadAt = uploadAt,
-                    batchPhotos = fresh.photoCount, sampleRound = current?.sampleRound ?: 1))
+                    batchPhotos = fresh.photoCount, sampleRound = (current ?: latest)?.sampleRound ?: 1))
                 if (current != null) cases.copySample(case.id, current.id)
-                else cases.pickSample(case.id, fresh.eventId, fresh.photographerId, 1, props.check.sampleSize)
+                else if (latest == null || cases.copySample(case.id, latest.id) == 0) {
+                    cases.pickSample(case.id, fresh.eventId, fresh.photographerId, 1, props.check.sampleSize)
+                }
                 if (batches.markChecked(id, token, uploadAt, fresh.photoCount) != 1) {
                     status.setRollbackOnly()
                     return@execute false
@@ -654,6 +660,7 @@ class RelevanceCheckService(
 
     private companion object {
         const val RULES = "RULES"
+        const val RETRY = "RETRY"
         // The automatic hold kind in flag_hidden_photos.held_by (V106).
         const val AUTO = "AUTO"
         // RV-2.5b: the verdict_note of a case an admin hid from the page.

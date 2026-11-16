@@ -139,6 +139,10 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     @Query(value = "SELECT * FROM relevance_cases WHERE batch_id = :batchId AND stage = 'APPLIED'", nativeQuery = true)
     fun currentFor(@Param("batchId") batchId: UUID): RelevanceCase?
 
+    // RVF-4: the batch's latest case, whatever its stage; a RETRY check starts from it (the due rule reads the same one).
+    @Query(value = "SELECT * FROM relevance_cases WHERE batch_id = :batchId ORDER BY created_at DESC, id DESC LIMIT 1", nativeQuery = true)
+    fun latestFor(@Param("batchId") batchId: UUID): RelevanceCase?
+
     // RV-1.8b (P9): a RULES re-check takes the current case's sample as it is, so it measures nothing new.
     @Modifying
     @Query(value = """

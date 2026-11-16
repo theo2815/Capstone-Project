@@ -72,7 +72,7 @@ class RelevanceCheckServiceTest {
         order.verify(cases).findHoldTargets()
         order.verify(cases).findSampling(anyArg(), Mockito.anyInt())
         order.verify(cases).findDeciding(anyArg(), anyArg(), Mockito.anyInt())
-        order.verify(batches).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
+        order.verify(batches).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
         order.verify(cases).findScans(Mockito.anyInt())
     }
 
@@ -179,13 +179,13 @@ class RelevanceCheckServiceTest {
     }
 
     private fun listed(vararg rows: CheckDue) {
-        Mockito.`when`(batches.findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())).thenReturn(rows.toList())
+        Mockito.`when`(batches.findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt(), Mockito.anyInt())).thenReturn(rows.toList())
     }
 
     // A batch whose claim is won and which is still due when read again.
     private fun startable(row: CheckDue) {
         Mockito.`when`(batches.claimCheck(eqArg(row.batchId!!), anyArg(), anyArg(), anyArg())).thenReturn(1)
-        Mockito.`when`(batches.findCheckDueFor(eqArg(row.batchId!!), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(row)
+        Mockito.`when`(batches.findCheckDueFor(eqArg(row.batchId!!), anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt())).thenReturn(row)
         Mockito.`when`(batches.markChecked(eqArg(row.batchId!!), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
         Mockito.`when`(cases.saveAndFlush(anyArg<RelevanceCase>())).thenAnswer { it.getArgument<RelevanceCase>(0) }
     }
@@ -210,14 +210,14 @@ class RelevanceCheckServiceTest {
     fun `with no model key no check starts`() {
         listed(due())
         service(key = "").tick()
-        Mockito.verify(batches, Mockito.never()).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
+        Mockito.verify(batches, Mockito.never()).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
     }
 
     @Test
     fun `with no label client no check starts`() {
         listed(due())
         service(key = "sk-test", labels = null).tick()
-        Mockito.verify(batches, Mockito.never()).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
+        Mockito.verify(batches, Mockito.never()).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
     }
 
     @Test
@@ -402,7 +402,7 @@ class RelevanceCheckServiceTest {
 
         service(key = "sk-test").tick()
 
-        Mockito.verify(batches, Mockito.never()).findCheckDueFor(anyArg(), anyArg(), anyArg(), Mockito.anyInt())
+        Mockito.verify(batches, Mockito.never()).findCheckDueFor(anyArg(), anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt())
         noCaseWorkBeyondTheSamplingList()
         Mockito.verify(batches, Mockito.never()).releaseCheck(anyArg(), anyArg())
     }
@@ -410,7 +410,7 @@ class RelevanceCheckServiceTest {
     @Test
     fun `a stale due list after another copy started the check starts nothing`() {
         val row = due().also { listed(it); startable(it) }
-        Mockito.`when`(batches.findCheckDueFor(eqArg(row.batchId!!), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(null)
+        Mockito.`when`(batches.findCheckDueFor(eqArg(row.batchId!!), anyArg(), anyArg(), Mockito.anyInt(), anyArg(), Mockito.anyInt())).thenReturn(null)
 
         service(key = "sk-test").tick()
 

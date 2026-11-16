@@ -117,6 +117,10 @@ data class RelevanceProperties(
         val waitForRulesMinutes: Long = 30,
         // Model calls per case; when the last one fails the case is stored as can't tell (CALL_FAILED).
         val decideMaxAttempts: Int = 3,
+        // RVF-4: a check that gave no usable result (a failed model call, or a skip) is tried again this long after it
+        // ended, at most maxRetries times for one upload; 0 turns retries off.
+        val retryAfterMinutes: Long = 60,
+        val maxRetries: Int = 3,
     ) {
         init {
             require(minBatchSize >= 1) { "minBatchSize must be at least 1" }
@@ -131,6 +135,8 @@ data class RelevanceProperties(
             require(measureMaxTries >= 1) { "measureMaxTries must be at least 1" }
             require(waitForRulesMinutes >= 0) { "waitForRulesMinutes must not be negative" }
             require(decideMaxAttempts >= 1) { "decideMaxAttempts must be at least 1" }
+            require(retryAfterMinutes >= 1) { "retryAfterMinutes must be at least 1" }
+            require(maxRetries >= 0) { "maxRetries must not be negative" }
         }
     }
 

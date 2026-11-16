@@ -376,6 +376,9 @@ app:
       # A case waits this long for version 1 to score its upload before it is decided without the newest copy and date results.
       wait-for-rules-minutes: ${RELEVANCE_CHECK_WAIT_FOR_RULES_MINUTES:30}
       decide-max-attempts: ${RELEVANCE_CHECK_DECIDE_MAX_ATTEMPTS:3}
+      # A check that failed or was skipped is tried again this long after it ended, at most max-retries times per upload (0 = never).
+      retry-after-minutes: ${RELEVANCE_CHECK_RETRY_AFTER_MINUTES:60}
+      max-retries: ${RELEVANCE_CHECK_MAX_RETRIES:3}
     words:
       # Once a batch has settled (settle-days after its final scoring), words on under this share of its photos are deleted.
       min-share-percent: ${RELEVANCE_WORDS_MIN_SHARE_PERCENT:3}

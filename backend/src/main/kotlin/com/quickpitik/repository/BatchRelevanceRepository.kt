@@ -267,6 +267,8 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("quietCutoff") quietCutoff: OffsetDateTime,
         @Param("now") now: OffsetDateTime,
         @Param("countTrigger") countTrigger: Int,
+        @Param("retryCutoff") retryCutoff: OffsetDateTime,
+        @Param("maxRetries") maxRetries: Int,
         @Param("limit") limit: Int,
     ): List<CheckDue>
 
@@ -279,6 +281,8 @@ interface BatchRelevanceRepository : JpaRepository<BatchRelevance, UUID> {
         @Param("token") token: UUID,
         @Param("quietCutoff") quietCutoff: OffsetDateTime,
         @Param("countTrigger") countTrigger: Int,
+        @Param("retryCutoff") retryCutoff: OffsetDateTime,
+        @Param("maxRetries") maxRetries: Int,
     ): CheckDue?
 
     // R5: one changed row means the claim is the caller's. It only stops two server copies working at once.
@@ -567,11 +571,23 @@ private const val COUNT_DUE = "(ep.last_upload_at > :quietCutoff AND ep.photo_co
 private const val RULES_DUE = """(ep.last_upload_at <= :quietCutoff AND br.scored_upload_at = ep.last_upload_at
      AND EXISTS (SELECT 1 FROM relevance_cases a WHERE a.batch_id = br.id AND a.stage = 'APPLIED'
                  AND (a.copy_low IS DISTINCT FROM br.copy_low OR a.date_low IS DISTINCT FROM br.date_low)))"""
+// RVF-4 (RVR-11): or it is quiet and its latest case, of this same upload and not seeded, gave no usable result (a skip,
+// or a failed model call: the notes are RelevanceCheckService.FAILED_CALL) and ended :retryCutoff or earlier, and fewer
+// than :maxRetries RETRY cases of this upload exist (RETRY). A newer upload is QUIET's.
+private const val RETRY_DUE = """(ep.last_upload_at <= :quietCutoff AND EXISTS (
+     SELECT 1 FROM (SELECT * FROM relevance_cases x WHERE x.batch_id = br.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) l
+     WHERE l.trigger <> 'SEEDED' AND l.upload_at = ep.last_upload_at
+       AND ((l.stage = 'CLOSED' AND l.close_reason IN ('SKIPPED', 'NO_RESULT'))
+            OR (l.stage = 'APPLIED' AND l.verdict = 'CANT_TELL'
+                AND l.verdict_note IN ('CALL_FAILED', 'CUT_OFF', 'BAD_JSON', 'UNKNOWN_VALUE')))
+       AND COALESCE(l.closed_at, l.applied_at) <= :retryCutoff
+       AND (SELECT count(*) FROM relevance_cases r
+            WHERE r.batch_id = br.id AND r.upload_at = ep.last_upload_at AND r.trigger = 'RETRY') < :maxRetries))"""
 
 private const val CHECK_DUE_COLUMNS = """
     br.id AS "batchId", ep.event_id AS "eventId", ep.photographer_id AS "photographerId",
     ep.last_upload_at AS "lastUploadAt", ep.photo_count AS "photoCount",
-    CASE WHEN $QUIET_DUE THEN 'QUIET' WHEN $COUNT_DUE THEN 'COUNT' ELSE 'RULES' END AS "trigger"
+    CASE WHEN $QUIET_DUE THEN 'QUIET' WHEN $COUNT_DUE THEN 'COUNT' WHEN $RULES_DUE THEN 'RULES' ELSE 'RETRY' END AS "trigger"
 """
 
 private const val CHECK_DUE_FROM = """
@@ -582,7 +598,7 @@ private const val CHECK_DUE_FROM = """
     WHERE NOT EXISTS (SELECT 1 FROM relevance_cases c
                       WHERE c.batch_id = br.id AND c.stage IN ('SAMPLING', 'DECIDING', 'DECIDED'))
       AND $NO_OPEN_APPEAL
-      AND ($QUIET_DUE OR $COUNT_DUE OR $RULES_DUE)
+      AND ($QUIET_DUE OR $COUNT_DUE OR $RULES_DUE OR $RETRY_DUE)
 """
 
 // lastUploadAt keeps microseconds: the QUIET rule compares it with checked_upload_at for equality.

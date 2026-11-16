@@ -31,7 +31,7 @@ class RelevancePropertiesTest {
             raceLabels = listOf("Running", "Marathon", "Road"), fitsBelowPercent = 10, dumpAbovePercent = 70), p.junk)
         assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5, sampleSize = 300, countTrigger = 500,
             tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10, measuresPerTick = 60, workers = 2,
-            measureMaxTries = 5, waitForRulesMinutes = 30, decideMaxAttempts = 3), p.check)
+            measureMaxTries = 5, waitForRulesMinutes = 30, decideMaxAttempts = 3, retryAfterMinutes = 60, maxRetries = 3), p.check)
         assertEquals(RelevanceProperties.Words(minSharePercent = 3, topN = 30), p.words)
         assertEquals(RelevanceProperties.Llm(apiKey = "", baseUrl = "https://api.anthropic.com", model = "claude-sonnet-5-5",
             connectTimeout = Duration.ofSeconds(5), readTimeout = Duration.ofSeconds(30), maxAttempts = 3,
@@ -89,6 +89,7 @@ class RelevancePropertiesTest {
             "RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3", "RELEVANCE_CHECK_CLAIM_MINUTES:10",
             "RELEVANCE_CHECK_MEASURES_PER_TICK:60", "RELEVANCE_CHECK_WORKERS:2", "RELEVANCE_CHECK_MEASURE_MAX_TRIES:5",
             "RELEVANCE_CHECK_WAIT_FOR_RULES_MINUTES:30", "RELEVANCE_CHECK_DECIDE_MAX_ATTEMPTS:3",
+            "RELEVANCE_CHECK_RETRY_AFTER_MINUTES:60", "RELEVANCE_CHECK_MAX_RETRIES:3",
             "RELEVANCE_WORDS_MIN_SHARE_PERCENT:3", "RELEVANCE_WORDS_TOP_N:30",
             "RELEVANCE_LLM_API_KEY:}","RELEVANCE_LLM_BASE_URL:https://api.anthropic.com", "RELEVANCE_LLM_MODEL:claude-sonnet-5-5",
             "RELEVANCE_LLM_CONNECT_TIMEOUT:5s", "RELEVANCE_LLM_READ_TIMEOUT:30s", "RELEVANCE_LLM_MAX_ATTEMPTS:3",
@@ -154,6 +155,15 @@ class RelevancePropertiesTest {
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(measureMaxTries = 0) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(waitForRulesMinutes = -1) }
         assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(decideMaxAttempts = 0) }
+    }
+
+    @Test fun `a wait below one minute fails boot`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(retryAfterMinutes = 0) }
+    }
+
+    @Test fun `a negative max-retries fails boot`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(maxRetries = -1) }
+        RelevanceProperties.Check(maxRetries = 0)
     }
 
     @Test fun `a tight distance above the weak distance is refused`() {
