@@ -51,9 +51,9 @@ class TermsAcceptanceTest {
     private fun user(role: Role, accepted: String?) = User(email = "terms@test.local", passwordHash = "x", name = "Terms", role = role,
         termsVersion = accepted).also { Mockito.`when`(users.findById(it.id)).thenReturn(Optional.of(it)) }
 
-    private fun profile(legal: LegalProperties) = ProfileService(users, Mockito.mock(PasswordEncoder::class.java),
+    private fun profile(legal: LegalProperties, at: Instant = now) = ProfileService(users, Mockito.mock(PasswordEncoder::class.java),
         Mockito.mock(RefreshTokenService::class.java), mapper(legal), Mockito.mock(LoginAttemptService::class.java), legal,
-        Clock.fixed(now, ZoneOffset.UTC))
+        Clock.fixed(at, ZoneOffset.UTC))
 
     @Test
     fun `a photographer below the minimum must accept`() {
@@ -118,6 +118,19 @@ class TermsAcceptanceTest {
         assertEquals(OffsetDateTime.ofInstant(now, ZoneOffset.UTC), photographer.termsAcceptedAt)
         assertFalse(dto.termsAcceptanceRequired)
         assertEquals("1.7", dto.termsVersion)
+    }
+
+    // RVF-1 (RVR-18): a retry or a double click must not move the date of consent forward.
+    @Test
+    fun `accepting the same version again keeps the first date`() {
+        val photographer = user(Role.PHOTOGRAPHER, accepted = "1.5")
+        profile(legal()).acceptTerms(photographer.id, "1.7")
+
+        val dto = profile(legal(), at = now.plus(Duration.ofDays(1))).acceptTerms(photographer.id, "1.7")
+
+        assertEquals(OffsetDateTime.ofInstant(now, ZoneOffset.UTC), photographer.termsAcceptedAt)
+        assertEquals("1.7", dto.termsVersion)
+        assertFalse(dto.termsAcceptanceRequired)
     }
 
     @Test
