@@ -125,6 +125,11 @@ class RelevanceNoticesTest {
         assertEquals(RelevanceNote("Appeal not accepted",
             start + "Your payouts stay on hold until an admin finishes the review. " + end),
             RelevanceNotices.appealLost("Cebu Run", copied = true))
+        // RV-4.5a review: an admin's hide never counts, so the confirmed-case sentence is left out; nothing else changes.
+        val opening = "An admin looked at your appeal about Cebu Run and decided the photos stay off sale. "
+        assertEquals(RelevanceNote("Appeal not accepted", opening + end), RelevanceNotices.appealLost("Cebu Run", copied = false, counts = false))
+        assertEquals(RelevanceNote("Appeal not accepted", opening + "Your payouts stay on hold until an admin finishes the review. " + end),
+            RelevanceNotices.appealLost("Cebu Run", copied = true, counts = false))
     }
 
     @Test

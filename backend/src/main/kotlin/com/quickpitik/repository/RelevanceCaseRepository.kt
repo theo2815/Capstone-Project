@@ -346,7 +346,7 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         SELECT c.id AS "caseId", br.photographer_id AS "photographerId", n.note AS "note", e.name AS "eventName",
                CAST(e.date AS VARCHAR) AS "eventDate", c.verdict AS "verdict", c.close_reason AS "closeReason",
                c.batch_photos AS "batchPhotos", c.measured AS "measured", c.junk AS "junk",
-               c.scan_measured AS "scanMeasured", c.scan_blurry AS "scanBlurry"
+               c.scan_measured AS "scanMeasured", c.scan_blurry AS "scanBlurry", c.verdict_note AS "verdictNote"
         FROM relevance_cases c
         JOIN batch_relevance br ON br.id = c.batch_id
         JOIN events e ON e.id = br.event_id
@@ -378,7 +378,7 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
                c.verdict AS "verdict", c.action AS "action", c.stage AS "stage", c.applied_mode AS "appliedMode",
                c.batch_photos AS "batchPhotos", c.measured AS "measured", c.junk AS "junk", c.hidden_photos AS "hiddenPhotos",
                c.scan_measured AS "scanMeasured", c.scan_blurry AS "scanBlurry", c.notice_at AS "noticeAt",
-               CAST(e.date AS VARCHAR) AS "eventDate", c.close_reason AS "closeReason"
+               CAST(e.date AS VARCHAR) AS "eventDate", c.close_reason AS "closeReason", c.verdict_note AS "verdictNote"
         FROM relevance_cases c
         JOIN batch_relevance br ON br.id = c.batch_id
         JOIN events e ON e.id = br.event_id
@@ -428,13 +428,25 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
 
     // RV-4.2: current auto-hide Copied cases whose hold was never placed (hold_flag_id is set once and never cleared, so an
     // ended hold is never placed again), oldest first. RV-L7 part a: never for a photographer who withdrew the consent.
+    // RV-4.5a: never for an admin's hide (a no-consent case): only the admin's hold-payouts holds those payouts.
     @Query(value = """
         SELECT c.id FROM relevance_cases c JOIN batch_relevance br ON br.id = c.batch_id
         JOIN users u ON u.id = br.photographer_id AND u.relevance_consent_withdrawn_at IS NULL
         WHERE c.stage = 'APPLIED' AND c.applied_mode = 'AUTO_HIDE' AND c.verdict = 'COPIED' AND c.hold_flag_id IS NULL
+          AND c.verdict_note IS DISTINCT FROM 'ADMIN_HIDE'
         ORDER BY c.applied_at, c.id LIMIT :limit
     """, nativeQuery = true)
     fun findHoldDue(@Param("limit") limit: Int): List<UUID>
+
+    // RV-4.5a review: the replacing case takes the replaced case's hold flag while it still holds payouts, once.
+    @Modifying
+    @Query(value = """
+        UPDATE relevance_cases n SET hold_flag_id = o.hold_flag_id
+        FROM relevance_cases o JOIN flags f ON f.id = o.hold_flag_id
+        WHERE n.id = :toId AND o.id = :fromId AND n.hold_flag_id IS NULL
+          AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL
+    """, nativeQuery = true)
+    fun carryLiveHold(@Param("fromId") fromId: UUID, @Param("toId") toId: UUID): Int
 
     // RV-4.2: the case's hold flag while it still holds payouts (open or escalated, held), and when the hold started.
     @Query(value = "SELECT f.id $LIVE_HOLD", nativeQuery = true)
@@ -448,10 +460,15 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
     fun lockCase(@Param("id") id: UUID): UUID?
 
     // RV-2.5b (G10): an admin hides a current auto-hide Can't tell case's whole batch. The verdict stays Can't tell.
+    // RV-4.5a: also a current case applied as record-only for want of consent (NO_CONSENT) whose verdict would have hidden
+    // the whole batch; it becomes an auto-hide case, so the hold step, the note and the appeal act on it as on any admin
+    // hide, and ADMIN_HIDE keeps it out of the ladder and the automatic payout hold.
     @Modifying
     @Query(value = """
-        UPDATE relevance_cases SET action = 'HIDE_ALL', verdict_note = 'ADMIN_HIDE'
-        WHERE id = :id AND stage = 'APPLIED' AND applied_mode = 'AUTO_HIDE' AND verdict = 'CANT_TELL' AND action = 'NONE'
+        UPDATE relevance_cases SET action = 'HIDE_ALL', verdict_note = 'ADMIN_HIDE', applied_mode = 'AUTO_HIDE'
+        WHERE id = :id AND stage = 'APPLIED' AND (
+              (applied_mode = 'AUTO_HIDE' AND verdict = 'CANT_TELL' AND action = 'NONE')
+           OR (applied_mode = 'RECORD_ONLY' AND verdict_note = 'NO_CONSENT' AND verdict IN ('JUNK_DUMP', 'WRONG_EVENT', 'COPIED')))
     """, nativeQuery = true)
     fun markAdminHide(@Param("id") id: UUID): Int
 
@@ -580,6 +597,8 @@ interface OwedNote {
     val junk: Int?
     val scanMeasured: Int?
     val scanBlurry: Int?
+    // RV-4.5a: ADMIN_HIDE on a Junk dump, Wrong event or Copied case is an admin's hide of a no-consent case (V2-T24).
+    val verdictNote: String?
 }
 
 // RV-3.2a: a photographer's own case (ownCase).
@@ -601,6 +620,8 @@ interface OwnCaseRow {
     val noticeAt: Instant?
     val eventDate: String?
     val closeReason: String?
+    // RV-4.5a: ADMIN_HIDE marks an admin's hide, which never counts.
+    val verdictNote: String?
 }
 
 interface SamplingCase {

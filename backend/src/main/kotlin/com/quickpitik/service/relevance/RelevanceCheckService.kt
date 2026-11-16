@@ -283,6 +283,9 @@ class RelevanceCheckService(
             status.setRollbackOnly()
             return emptyList()
         }
+        // RV-4.5a review: a payout hold an admin placed on the replaced case (only a record-only case can hold one and still
+        // be replaced) goes over to the new current case, so the page can still end it and no second hold is placed.
+        if (current != null) cases.carryLiveHold(current.id, case.id)
         if (autoHide && !consented) cases.markNoConsent(case.id)
         if (consented && verdict in SCANNED) cases.queueScan(case.id)
         log.info("Relevance check applied case={} verdict={} action={} mode={}", case.id, verdict, action, mode)

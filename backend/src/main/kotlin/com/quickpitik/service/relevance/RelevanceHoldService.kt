@@ -5,6 +5,7 @@ import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.RelevanceMode
 import com.quickpitik.entity.CaseStage
 import com.quickpitik.entity.CaseVerdict
+import com.quickpitik.entity.RelevanceCase
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.RelevanceStrikeRepository
 import com.quickpitik.repository.UserRepository
@@ -46,8 +47,9 @@ class RelevanceHoldService(
         transactions.executeWithoutResult {
             cases.lockCase(caseId) ?: return@executeWithoutResult
             val case = cases.findById(caseId).orElseThrow()
+            // RV-4.5a: an admin's hide (of a no-consent case) never holds payouts by itself; the admin's hold-payouts does.
             if (case.stage != CaseStage.APPLIED.name || case.appliedMode != RelevanceMode.AUTO_HIDE.name ||
-                case.verdict != CaseVerdict.COPIED.name || case.holdFlagId != null) return@executeWithoutResult
+                case.verdict != CaseVerdict.COPIED.name || case.holdFlagId != null || case.verdictNote == ADMIN_HIDE) return@executeWithoutResult
             val photographer = strikes.lockPhotographerOf(caseId)!!
             // RV-L7 part a: read under the user row lock, so a withdrawal recorded after the case was picked still stops it.
             if (users.relevanceConsentWithdrawnAt(photographer) != null) return@executeWithoutResult
@@ -57,6 +59,21 @@ class RelevanceHoldService(
                 meta = mapOf("caseId" to caseId.toString(), "flagId" to flagId.toString()))
             log.info("Relevance payout hold placed case={} flag={}", caseId, flagId)
         }
+    }
+
+    // RV-4.5a: an admin holds the payouts of a current no-consent Copied case (record-only with NO_CONSENT, or since hidden
+    // by an admin) that holds none yet, in the caller's transaction, which holds the case row (then the user row, then
+    // the flag). The case gets a flag of its own; the hold goes on through AdminFlagService.confirmPayoutHold, so it is
+    // the admin's hold with its approved "Payouts on hold" note, and End hold, a restore or a won appeal end it as before.
+    fun placeByAdmin(case: RelevanceCase, adminId: UUID): Boolean {
+        val noConsent = (case.appliedMode == RelevanceMode.RECORD_ONLY.name && case.verdictNote == NO_CONSENT) ||
+            (case.appliedMode == RelevanceMode.AUTO_HIDE.name && case.verdictNote == ADMIN_HIDE)
+        if (case.stage != CaseStage.APPLIED.name || case.verdict != CaseVerdict.COPIED.name || case.holdFlagId != null || !noConsent) return false
+        val photographer = strikes.lockPhotographerOf(case.id)!!
+        val flagId = systemFlags.openCaseFlag(photographer, "Photo Relevance case ${case.id}: copied photos")
+        adminFlags.confirmPayoutHold(adminId, flagId)
+        cases.setHoldFlag(case.id, flagId)
+        return true
     }
 
     // In the caller's transaction, which holds the case row. Restore (an admin restore, a won appeal) dismisses the case's
@@ -71,5 +88,10 @@ class RelevanceHoldService(
         val note = "Photo Relevance case $caseId"
         if (restore) adminFlags.dismiss(adminId, flagId, note) else adminFlags.resolve(adminId, flagId, note)
         return true
+    }
+
+    private companion object {
+        const val ADMIN_HIDE = "ADMIN_HIDE"
+        const val NO_CONSENT = "NO_CONSENT"
     }
 }

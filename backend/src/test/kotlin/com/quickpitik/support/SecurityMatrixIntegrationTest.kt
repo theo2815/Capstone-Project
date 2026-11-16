@@ -335,7 +335,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         val hideBatch = "/api/v1/admin/relevance/cases/$unsure/hide-batch"
         // RV-4.2: the case holds no payouts, so an admin is refused by its state check.
         val endHold = "/api/v1/admin/relevance/cases/$case/end-hold"
-        val actions = listOf(seen, "/api/v1/admin/relevance/cases/$case/keep-hidden",
+        // RV-4.5a: an admin reaches hold-payouts and is refused by its mode check, as on hide-batch.
+        val holdPayouts = "/api/v1/admin/relevance/cases/$case/hold-payouts"
+        val actions = listOf(seen, holdPayouts, "/api/v1/admin/relevance/cases/$case/keep-hidden",
             "/api/v1/admin/relevance/cases/$case/photos/$photo/restore", "/api/v1/admin/relevance/cases/$case/restore",
             hideBatch, "/api/v1/admin/relevance/cases/$unsure/looks-fine", endHold)
         val runner = register(Role.RUNNER)
@@ -356,7 +358,7 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         for (path in actions) {
             val response = post(path, "{}", admin)
             // The test app runs with the relevance mode off, so an admin reaches hide-batch and is refused by its mode check.
-            if (path == hideBatch) {
+            if (path == hideBatch || path == holdPayouts) {
                 assertEquals(409, response.statusCode(), path)
                 assertTrue("RELEVANCE_ACTIONS_OFF" in response.body(), path)
             } else if (path == endHold) {

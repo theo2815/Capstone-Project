@@ -87,10 +87,30 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
     fun `a copied case's appeal note says the payouts stay on hold`() {
         val b = batch()
         val c = case(b, verdict = "COPIED", action = "HIDE_ALL")
+        holdPayouts(b, c)
 
         file(b, c)
 
         assertEquals(RelevanceNotices.appealReceived("Rel Run", copied = true).body, notes(b).single()["body"])
+    }
+
+    // RV-4.5a review: the payouts sentence only while a payout hold binds the case (an admin may hide a no-consent Copied
+    // batch without holding its payouts, and an ended hold no longer binds).
+    @Test
+    fun `a copied case's appeal note without a payout hold leaves the payouts sentence out`() {
+        val b = batch()
+        val c = case(b, verdict = "COPIED", action = "HIDE_ALL", note = "ADMIN_HIDE")
+
+        file(b, c)
+
+        assertEquals(RelevanceNotices.appealReceived("Rel Run", copied = false).body, notes(b).single()["body"])
+    }
+
+    // A live payout hold on the case, as RelevanceHoldService places it.
+    private fun holdPayouts(b: Batch, c: UUID) {
+        val flag = id("INSERT INTO flags (target_kind, target_id, reason, status, payout_hold_at) VALUES ('user', ?, 'batch_relevance_low', 'open', ?)",
+            b.photographer, NOTICED)
+        jdbc.update("UPDATE relevance_cases SET hold_flag_id = ? WHERE id = ?", flag, c)
     }
 
     @Test
@@ -201,6 +221,23 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         assertFailsWith<NotFoundException> { tx.execute { service().file(stranger, c, "mine") } }
         assertFailsWith<NotFoundException> { tx.execute { service().caseFor(b.photographer, UUID.randomUUID()) } }
         assertNull(appeals.findByCaseId(c))
+    }
+
+    // RV-4.5a review round 2: the case page shows the same sentences as the inbox notes, so it reads the same two rules.
+    @Test
+    fun `the case says whether a payout hold binds it and whether a lost appeal would count`() {
+        val held = batch().let { b -> b to case(b, verdict = "COPIED", action = "HIDE_ALL").also { holdPayouts(b, it) } }
+        val unheld = batch().let { b -> b to case(b, verdict = "COPIED", action = "HIDE_ALL") }
+        val ended = batch().let { b -> b to case(b, verdict = "COPIED", action = "HIDE_ALL").also { holdPayouts(b, it) } }
+        jdbc.update("UPDATE flags SET status = 'resolved' WHERE id = (SELECT hold_flag_id FROM relevance_cases WHERE id = ?)", ended.second)
+        val adminHide = batch().let { b -> b to case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", note = "ADMIN_HIDE") }
+
+        fun view(bc: Pair<Batch, UUID>) =
+            tx.execute { service().caseFor(bc.first.photographer, bc.second) }!!.let { it.payoutHoldBinds to it.lostAppealCounts }
+        assertEquals(true to true, view(held))
+        assertEquals(false to true, view(unheld))
+        assertEquals(false to true, view(ended), "an ended hold no longer binds")
+        assertEquals(false to false, view(adminHide))
     }
 
     @Test

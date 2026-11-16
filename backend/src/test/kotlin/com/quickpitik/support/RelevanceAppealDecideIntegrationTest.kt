@@ -107,13 +107,48 @@ class RelevanceAppealDecideIntegrationTest : PostgresIntegrationTest() {
 
     @Test
     fun `a lost copied appeal keeps the payouts sentence`() {
-        val (b, _, appeal) = appealed(verdict = "COPIED", action = "HIDE_ALL")
+        val (b, c, appeal) = appealed(verdict = "COPIED", action = "HIDE_ALL")
+        holdPayouts(b, c)
         val admin = admin()
         opened(admin, appeal)
 
         decide(admin, appeal, "LOST")
 
         assertEquals(listOf(RelevanceNotices.appealLost("Rel Run", copied = true)), notesOf(b))
+    }
+
+    // RV-4.5a review: the payouts sentence only while a payout hold binds the case.
+    @Test
+    fun `a lost copied appeal without a payout hold leaves the payouts sentence out`() {
+        val (b, _, appeal) = appealed(verdict = "COPIED", action = "HIDE_ALL")
+        val admin = admin()
+        opened(admin, appeal)
+
+        decide(admin, appeal, "LOST")
+
+        assertEquals(listOf(RelevanceNotices.appealLost("Rel Run", copied = false)), notesOf(b))
+    }
+
+    // RV-4.5a review: an admin's hide never counts, so its lost-appeal note leaves the confirmed-case sentence out.
+    @Test
+    fun `a lost appeal on an admin's hide leaves the confirmed-case sentence out`() {
+        val admin = admin()
+        for (verdict in listOf("CANT_TELL", "JUNK_DUMP")) {
+            val (b, _, appeal) = appealed(verdict = verdict, action = "HIDE_ALL", note = "ADMIN_HIDE")
+            opened(admin, appeal)
+
+            decide(admin, appeal, "LOST")
+
+            val note = notesOf(b).single()
+            assertEquals(RelevanceNotices.appealLost("Rel Run", copied = false, counts = false), note, verdict)
+            assertEquals(false, "confirmed case" in note.body, verdict)
+        }
+    }
+
+    private fun holdPayouts(b: Batch, c: UUID) {
+        val flag = id("INSERT INTO flags (target_kind, target_id, reason, status, payout_hold_at) VALUES ('user', ?, 'batch_relevance_low', 'open', ?)",
+            b.photographer, NOW)
+        jdbc.update("UPDATE relevance_cases SET hold_flag_id = ? WHERE id = ?", flag, c)
     }
 
     @Test

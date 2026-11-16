@@ -219,6 +219,15 @@ class AdminRelevanceServiceTest {
         Mockito.verifyNoInteractions(decisionLog)
     }
 
+    // RV-4.5a
+    @Test
+    fun `hold payouts refuses while the mode is not auto-hide`() {
+        val case = appliedCase(action = "HIDE_ALL").apply { verdict = "COPIED"; appliedMode = "RECORD_ONLY"; verdictNote = "NO_CONSENT" }
+        val ex = org.junit.jupiter.api.assertThrows<com.quickpitik.exception.ApiException> { service.holdPayouts(UUID.randomUUID(), case.id, null) }
+        assertEquals(com.quickpitik.common.ErrorCodes.RELEVANCE_ACTIONS_OFF, ex.code)
+        Mockito.verifyNoInteractions(decisionLog)
+    }
+
     // Review of PR #153: another admin's hide-batch commits between the read and the close.
     @Test
     fun `looks fine is refused when an admin hide commits between the read and the close`() {

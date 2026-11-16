@@ -62,6 +62,14 @@ class SystemFlagService(private val flagRepository: FlagRepository) {
             note = note.take(NOTE_MAX)).apply { payoutHoldAt = OffsetDateTime.now() },
     ).id
 
+    // RV-4.5a: an open relevance flag of its own for one copied case, not yet holding; the admin's hold then goes on it
+    // through AdminFlagService.confirmPayoutHold.
+    @Transactional
+    fun openCaseFlag(userId: UUID, note: String): UUID = flagRepository.save(
+        Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = userId, reason = SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
+            note = note.take(NOTE_MAX)),
+    ).id
+
     private fun openFlags(kind: FlagTargetKind, targetId: UUID, reason: SystemFlagReason): List<Flag> =
         flagRepository.findByTargetKindWireAndTargetIdAndReasonAndStatusWireIn(
             kind.wire, targetId, reason.wire, OPEN_STATUSES,
