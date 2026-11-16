@@ -6,6 +6,7 @@ import com.quickpitik.dto.admin.RelevanceActionRequest
 import com.quickpitik.dto.admin.RelevanceAlertDto
 import com.quickpitik.dto.admin.RelevanceCaseDetailDto
 import com.quickpitik.dto.admin.RelevanceCaseRowDto
+import com.quickpitik.dto.admin.RelevanceConsentWithdrawalDto
 import com.quickpitik.dto.admin.RelevanceHiddenPhotoDto
 import com.quickpitik.dto.admin.RelevancePhotoRestoreDto
 import com.quickpitik.dto.admin.RelevanceRestoreDto
@@ -17,9 +18,11 @@ import com.quickpitik.service.relevance.RelevanceAppealService
 import jakarta.validation.Valid
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
@@ -124,6 +127,15 @@ class AdminRelevanceController(
         @PathVariable appealId: UUID,
         @Valid @RequestBody body: RelevanceDecideRequest,
     ): RelevanceAppealRowDto = appealService.decide(principal.userId, appealId, body.outcome, body.note)
+
+    // RV-L7 part a (legal 1.7): the photographer withdrew the consent to automatic actions (PUT), or it is cleared (DELETE).
+    @PutMapping("/photographers/{photographerId}/consent-withdrawal")
+    fun withdrawConsent(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable photographerId: UUID): RelevanceConsentWithdrawalDto =
+        adminRelevanceService.withdrawConsent(principal.userId, photographerId)
+
+    @DeleteMapping("/photographers/{photographerId}/consent-withdrawal")
+    fun clearConsentWithdrawal(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable photographerId: UUID): RelevanceConsentWithdrawalDto =
+        adminRelevanceService.clearConsentWithdrawal(principal.userId, photographerId)
 
     @PostMapping("/alerts/{alertId}/seen")
     fun markSeen(

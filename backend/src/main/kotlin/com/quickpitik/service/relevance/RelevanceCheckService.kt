@@ -335,7 +335,8 @@ class RelevanceCheckService(
                     CaseAction.HIDE_ALL.name -> hideBatch(target, now)
                     // The predicate never runs with a cut-off unset (auto-hide cannot be on without both).
                     CaseAction.HIDE_JUNK.name -> if (blur != null && dark != null) {
-                        val done = inChunks(target) { hide(holds.hideJunkChunk(target.batchId, target.caseId, target.eventId,
+                        // RV-L7 part a: no junk is held for a photographer who withdrew; the restore below still runs.
+                        val done = target.withdrawn || inChunks(target, hiding = true) { hide(holds.hideJunkChunk(target.batchId, target.caseId, target.eventId,
                             target.photographerId, now, props.hide.chunkSize, blur, dark, labelMin)) }
                         // RV-2.4: a junk-only hide is whole once the scan has finished and nothing junk is left to hold.
                         if (done && target.scanFinished && !target.hideFinished) finishHide(target, now, skipEmpty = true)
@@ -382,7 +383,7 @@ class RelevanceCheckService(
     }
 
     private fun hideBatch(target: HoldTarget, now: OffsetDateTime) {
-        val done = inChunks(target) {
+        val done = inChunks(target, hiding = true) {
             hide(holds.hideChunk(target.batchId, target.caseId, target.eventId, target.photographerId, target.heldBy, now, props.hide.chunkSize))
         }
         if (done && !target.hideFinished) finishHide(target, now)
@@ -390,10 +391,13 @@ class RelevanceCheckService(
 
     // Up to chunks-per-tick chunks, each its own short transaction that touches only hold rows and photos, while the case
     // is still the current target (a plain read: it may have been superseded since the list was read). True when a
-    // chunk found nothing left.
-    private fun inChunks(target: HoldTarget, chunk: () -> Int): Boolean {
+    // chunk found nothing left. A hiding chunk also needs the photographer's consent (RV-L7 part a, isHideTarget).
+    private fun inChunks(target: HoldTarget, hiding: Boolean = false, chunk: () -> Int): Boolean {
         repeat(props.hide.chunksPerTick) {
-            val n = transactions.execute { if (cases.isHoldTarget(target.caseId, target.action)) chunk() else -1 } ?: -1
+            val n = transactions.execute {
+                val still = if (hiding) cases.isHideTarget(target.caseId, target.action) else cases.isHoldTarget(target.caseId, target.action)
+                if (still) chunk() else -1
+            } ?: -1
             if (n < 0) return false
             if (n == 0) return true
         }

@@ -65,6 +65,7 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var adminFlags: AdminFlagService
     @Autowired private lateinit var payouts: PayoutRequestService
     @Autowired private lateinit var decisionLog: AdminDecisionLogService
+    @Autowired private lateinit var users: com.quickpitik.repository.UserRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
     @Autowired private lateinit var tx: TransactionTemplate
     private val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
@@ -413,7 +414,7 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
 
     private fun hold(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, flagsEnabled: Boolean = true) =
         RelevanceHoldService(cases, strikes, systemFlags, adminFlags, decisionLog, switch(mode, flagsEnabled), tx,
-            AdminProperties(flagsEnabled = flagsEnabled))
+            AdminProperties(flagsEnabled = flagsEnabled), users)
 
     private fun checks(mode: RelevanceMode = RelevanceMode.AUTO_HIDE, flagsEnabled: Boolean = true, maxBatchesPerTick: Int = 10_000): RelevanceCheckService {
         val props = props(mode, maxBatchesPerTick)
@@ -427,7 +428,7 @@ class RelevanceHoldIntegrationTest : PostgresIntegrationTest() {
     private fun admin(mode: RelevanceMode, flagsEnabled: Boolean = true): AdminRelevanceService {
         val props = props(mode)
         return AdminRelevanceService(cases, alerts, batchRepo, props, Mockito.mock(StorageService::class.java), StorageProperties(),
-            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled))
+            Clock.systemUTC(), holds, photoRepo, decisionLog, tx, switch(mode, flagsEnabled), strikes, hold(mode, flagsEnabled), users)
     }
 
     private fun appealService(flagsEnabled: Boolean = true): RelevanceAppealService {

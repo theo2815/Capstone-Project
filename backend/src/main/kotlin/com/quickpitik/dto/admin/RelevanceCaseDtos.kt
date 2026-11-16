@@ -72,6 +72,9 @@ data class RelevanceSampleDto(
     val notRace: Boolean?,
 )
 
+// RV-L7 part a: PUT and DELETE /admin/relevance/photographers/{photographerId}/consent-withdrawal.
+data class RelevanceConsentWithdrawalDto(val photographerId: UUID, val consentWithdrawnAt: String?)
+
 data class RelevanceAlertDto(
     val alertId: UUID,
     val caseId: UUID?,

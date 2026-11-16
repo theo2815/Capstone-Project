@@ -112,7 +112,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
             "You can request a payout when your available balance is at least ₱500, one request at a time.",
             "Payouts go to the GCash, Maya or GoTyme account and QR code you saved in the app.",
             "Refunded sales are taken out of your balance, and money from a disputed sale is held until the dispute is decided.",
-            "If we are reviewing whether photos you uploaded belong to the event they are in, or whether they copy another photographer's photos, an admin may put your payouts on hold until the review is finished. Your earnings stay in your balance. We tell you in your QuickPitik inbox when a hold starts and when it ends, and you can appeal it (see [Appeals](#appeals)).",
+            "If we are reviewing whether photos you uploaded belong to the event they are in, or whether they copy another photographer's photos, an admin may put your payouts on hold until the review is finished. If our automatic checks find that photos you uploaded seem to copy another photographer's photos, the hold starts automatically, without an admin, and an admin is told at once. A hold covers all your payouts, not only the sales from that event. Your earnings stay in your balance. The hold ends when an admin finishes the review or you win an appeal. We tell you in your QuickPitik inbox when a hold starts and when it ends, and you can appeal it (see [Appeals](#appeals)).",
             "Taxes: you are responsible for your own taxes and BIR registration. When BIR rules require it (for sellers whose payouts pass ₱500,000 in a year), we withhold 1% tax on half of your payouts and give you the tax certificate the law requires.",
           ],
         },
@@ -201,7 +201,8 @@ export const TERMS_OF_SERVICE: LegalDoc = {
             "refuse refunds and disputes;",
             "hold money from disputed sales;",
             "hide a race event from the Events page, or list it again;",
-            "hold a photographer's payouts while their uploads are reviewed for being in the wrong event or copied; and",
+            "hold a photographer's payouts while their uploads are reviewed for being in the wrong event or copied;",
+            "take a photographer's photos off sale automatically when our upload checks find that the photos look blurry, very dark or not of a race, seem to be in the wrong event, or seem to copy another photographer's photos, and hold their payouts automatically when the photos seem copied (see [Appeals](#appeals)); and",
             "suspend an account, with a written reason. A suspended photographer cannot sign in or upload, their public pages are hidden, their photos are taken off sale (photos already in a cart show as no longer available), and their own events leave the Events page (shared race events stay listed, without their photos). Buyers keep the photos they already bought.",
           ],
         },
@@ -211,7 +212,9 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       id: "appeals",
       heading: "Appeals",
       blocks: [
-        `To appeal a decision (for example a suspension, a photo removal or a refund decision), email ${EMAIL_LINK} within 14 days of the decision. We answer within 14 days. Our answer on the appeal is QuickPitik's final decision; it does not stop you from complaining to the National Privacy Commission or the Department of Trade and Industry, or from going to court.`,
+        "If photos you uploaded are taken off sale after our upload checks, or your payouts are put on hold because photos seem copied, you can appeal in QuickPitik: open the message about it in your inbox and send your reason within 14 days of that message. You can appeal each decision once. A person at QuickPitik decides every appeal, after looking at photos from the check, and answers within 14 days.",
+        "If all your photos in an event were taken off sale and you do not appeal within 14 days, or you lose the appeal, it counts as a confirmed case. A second confirmed case within 6 months brings a warning in your inbox. At a third within 6 months, an admin decides whether to suspend your account. Nothing is suspended automatically.",
+        `To appeal any other decision (for example a suspension, a photo removal or a refund decision), email ${EMAIL_LINK} within 14 days of the decision. We answer within 14 days. Our answer on the appeal is QuickPitik's final decision; it does not stop you from complaining to the National Privacy Commission or the Department of Trade and Industry, or from going to court.`,
       ],
     },
     {
@@ -242,7 +245,7 @@ export const TERMS_OF_SERVICE: LegalDoc = {
       id: "changes",
       heading: "Changes to these Terms",
       blocks: [
-        "When we change these Terms, we post the new version on this page with a new version number and date. New sign-ups agree to the version shown when they sign up.",
+        "When we change these Terms, we post the new version on this page with a new version number and date. New sign-ups agree to the version shown when they sign up. Some changes need photographers to agree again, for example when our system may take photos off sale or hold payouts without an admin. For those, we ask photographers to accept the new version the next time they sign in, on the website or in the Android app. Until a photographer accepts, our system does not take their photos off sale or hold their payouts on its own.",
       ],
     },
     {
