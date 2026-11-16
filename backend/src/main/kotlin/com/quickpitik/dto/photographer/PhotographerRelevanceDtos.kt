@@ -28,6 +28,11 @@ data class PhotographerRelevanceCaseDto(
     val appeal: PhotographerAppealDto?,
     val eventDate: LocalDate? = null,
     val closeReason: String? = null,
+    // RV-4.5a: the page shows the inbox notes' sentences by the same rules. payoutHoldBinds: a payout hold binds the case
+    // right now ("your payouts stay on hold"); lostAppealCounts: a lost appeal would count as a confirmed case (false for
+    // an admin's hide, which never counts).
+    val payoutHoldBinds: Boolean = false,
+    val lostAppealCounts: Boolean = true,
 )
 
 // The appeal's state only: the admin's note is never shown (V2-T19), and the photographer's own reason is not echoed.

@@ -168,7 +168,7 @@ class RelevanceAppealService(
             val text = if (result == AppealStatus.WON) RelevanceNotices.appealWon(eventName, wholeBatch)
                 // RV-4.5a review: the payouts sentence only while a hold binds; an admin's hide never counts.
                 else RelevanceNotices.appealLost(eventName, copied = cases.liveHoldFlag(caseId) != null,
-                    counts = case.verdictNote != "ADMIN_HIDE")
+                    counts = case.verdictNote != ADMIN_HIDE)
             notifier.deliver(appeal.photographerId, caseId, "relevance:$appealId:${result.name.lowercase()}", text)
         }
         log.info("Relevance appeal decided appeal={} case={} outcome={}", appealId, caseId, result)
@@ -203,6 +203,9 @@ class RelevanceAppealService(
         appeal = appeal,
         eventDate = row.eventDate?.let { LocalDate.parse(it) },
         closeReason = row.closeReason,
+        // The same rules as the appeal notes below (RV-4.5a), so the page and the inbox say the same.
+        payoutHoldBinds = cases.liveHoldFlag(row.caseId) != null,
+        lostAppealCounts = row.verdictNote != ADMIN_HIDE,
     )
 
     private fun appealView(appeal: RelevanceAppeal, createdAt: OffsetDateTime? = appeal.createdAt) =
@@ -214,6 +217,7 @@ class RelevanceAppealService(
 
     private companion object {
         const val AUTO = "AUTO_HIDE"
+        const val ADMIN_HIDE = "ADMIN_HIDE"
         const val MAX_REASON = 1000
         val HIDING = setOf(CaseAction.HIDE_JUNK.name, CaseAction.HIDE_ALL.name)
         val LIST_STATUSES = listOf("OPEN", "WON", "LOST", "all")

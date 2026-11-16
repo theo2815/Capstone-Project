@@ -223,6 +223,23 @@ class RelevanceAppealIntegrationTest : PostgresIntegrationTest() {
         assertNull(appeals.findByCaseId(c))
     }
 
+    // RV-4.5a review round 2: the case page shows the same sentences as the inbox notes, so it reads the same two rules.
+    @Test
+    fun `the case says whether a payout hold binds it and whether a lost appeal would count`() {
+        val held = batch().let { b -> b to case(b, verdict = "COPIED", action = "HIDE_ALL").also { holdPayouts(b, it) } }
+        val unheld = batch().let { b -> b to case(b, verdict = "COPIED", action = "HIDE_ALL") }
+        val ended = batch().let { b -> b to case(b, verdict = "COPIED", action = "HIDE_ALL").also { holdPayouts(b, it) } }
+        jdbc.update("UPDATE flags SET status = 'resolved' WHERE id = (SELECT hold_flag_id FROM relevance_cases WHERE id = ?)", ended.second)
+        val adminHide = batch().let { b -> b to case(b, verdict = "JUNK_DUMP", action = "HIDE_ALL", note = "ADMIN_HIDE") }
+
+        fun view(bc: Pair<Batch, UUID>) =
+            tx.execute { service().caseFor(bc.first.photographer, bc.second) }!!.let { it.payoutHoldBinds to it.lostAppealCounts }
+        assertEquals(true to true, view(held))
+        assertEquals(false to true, view(unheld))
+        assertEquals(false to true, view(ended), "an ended hold no longer binds")
+        assertEquals(false to false, view(adminHide))
+    }
+
     @Test
     fun `the case shows its numbers and appeal but never Claude's reason or the words`() {
         val b = batch()

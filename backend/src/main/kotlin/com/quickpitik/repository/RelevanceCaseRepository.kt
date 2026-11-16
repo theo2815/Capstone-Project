@@ -378,7 +378,7 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
                c.verdict AS "verdict", c.action AS "action", c.stage AS "stage", c.applied_mode AS "appliedMode",
                c.batch_photos AS "batchPhotos", c.measured AS "measured", c.junk AS "junk", c.hidden_photos AS "hiddenPhotos",
                c.scan_measured AS "scanMeasured", c.scan_blurry AS "scanBlurry", c.notice_at AS "noticeAt",
-               CAST(e.date AS VARCHAR) AS "eventDate", c.close_reason AS "closeReason"
+               CAST(e.date AS VARCHAR) AS "eventDate", c.close_reason AS "closeReason", c.verdict_note AS "verdictNote"
         FROM relevance_cases c
         JOIN batch_relevance br ON br.id = c.batch_id
         JOIN events e ON e.id = br.event_id
@@ -620,6 +620,8 @@ interface OwnCaseRow {
     val noticeAt: Instant?
     val eventDate: String?
     val closeReason: String?
+    // RV-4.5a: ADMIN_HIDE marks an admin's hide, which never counts.
+    val verdictNote: String?
 }
 
 interface SamplingCase {
