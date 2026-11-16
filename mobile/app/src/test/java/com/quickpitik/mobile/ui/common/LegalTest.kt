@@ -1,8 +1,11 @@
 package com.quickpitik.mobile.ui.common
 
 import android.net.Uri
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,6 +19,7 @@ import org.robolectric.RobolectricTestRunner
  */
 @RunWith(RobolectricTestRunner::class)
 class LegalTest {
+    @get:Rule val compose = createComposeRule()
 
     @Test
     fun `deletion request fills address, subject and the account email`() {
@@ -55,5 +59,15 @@ class LegalTest {
     fun `face notice names no single event`() {
         assertTrue(FACE_NOTICE.contains("with faces in the photos of the event you search."))
         assertTrue(!FACE_NOTICE.contains("this event's photos"))
+    }
+
+    // NIT 7: V2-T10 ends "Sign out." with a full stop after the link, as on the website.
+    // Robolectric's fonts are fake (the link measures 9dp), so the gap is checked by eye only.
+    @Test
+    fun `the Terms prompt's sign-out line ends with a full stop`() {
+        compose.setContent { TermsReacceptanceDialog("1.7", busy = false, error = null, onAccept = {}, onSignOut = {}) }
+        compose.onNodeWithText("Not ready to accept? ").assertExists()
+        compose.onNodeWithText("Sign out").assertExists()
+        compose.onNodeWithText(".").assertExists()
     }
 }
