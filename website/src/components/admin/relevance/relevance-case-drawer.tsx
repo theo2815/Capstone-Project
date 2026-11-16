@@ -9,6 +9,7 @@ import {
   alertKindLabel,
   bandLabel,
   evidenceLabel,
+  isNoConsent,
   isWouldHave,
   sampleLabel,
   verdictLabel,
@@ -42,6 +43,8 @@ export function RelevanceCaseSubtitle({ row }: { row: RelevanceCaseRow }) {
 export function RelevanceCaseBody({ detail, samples = true }: { detail: RelevanceCaseDetail; samples?: boolean }) {
   const row = detail.case;
   const note = verdictNoteLabel(row.verdictNote);
+  // RVF-9: a no-consent case keeps its own note; the no-consent line is added below it.
+  const noConsentToo = isNoConsent(row) && row.verdictNote !== "NO_CONSENT";
   const overridden = detail.modelVerdict !== row.verdict;
   return (
     <div className="space-y-10">
@@ -56,7 +59,7 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
         ) : row.action && row.action !== "NONE" ? (
           <p className="font-sans text-sm text-ink">Action: {actionLabel(row.action)}</p>
         ) : null}
-        {row.verdictNote && (
+        {(row.verdictNote || noConsentToo) && (
           <div className="rounded-xl border border-line p-4 space-y-1">
             {overridden && (
               <p className="font-sans text-sm font-medium text-ink">
@@ -65,7 +68,8 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
                   : `The model gave no usable verdict; code stored ${verdictLabel(row.verdict)}.`}
               </p>
             )}
-            <p className="font-sans text-sm text-ink-soft">{note}</p>
+            {note && <p className="font-sans text-sm text-ink-soft">{note}</p>}
+            {noConsentToo && <p className="font-sans text-sm text-ink-soft">{verdictNoteLabel("NO_CONSENT")}</p>}
           </div>
         )}
       </section>
@@ -87,7 +91,7 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
 
       <section className="space-y-3">
         <Kicker as="p" tone="soft">Model&apos;s reason · admins only</Kicker>
-        <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line">{detail.adminReason ?? "No reason recorded."}</p>
+        <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line break-words">{detail.adminReason ?? "No reason recorded."}</p>
         {detail.evidenceUsed.length > 0 && (
           <p className={labelCls}>Evidence used: {detail.evidenceUsed.map(evidenceLabel).join(", ")}</p>
         )}
@@ -113,7 +117,7 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
           <Kicker as="p" tone="soft">Top words on the photos</Kicker>
           <ul className="flex flex-wrap gap-2">
             {detail.topWords.map((w) => (
-              <li key={w.word} className={`${labelCls} text-ink rounded-full border border-line px-3 py-1 tnum`}>
+              <li key={w.word} className={`${labelCls} text-ink rounded-full border border-line px-3 py-1 tnum break-all`}>
                 {w.word} · {w.photos}
               </li>
             ))}

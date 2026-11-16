@@ -10,6 +10,7 @@ import { useRelevanceActions, useRelevanceHiddenPhotos } from "@/hooks/use-admin
 import { useToast } from "@/hooks/use-toast";
 import { serverMessage } from "@/lib/admin-flags";
 import {
+  CLOSED_RESTORE_CONFIRM,
   CONSEQUENCES_TEXT,
   HIDDEN_PHOTOS_EMPTY,
   NO_CONSENT_HIDE_CONFIRM,
@@ -18,8 +19,10 @@ import {
   PHOTO_STILL_HIDDEN,
   RELEVANCE_ACTIONS,
   heldByLabel,
+  isNoConsent,
   isReleasable,
   photoRestoreLabel,
+  restoresHolds,
   type RelevanceCaseAction,
   type RelevanceCaseDetail,
   type RelevanceRestoreResult,
@@ -93,7 +96,8 @@ export function RelevanceCaseActions({
           submitting={isPending}
         >
           <p className="font-sans text-sm text-ink-soft">
-            {confirming === "hide_batch" && row.verdictNote === "NO_CONSENT" ? NO_CONSENT_HIDE_CONFIRM : open.confirm}
+            {confirming === "hide_batch" && isNoConsent(row) ? NO_CONSENT_HIDE_CONFIRM
+              : confirming === "restore" && detail.stage === "CLOSED" ? CLOSED_RESTORE_CONFIRM : open.confirm}
           </p>
           <p className="font-sans text-sm text-ink">{row.eventName}</p>
         </AdminConfirmModal>
@@ -102,13 +106,13 @@ export function RelevanceCaseActions({
   );
 }
 
-/** The batch's holds, restored ones greyed, with a single-photo restore while the case is current. */
+/** The batch's holds, restored ones greyed, with a single-photo restore while the case is current or closed. */
 export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail }) {
   const caseId = detail.case.caseId;
   const query = useRelevanceHiddenPhotos(caseId);
   const { restorePhoto, isPending } = useRelevanceActions();
   const { showToast } = useToast();
-  const current = detail.stage === "APPLIED";
+  const current = restoresHolds(detail.stage);
   const items = query.items;
 
   async function handleRestore(photoId: string) {
