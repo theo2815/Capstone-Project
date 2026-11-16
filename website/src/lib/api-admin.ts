@@ -1151,3 +1151,19 @@ export function decideRelevanceAppeal(
 export function endRelevanceHold(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
   return api.post(`/admin/relevance/cases/${encodeURIComponent(caseId)}/end-hold`);
 }
+
+// ───────────────────────────────────────────── Photo Relevance consent withdrawal (RV-L7 part c)
+
+export interface RelevanceConsentWithdrawal {
+  photographerId: string;
+  /** Null once cleared. */
+  consentWithdrawnAt: string | null;
+}
+
+export function recordRelevanceConsentWithdrawal(photographerId: string): Promise<RelevanceConsentWithdrawal> {
+  return api.put(`/admin/relevance/photographers/${encodeURIComponent(photographerId)}/consent-withdrawal`, undefined);
+}
+
+export function clearRelevanceConsentWithdrawal(photographerId: string): Promise<RelevanceConsentWithdrawal> {
+  return api.delete(`/admin/relevance/photographers/${encodeURIComponent(photographerId)}/consent-withdrawal`);
+}
