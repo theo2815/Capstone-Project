@@ -186,7 +186,8 @@ class RelevanceCheckService(
         if (switch.canMeasure) continueSampling()
         // O6: no model call without AI on and a key.
         if (switch.canDecide) decideCases()
-        if (switch.aiEnabled) startChecks()
+        // RVF-2: start a check only when a verdict is possible, so no sample is paid for that no model can decide.
+        if (switch.canDecide) startChecks()
         // Last, because it waits for every photo it measures and would delay every other step; samples run before scans
         // (A.4). scanTurns checks the mode and canMeasure itself.
         scanTurns()
