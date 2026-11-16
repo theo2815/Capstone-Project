@@ -54,6 +54,8 @@ data class RelevanceCaseDetailDto(
     // close reason (null while it is current), so the page can tell why a closed case closed.
     val payoutHoldAt: String? = null,
     val closeReason: String? = null,
+    // RV-4.5a: a payout hold was placed on this case at some time (an ended one included), so hold-payouts refuses it.
+    val payoutHoldPlaced: Boolean = false,
 )
 
 data class RelevanceWordDto(val word: String, val photos: Int)

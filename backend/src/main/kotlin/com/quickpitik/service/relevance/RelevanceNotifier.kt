@@ -73,7 +73,10 @@ class RelevanceNotifier(
         val sample = row.measured ?: 0
         val junk = row.junk ?: 0
         return when (row.note) {
-            VERDICT -> when (row.verdict?.let { CaseVerdict.valueOf(it) }) {
+            // RV-4.5a: an admin's hide of a no-consent case (the check did reach a finding, so not V2-T23).
+            VERDICT -> if (row.verdictNote == ADMIN_HIDE && row.verdict != CaseVerdict.CANT_TELL.name) {
+                RelevanceNotices.adminHideAfterCheck(row.eventName, appealBy)
+            } else when (row.verdict?.let { CaseVerdict.valueOf(it) }) {
                 CaseVerdict.MIXED -> RelevanceNotices.mixed(row.eventName, sample, row.batchPhotos, junk, appealBy)
                 CaseVerdict.JUNK_DUMP -> RelevanceNotices.junkDump(row.eventName, sample, row.batchPhotos, junk, appealBy)
                 CaseVerdict.WRONG_EVENT -> RelevanceNotices.wrongEvent(row.eventName, row.batchPhotos,
@@ -92,6 +95,7 @@ class RelevanceNotifier(
     private companion object {
         const val VERDICT = "verdict"
         const val BLURRY = "blurry"
+        const val ADMIN_HIDE = "ADMIN_HIDE"
     }
 }
 

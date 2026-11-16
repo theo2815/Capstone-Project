@@ -112,6 +112,7 @@ class AdminRelevanceService(
     // RV-2.5b (G10): the admin hides a current Can't tell batch, in auto-hide only. The route changes only the case
     // (HIDE_ALL, verdict_note ADMIN_HIDE; the verdict stays Can't tell, so it never counts) and logs the decision; the
     // hold step places ADMIN holds a chunk at a time. A case applied in record-only never acts (P18), so it is refused.
+    // RV-4.5a: except a no-consent case whose verdict would have hidden the whole batch; ADMIN_HIDE keeps it uncounted.
     @Transactional
     fun hideBatch(adminId: UUID, caseId: UUID, note: String?): RelevanceCaseRowDto {
         val case = load(caseId)
@@ -120,6 +121,20 @@ class AdminRelevanceService(
         }
         if (cases.markAdminHide(case.id) != 1) throw wrongState()
         logDecision(adminId, case, "relevance_admin_hidden", note)
+        return cases.caseRow(caseId)!!.toDto()
+    }
+
+    // RV-4.5a: the admin holds the payouts of a current no-consent Copied case that holds none yet, in auto-hide only (the
+    // same mode rule as hide-batch). The case is locked first, as End hold does.
+    @Transactional
+    fun holdPayouts(adminId: UUID, caseId: UUID, note: String?): RelevanceCaseRowDto {
+        cases.lockCase(caseId)
+        val case = load(caseId)
+        if (switch.mode != RelevanceMode.AUTO_HIDE) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.RELEVANCE_ACTIONS_OFF, "Holding payouts needs the relevance mode auto-hide")
+        }
+        if (!payoutHold.placeByAdmin(case, adminId)) throw wrongState()
+        logDecision(adminId, case, "relevance_payouts_held", note)
         return cases.caseRow(caseId)!!.toDto()
     }
 
@@ -268,6 +283,7 @@ class AdminRelevanceService(
             photographerStrikes = strikes.countSince(batches.findById(row.batchId).orElseThrow().photographerId, strikesSince()),
             payoutHoldAt = cases.liveHoldAt(caseId)?.toString(),
             closeReason = c.closeReason,
+            payoutHoldPlaced = c.holdFlagId != null,
         )
     }
 

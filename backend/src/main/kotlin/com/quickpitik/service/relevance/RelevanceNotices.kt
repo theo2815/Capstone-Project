@@ -128,4 +128,14 @@ object RelevanceNotices {
             "sale too. If you think this is wrong, you can appeal from this message in your QuickPitik inbox until $appealBy. " +
             "A person at QuickPitik decides every appeal. If you win, we check every photo and put the good ones back on sale.",
     )
+
+    // V2-T24, approved by the owner 2026-11-16. An admin's hide of a no-consent Junk dump, Wrong event or Copied
+    // batch (RV-4.5a); new uploads join it as they join every admin whole-batch hide.
+    fun adminHideAfterCheck(eventName: String, appealBy: String) = RelevanceNote(
+        "Your photos in $eventName are off sale",
+        "Our automatic check found a problem with your photos in $eventName. A person at QuickPitik looked at the results " +
+            "and has taken all your photos in this event off sale. Photos you add to this event are taken off sale too. " +
+            "If you think this is wrong, you can appeal from this message in your QuickPitik inbox until $appealBy. " +
+            "A person at QuickPitik decides every appeal. If you win, we check every photo and put the good ones back on sale.",
+    )
 }

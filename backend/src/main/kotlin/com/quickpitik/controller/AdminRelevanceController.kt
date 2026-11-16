@@ -95,6 +95,14 @@ class AdminRelevanceController(
     fun endHold(@AuthenticationPrincipal principal: AuthPrincipal, @PathVariable caseId: UUID): RelevanceCaseRowDto =
         adminRelevanceService.endHold(principal.userId, caseId)
 
+    // RV-4.5a: the admin holds the payouts of a no-consent Copied case.
+    @PostMapping("/cases/{caseId}/hold-payouts")
+    fun holdPayouts(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable caseId: UUID,
+        @Valid @RequestBody(required = false) body: RelevanceActionRequest?,
+    ): RelevanceCaseRowDto = adminRelevanceService.holdPayouts(principal.userId, caseId, body?.note)
+
     @PostMapping("/cases/{caseId}/photos/{photoId}/restore")
     fun restorePhoto(
         @AuthenticationPrincipal principal: AuthPrincipal,

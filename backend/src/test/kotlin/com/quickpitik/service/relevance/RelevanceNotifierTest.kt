@@ -65,7 +65,24 @@ class RelevanceNotifierTest {
         assertEquals("DEC 02 · 2026", n.appealBy(clock.instant().atOffset(ZoneOffset.UTC)))
     }
 
-    private fun row(note: String, verdict: String, closeReason: String? = null) = object : OwedNote {
+    @Test
+    fun `an admin's hide of a no-consent case gets V2-T24 and a Can't tell admin hide keeps V2-T23`() {
+        val n = notifier(RelevanceMode.AUTO_HIDE)
+        val by = "DEC 02 · 2026"
+        for (verdict in listOf("JUNK_DUMP", "WRONG_EVENT", "COPIED")) {
+            assertEquals(RelevanceNotices.adminHideAfterCheck("Cebu Run", by), n.noteFor(row("verdict", verdict, verdictNote = "ADMIN_HIDE"), by), verdict)
+        }
+        assertEquals(RelevanceNotices.adminHide("Cebu Run", by), n.noteFor(row("verdict", "CANT_TELL", verdictNote = "ADMIN_HIDE"), by))
+        assertEquals(RelevanceNote("Your photos in Cebu Run are off sale",
+            "Our automatic check found a problem with your photos in Cebu Run. A person at QuickPitik looked at the results and " +
+                "has taken all your photos in this event off sale. Photos you add to this event are taken off sale too. If you " +
+                "think this is wrong, you can appeal from this message in your QuickPitik inbox until $by. A person at QuickPitik " +
+                "decides every appeal. If you win, we check every photo and put the good ones back on sale."),
+            RelevanceNotices.adminHideAfterCheck("Cebu Run", by))
+    }
+
+    private fun row(note: String, verdict: String, closeReason: String? = null, verdictNote: String? = null) = object : OwedNote {
+        override val verdictNote = verdictNote
         override val caseId = UUID.randomUUID()
         override val photographerId = UUID.randomUUID()
         override val note = note
