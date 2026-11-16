@@ -293,6 +293,54 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf(MIN_VERSION to accepted.toInstant(), "9.10" to accepted.toInstant()), listOf(on, above).map(::termsOf))
     }
 
+    // RVF-17 (RVR-21): both scripts are dry runs unless -v confirm=yes, and first say which database they are on.
+    @Test
+    fun `the seed writes nothing without confirm=yes`() {
+        val targets = sixBatches()
+
+        val result = seed(targets, "-v", "terms_version=$MIN_VERSION", confirm = false)
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertTrue(result.stdout.contains("DRY RUN: nothing was written. Run again with -v confirm=yes to write."), result.stdout)
+        assertTrue(result.stdout.contains("quickpitik_test"), "it prints the database it is on: ${result.stdout}")
+        assertEquals(0, targets.values.sumOf { count("SELECT count(*) FROM batch_relevance WHERE event_id = ?", it.event) })
+        assertEquals(listOf<Pair<String?, java.time.Instant?>>(null to null), terms(targets).distinct())
+    }
+
+    @Test
+    fun `the clean-up writes nothing without confirm=yes`() {
+        val targets = sixBatches()
+        assertEquals(0, seed(targets).exitCode)
+
+        val result = cleanup(confirm = false)
+
+        assertEquals(0, result.exitCode, result.stderr)
+        assertTrue(result.stdout.contains("DRY RUN: nothing was written. Run again with -v confirm=yes to write."), result.stdout)
+        assertTrue(result.stdout.contains("quickpitik_test"), "it prints the database it is on: ${result.stdout}")
+        assertEquals(VERDICTS.toSet(), seededCases(targets.values).keys)
+        assertEquals(PHOTOS * VERDICTS.size, targets.values.sumOf { count("SELECT count(*) FROM relevance_photo_checks WHERE batch_id = ?", batchId(it)) })
+    }
+
+    @Test
+    fun `the clean-up refuses a seeded batch that also holds a real case and deletes nothing`() {
+        val targets = sixBatches()
+        assertEquals(0, seed(targets).exitCode)
+        val fits = batchId(targets.getValue("FITS"))
+        val real = ownCase(targets.getValue("FITS"))
+        try {
+            val result = cleanup()
+
+            assertNotEquals(0, result.exitCode, result.stdout)
+            assertTrue(result.stderr.contains("Refused: batch $fits also holds a real relevance case; the clean-up would delete " +
+                "its scores and words. Nothing was deleted."), result.stderr)
+            assertEquals(VERDICTS.toSet(), seededCases(targets.values).keys)
+            assertEquals(PHOTOS, count("SELECT count(*) FROM relevance_photo_checks WHERE batch_id = ?", fits))
+        } finally {
+            // The database is shared: a real case left in a seeded batch would make every later clean-up refuse.
+            jdbc.update("DELETE FROM relevance_cases WHERE id = ?", real)
+        }
+    }
+
     @Test
     fun `the clean-up refuses while a seeded copied case still holds payouts`() {
         val (targets, _) = autoHideRun()
@@ -390,15 +438,20 @@ class RelevanceSeedScriptIntegrationTest : PostgresIntegrationTest() {
 
     private fun notes(caseId: UUID): Int = count("SELECT count(*) FROM photographer_messages WHERE relevance_case_id = ?", caseId)
 
-    private fun seed(targets: Map<String, Batch>, vararg extra: String): Container.ExecResult {
+    private fun seed(targets: Map<String, Batch>, vararg extra: String, confirm: Boolean = true): Container.ExecResult {
         val args = mutableListOf("psql", "-X", "-U", "quickpitik", "-d", "quickpitik_test", *extra)
+        if (confirm) args += listOf("-v", "confirm=yes")
         for ((verdict, b) in targets) args += listOf("-v", "${verdict.lowercase()}=${b.event}/${b.photographer}")
         args += listOf("-f", "/tmp/$SEED")
         return postgres.execInContainer(*args.toTypedArray())
     }
 
-    private fun cleanup(): Container.ExecResult =
-        postgres.execInContainer("psql", "-X", "-U", "quickpitik", "-d", "quickpitik_test", "-f", "/tmp/$CLEANUP")
+    private fun cleanup(confirm: Boolean = true): Container.ExecResult {
+        val args = mutableListOf("psql", "-X", "-U", "quickpitik", "-d", "quickpitik_test")
+        if (confirm) args += listOf("-v", "confirm=yes")
+        args += listOf("-f", "/tmp/$CLEANUP")
+        return postgres.execInContainer(*args.toTypedArray())
+    }
 
     private fun sixBatches(): Map<String, Batch> = VERDICTS.associateWith { batch() }
 

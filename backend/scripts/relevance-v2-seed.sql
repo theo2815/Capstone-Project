@@ -38,13 +38,30 @@
 --     -v terms_version (the clean-up puts them back).
 -- It touches no photo, flag, hold, payout or message. It prints what it inserted.
 --
+-- DRY RUN BY DEFAULT (RVF-17). Without -v confirm=yes it does every step, prints what it would insert, then rolls
+-- back and writes nothing. It first prints where it runs: the database, the server address, the newest migration
+-- and the counts of users and photos. SQL cannot tell staging from production: read that line before confirm=yes.
+--
 -- Run it on the local Docker database (PowerShell, from the repo root):
 --   Get-Content backend/scripts/relevance-v2-seed.sql | docker exec -i quickpitik-postgres psql -X -U quickpitik -d quickpitik -v fits=<e>/<p> ...
+--   Add  -v confirm=yes  to write.
 -- Run it on staging: railway connect (the staging Postgres), then \set fits '<e>/<p>' and the others, then
--- \i '<repo path with forward slashes>/backend/scripts/relevance-v2-seed.sql'. If it stops with an error inside
--- psql, type ROLLBACK before anything else.
+-- \i '<repo path with forward slashes>/backend/scripts/relevance-v2-seed.sql' (the dry run), then \set confirm yes
+-- and \i again. If it stops with an error inside psql, type ROLLBACK before anything else.
 
 \set ON_ERROR_STOP on
+
+\if :{?confirm}
+  \set qp_confirm :confirm
+  \unset confirm
+\else
+  \set qp_confirm no
+\endif
+
+\echo '== Where this runs (SQL cannot tell staging from production: check before confirm=yes)'
+SELECT current_database() AS database, inet_server_addr() AS server, inet_server_port() AS port,
+       (SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1) AS newest_migration,
+       (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM photos) AS photos;
 
 \if :{?fits}
   \set qp_fits :fits
@@ -248,5 +265,10 @@ SELECT s.id AS photographer_id, s.before AS terms_version_before, s.accepted_bef
        u.relevance_consent_withdrawn_at IS NOT NULL AS consent_withdrawn
 FROM seed_terms s JOIN users u ON u.id = s.id ORDER BY s.id;
 
+\if :qp_confirm
 COMMIT;
 \echo 'SEEDED. Remove every seeded row later with relevance-v2-seed-cleanup.sql.'
+\else
+ROLLBACK;
+\echo 'DRY RUN: nothing was written. Run again with -v confirm=yes to write.'
+\endif
