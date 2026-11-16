@@ -133,9 +133,10 @@ class RelevanceCheckServiceTest {
         key: String = "",
         admin: AdminProperties = AdminProperties(),
         imageProcessing: org.springframework.core.task.TaskExecutor = idlePool,
+        labels: ObjectProvider<RekognitionAiClient>? = rekognition,
     ): RelevanceCheckService {
         val props = RelevanceProperties(mode = mode, junk = junk, llm = RelevanceProperties.Llm(apiKey = key))
-        val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), rekognition)
+        val switch = RelevanceSwitch(props, admin, AiApiProperties(enabled = aiEnabled), labels)
         return RelevanceCheckService(batches, cases, props, switch, clock, testTransactionTemplate(), registry, measurer,
             client, events, alerts, publisher, LegalProperties(currentVersion = "1.5"),
             holds, Mockito.mock(com.quickpitik.repository.PhotoRepository::class.java), decisionLog, imageProcessing, notifier, confirmer,
@@ -202,6 +203,21 @@ class RelevanceCheckServiceTest {
         // Only the apply step, which reads the database and runs with AI off (G15).
         Mockito.verify(cases).findDecided(Mockito.anyInt())
         Mockito.verifyNoMoreInteractions(cases)
+    }
+
+    // RVF-2 (RVR-8): a check starts only when a verdict is possible, so no sample is paid for that no model can decide.
+    @Test
+    fun `with no model key no check starts`() {
+        listed(due())
+        service(key = "").tick()
+        Mockito.verify(batches, Mockito.never()).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
+    }
+
+    @Test
+    fun `with no label client no check starts`() {
+        listed(due())
+        service(key = "sk-test", labels = null).tick()
+        Mockito.verify(batches, Mockito.never()).findCheckDue(anyArg(), anyArg(), Mockito.anyInt(), Mockito.anyInt())
     }
 
     @Test
@@ -364,7 +380,7 @@ class RelevanceCheckServiceTest {
     fun `a due batch gets one case, its sample and the checked mark, then the claim is released`() {
         val row = due().also { listed(it); startable(it) }
 
-        service().tick()
+        service(key = "sk-test").tick()
 
         val saved = ArgumentCaptor.forClass(RelevanceCase::class.java)
         Mockito.verify(cases).saveAndFlush(saved.capture())
@@ -384,7 +400,7 @@ class RelevanceCheckServiceTest {
         val row = due().also { listed(it) }
         Mockito.`when`(batches.claimCheck(eqArg(row.batchId!!), anyArg(), anyArg(), anyArg())).thenReturn(0)
 
-        service().tick()
+        service(key = "sk-test").tick()
 
         Mockito.verify(batches, Mockito.never()).findCheckDueFor(anyArg(), anyArg(), anyArg(), Mockito.anyInt())
         noCaseWorkBeyondTheSamplingList()
@@ -396,7 +412,7 @@ class RelevanceCheckServiceTest {
         val row = due().also { listed(it); startable(it) }
         Mockito.`when`(batches.findCheckDueFor(eqArg(row.batchId!!), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(null)
 
-        service().tick()
+        service(key = "sk-test").tick()
 
         noCaseWorkBeyondTheSamplingList()
         Mockito.verify(batches, Mockito.never()).markChecked(anyArg(), anyArg(), anyArg(), Mockito.anyInt())
@@ -411,7 +427,7 @@ class RelevanceCheckServiceTest {
         startable(fine)
         Mockito.`when`(batches.claimCheck(eqArg(broken.batchId!!), anyArg(), anyArg(), anyArg())).thenThrow(IllegalStateException("boom"))
 
-        service().tick()
+        service(key = "sk-test").tick()
 
         Mockito.verify(cases).pickSample(anyArg(), eqArg(fine.eventId), eqArg(fine.photographerId), Mockito.eq(1), Mockito.eq(300))
         Mockito.verify(batches).releaseCheck(eqArg(fine.batchId!!), anyArg())
@@ -426,16 +442,17 @@ class RelevanceCheckServiceTest {
         val row = com.quickpitik.entity.BatchRelevance(id = id, eventId = noRow.eventId, photographerId = noRow.photographerId)
         Mockito.`when`(batches.findByEventIdAndPhotographerId(noRow.eventId, noRow.photographerId)).thenReturn(row)
 
-        service().tick()
+        service(key = "sk-test").tick()
 
         Mockito.verify(batches).ensureBatch(noRow.eventId, noRow.photographerId)
         Mockito.verify(batches).claimCheck(eqArg(id), anyArg(), anyArg(), anyArg())
     }
 
-    // The tick always lists decided and sampling cases first; nothing else may touch the cases.
+    // The tick always lists decided, sampling and (with a key) deciding cases first; nothing else may touch the cases.
     private fun noCaseWorkBeyondTheSamplingList() {
         Mockito.verify(cases).findDecided(Mockito.anyInt())
         Mockito.verify(cases).findSampling(anyArg(), Mockito.anyInt())
+        Mockito.verify(cases).findDeciding(anyArg(), anyArg(), Mockito.anyInt())
         Mockito.verifyNoMoreInteractions(cases)
     }
 

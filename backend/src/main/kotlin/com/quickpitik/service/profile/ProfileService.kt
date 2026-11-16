@@ -55,6 +55,8 @@ class ProfileService(
             throw ApiException(HttpStatus.CONFLICT, ErrorCodes.CONSENT_VERSION_MISMATCH,
                 "The Terms were updated. Please reload the page and read them again.")
         }
+        // RVF-1 (RVR-18): accepting the same version again keeps the date of the first acceptance.
+        if (user.termsVersion == legalProperties.currentVersion && user.termsAcceptedAt != null) return userDtoMapper.toDto(user)
         user.recordTermsAcceptance(legalProperties.currentVersion, OffsetDateTime.now(clock))
         userRepository.save(user)
         return userDtoMapper.toDto(user)
