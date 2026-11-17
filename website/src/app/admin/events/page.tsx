@@ -10,6 +10,8 @@ import { AdminEventFormModal } from "@/components/admin/admin-event-form-modal";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
+import { useUrlState } from "@/hooks/use-url-state";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { useAdminEvents, useAdminEventActions, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
@@ -84,6 +86,9 @@ export default function AdminEventsPage() {
       items: byState(catalog, section.matchState),
     }));
   }, [catalog]);
+  // Proposal 12: one status tab at a time, kept in the URL so Back returns to it.
+  const [tabRaw, setTab] = useUrlState<string>("status", "live");
+  const activeTab = SECTIONS.some((x) => x.id === tabRaw) ? tabRaw : "live";
 
   // Owner and review metadata come from the same canonical admin rows.
   const reviewById = useMemo(() => {
@@ -247,7 +252,15 @@ export default function AdminEventsPage() {
           <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
         </div>
       )}
-      {query.data && grouped.map((section) => {
+      {query.data && (
+        <AdminStatusTabs
+          label="Event status"
+          tabs={grouped.map((g) => ({ key: g.id, label: g.title, count: g.items.length }))}
+          value={activeTab}
+          onChange={setTab}
+        />
+      )}
+      {query.data && grouped.filter((section) => section.id === activeTab).map((section) => {
         const noun = section.items.length === 1 ? "event" : "events";
         return (
           <Slab
@@ -257,18 +270,18 @@ export default function AdminEventsPage() {
             title={section.title}
             caption={section.caption}
             trailing={`${section.items.length} ${noun}`}
+            collapsed={section.items.length === 0}
           >
             {section.items.length === 0 ? (
               <p className="font-sans text-sm text-slate-soft">
                 {emptyCopyFor(section.matchState)}
               </p>
             ) : (
-              <div className={`grid gap-6 md:gap-8 ${section.cols}`}>
-                {section.items.map((event, i) => (
+              <ul className="border border-line rounded-2xl bg-surface divide-y divide-line overflow-hidden">
+                {section.items.map((event) => (
+                  <li key={event.id}>
                   <AdminEventCard
-                    key={event.id}
                     event={event}
-                    index={i}
                     review={reviewById.get(event.id)}
                     pendingLabel={pendingAction(event.id)}
                     onEdit={(e) => { if (editTarget?.id !== e.id || !recoveryNotice(e.id)) setEditTarget(e); setEditOpen(true); }}
@@ -277,8 +290,9 @@ export default function AdminEventsPage() {
                     raceHidden={raceHiddenById.get(event.id)}
                     onRaceListing={handleRaceListing}
                   />
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </Slab>
         );
@@ -336,9 +350,7 @@ function Header({
         </button>
       </div>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Lifecycle is derived from the date — set Title, Location, and Date and
-        the cards on /events plus the photographer upload picker update the
-        moment you save. Photographers have a 4-day upload window starting on
+        Every race on the platform. Photographers can upload for 4 days from
         race day.
       </p>
     </header>

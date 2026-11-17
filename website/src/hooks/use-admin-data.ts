@@ -54,16 +54,21 @@ export const EMPTY_FLAGS: Flag[] = [];
 
 // ───────────────────────────────────────────── KPIs
 
-export function useAdminKpis(): AdminKpis | null {
+// The full query, for callers that must tell "loading" or "failed" apart from
+// a real 0 (the Overview tiles).
+export function useAdminKpisQuery() {
   const session = usePrivateQuerySession("ADMIN");
-  const query = useQuery<AdminKpis>({
+  return useQuery<AdminKpis>({
     queryKey: ["admin", "kpis", ...session.key],
     queryFn: ({ signal }) => fetchAdminKpis(signal),
     enabled: session.enabled,
     staleTime: KPI_STALE_MS,
     refetchInterval: KPI_POLL_MS,
   });
-  return query.data ?? null;
+}
+
+export function useAdminKpis(): AdminKpis | null {
+  return useAdminKpisQuery().data ?? null;
 }
 
 export function useAdminKpiTrend(

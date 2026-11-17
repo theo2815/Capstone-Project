@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useAdminRemovalRequests } from "@/hooks/use-photo-removal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
@@ -21,10 +21,20 @@ export const REMOVAL_STATUS_LABEL: Record<RemovalRequestStatus, string> = {
 const SOURCE_LABEL: Record<RemovalRequestSource, string> = { RUNNER: "Runner", SUPPORT: "Support" };
 
 export function RemovalRequestList() {
-  const [offset, setOffset] = useState(0);
-  const [status, setStatus] = useState<RemovalRequestStatus | "">("");
-  const [source, setSource] = useState<RemovalRequestSource | "">("");
-  const [needsAction, setNeedsAction] = useState(false);
+  // Filters and page live in the URL so Back from a case returns to the same view.
+  const [statusRaw] = useUrlState<string>("status", "");
+  const [sourceRaw] = useUrlState<string>("source", "");
+  const [needsRaw] = useUrlState<string>("needs", "");
+  const [offsetRaw] = useUrlState<string>("offset", "");
+  const writeUrl = useUrlStateBatch();
+  const status = (statusRaw in REMOVAL_STATUS_LABEL ? statusRaw : "") as RemovalRequestStatus | "";
+  const source = (sourceRaw in SOURCE_LABEL ? sourceRaw : "") as RemovalRequestSource | "";
+  const needsAction = needsRaw === "1";
+  const offset = Math.max(0, Number.parseInt(offsetRaw, 10) || 0);
+  const setOffset = (next: number) => writeUrl({ offset: next > 0 ? String(next) : null });
+  // Changing a filter returns to the first page.
+  const setFilter = (patch: Record<string, string | null>) => writeUrl({ ...patch, offset: null });
+  const filtered = status !== "" || source !== "" || needsAction;
   const filters: RemovalRequestFilters = { offset, limit: PAGE, ...(status && { status }), ...(source && { source }), ...(needsAction && { needsAction }) };
   const list = useAdminRemovalRequests(filters);
   const rows = list.data?.items ?? [];
@@ -35,7 +45,7 @@ export function RemovalRequestList() {
         <div className="space-y-1">
           <AdminFieldLabel htmlFor="removal-filter-status">Status</AdminFieldLabel>
           <select id="removal-filter-status" value={status} className={REMOVAL_INPUT}
-            onChange={(e) => { setStatus(e.target.value as RemovalRequestStatus | ""); setOffset(0); }}>
+            onChange={(e) => setFilter({ status: e.target.value || null })}>
             <option value="">Any status</option>
             {Object.entries(REMOVAL_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
@@ -43,14 +53,14 @@ export function RemovalRequestList() {
         <div className="space-y-1">
           <AdminFieldLabel htmlFor="removal-filter-source">Source</AdminFieldLabel>
           <select id="removal-filter-source" value={source} className={REMOVAL_INPUT}
-            onChange={(e) => { setSource(e.target.value as RemovalRequestSource | ""); setOffset(0); }}>
+            onChange={(e) => setFilter({ source: e.target.value || null })}>
             <option value="">Runner and support</option>
             <option value="RUNNER">Runner requests</option>
             <option value="SUPPORT">Support requests</option>
           </select>
         </div>
         <label className="flex min-h-[44px] items-center gap-2 text-sm text-ink cursor-pointer">
-          <input type="checkbox" checked={needsAction} onChange={(e) => { setNeedsAction(e.target.checked); setOffset(0); }} />
+          <input type="checkbox" checked={needsAction} onChange={(e) => setFilter({ needs: e.target.checked ? "1" : null })} />
           Needs action
         </label>
       </div>
@@ -61,7 +71,12 @@ export function RemovalRequestList() {
           <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void list.refetch()}>Try again</button>
         </div>
       )}
-      {list.isSuccess && rows.length === 0 && <p className="text-slate">No removal cases yet.</p>}
+      {list.isSuccess && rows.length === 0 && (filtered ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-slate">No cases match these filters.</p>
+          <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} onClick={() => setFilter({ status: null, source: null, needs: null })}>Clear filters</button>
+        </div>
+      ) : <p className="text-slate">No removal cases yet.</p>)}
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((row) => {
           const runner = row.source === "RUNNER";

@@ -7,10 +7,12 @@ import { useAuthStore } from "@/store/auth-store";
 import AdminOverviewPage from "./page";
 
 vi.mock("@/components/admin/admin-overview-trend", () => ({ AdminOverviewTrend: () => null }));
-const kpis = vi.hoisted(() => ({ value: undefined as unknown }));
-vi.mock("@/hooks/use-admin-data", () => ({ useAdminKpis: () => kpis.value }));
+const kpis = vi.hoisted(() => ({ value: undefined as unknown, isError: false, refetch: () => {} }));
+vi.mock("@/hooks/use-admin-data", () => ({
+  useAdminKpisQuery: () => ({ data: kpis.value, isError: kpis.isError, isFetching: false, refetch: kpis.refetch }),
+}));
 
-afterEach(() => { kpis.value = undefined; cleanup(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
+afterEach(() => { kpis.value = undefined; kpis.isError = false; cleanup(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
 
 it("asks for the 20 most recent decisions", async () => {
   useAuthStore.getState().setUser(admin);
@@ -29,4 +31,17 @@ it("the disputes tile counts everything that needs an admin", async () => {
   const tile = screen.getByText(/Disputes needing you/).closest("a")!;
   expect(tile.textContent).toContain("4");
   expect(tile.textContent).toContain("2 overdue");
+});
+
+it("shows a retry instead of zero counts when the metrics fail to load", async () => {
+  useAuthStore.getState().setUser(admin);
+  kpis.isError = true;
+  kpis.refetch = vi.fn();
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
+  expect(screen.getByText("Couldn't load the metrics. Please try again.")).toBeInTheDocument();
+  expect(screen.queryByText(/Disputes needing you/)).toBeNull();
+  screen.getByRole("button", { name: "Retry" }).click();
+  expect(kpis.refetch).toHaveBeenCalled();
 });

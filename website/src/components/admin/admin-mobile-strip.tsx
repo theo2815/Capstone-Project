@@ -2,64 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import {
+  ADMIN_ROUTES,
+  isRouteActive,
+  useAdminRouteCounts,
+} from "@/components/admin/admin-rail";
 import { useAdminAttentionTarget } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
-
-interface AdminRoute {
-  readonly href: string;
-  readonly label: string;
-  readonly nestedPrefix?: string;
-  readonly aliasPrefixes?: readonly string[];
-}
-
-// Mirror of <AdminRail>'s ADMIN_ROUTES. Inbox-led order, Overview last.
-const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
-  {
-    href: ROUTES.ADMIN_INBOX,
-    label: "Inbox",
-    nestedPrefix: ROUTES.ADMIN_INBOX,
-    aliasPrefixes: [ROUTES.ADMIN_VERIFICATIONS],
-  },
-  {
-    href: ROUTES.ADMIN_DISPUTES,
-    label: "Disputes",
-    nestedPrefix: ROUTES.ADMIN_DISPUTES,
-  },
-  {
-    href: ROUTES.ADMIN_FLAGS,
-    label: "Flags",
-    nestedPrefix: ROUTES.ADMIN_FLAGS,
-  },
-  { href: ROUTES.ADMIN_PAYOUTS, label: "Payouts" },
-  {
-    href: ROUTES.ADMIN_RELEVANCE,
-    label: "Photo Relevance",
-    nestedPrefix: ROUTES.ADMIN_RELEVANCE,
-  },
-  {
-    href: ROUTES.ADMIN_EVENTS,
-    label: "Events",
-    nestedPrefix: ROUTES.ADMIN_EVENTS,
-  },
-  {
-    href: ROUTES.ADMIN_PHOTOGRAPHERS,
-    label: "Photographers",
-    nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
-  },
-  {
-    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
-    label: "Photo removals",
-    nestedPrefix: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
-  },
-  { href: ROUTES.ADMIN_OVERVIEW, label: "Overview" },
-  { href: ROUTES.ADMIN_SALES, label: "Sales" },
-  { href: ROUTES.ADMIN_SECURITY, label: "Security", nestedPrefix: ROUTES.ADMIN_SECURITY },
-];
-
-const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
-  ? ADMIN_ROUTES_ALL
-  : ADMIN_ROUTES_ALL.filter((r) => r.href !== ROUTES.ADMIN_FLAGS);
 
 // Mobile-only chip strip for /admin/*. The sticky wrapper lives in
 // <AdminShell> so the strip pins under SiteHeader. Renders nothing ≥ md
@@ -67,15 +16,17 @@ const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
 export function AdminMobileStrip() {
   const pathname = usePathname();
   const attention = useAdminAttentionTarget();
+  const { getCountForHref } = useAdminRouteCounts();
 
   return (
     <div className="bg-bone/90 backdrop-blur-md border-b border-line">
       <nav aria-label="Admin sections" className="max-w-7xl mx-auto">
-        <ul className="flex gap-2 overflow-x-auto px-6 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <ul className="flex gap-2 overflow-x-auto px-6 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none]">
           {ADMIN_ROUTES.map((route) => {
             const isActive = isRouteActive(pathname, route);
             const isAttention =
               attention !== null && attention.href === route.href;
+            const count = getCountForHref(route.href);
             return (
               <li key={route.href} className="shrink-0">
                 <Link
@@ -96,6 +47,11 @@ export function AdminMobileStrip() {
                     )}
                   />
                   {route.label}
+                  {count !== null && count > 0 && (
+                    <span className="tnum" aria-label={`${count} open`}>
+                      {count}
+                    </span>
+                  )}
                   {isAttention && !isActive && (
                     <span
                       aria-label={`${attention.label} need attention`}
@@ -110,24 +66,4 @@ export function AdminMobileStrip() {
       </nav>
     </div>
   );
-}
-
-function isRouteActive(
-  pathname: string | null,
-  route: AdminRoute,
-): boolean {
-  if (!pathname) return false;
-  if (route.aliasPrefixes) {
-    for (const prefix of route.aliasPrefixes) {
-      if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
-        return true;
-      }
-    }
-  }
-  if (route.nestedPrefix) {
-    return (
-      pathname === route.href || pathname.startsWith(`${route.nestedPrefix}/`)
-    );
-  }
-  return pathname === route.href || pathname.startsWith(`${route.href}/`);
 }

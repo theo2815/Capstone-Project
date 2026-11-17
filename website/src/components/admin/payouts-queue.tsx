@@ -5,7 +5,7 @@ import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { AdminPayoutRow, PayoutFlagLine } from "@/components/admin/admin-payout-row";
+import { AdminPayoutRow, PayoutFlagLine, PayoutTableHeader } from "@/components/admin/admin-payout-row";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
 import { AdminPayoutBulkApproveModal } from "@/components/admin/admin-payout-bulk-approve-modal";
 import { AdminPayoutHoldModal } from "@/components/admin/admin-payout-hold-modal";
@@ -35,6 +35,7 @@ import {
 } from "@/lib/admin-payouts";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 
 interface SingleHoldTarget {
   kind: "single";
@@ -111,6 +112,9 @@ export function PayoutsQueue() {
     cycle: AdminPayoutCycle;
   } | null>(null);
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  // Proposal 10: one status at a time, as tabs, instead of five stacked sections.
+  const [tabRaw, setTab] = useUrlState<string>("status", "pending");
+  const tab: PayoutTab = (PAYOUT_TABS as readonly string[]).includes(tabRaw) ? (tabRaw as PayoutTab) : "pending";
 
   const actionIds = holdTarget?.kind === "single" ? [holdTarget.payoutId]
     : holdTarget?.kind === "bulk" ? holdTarget.payoutIds
@@ -292,17 +296,22 @@ export function PayoutsQueue() {
   // payment reference string and isn't sensible to trigger from a
   // single keystroke. Use the visible slices for paginated slabs so J/K
   // only visits rows currently rendered.
-  const rowIds = useMemo(
-    () =>
-      [
-        ...pending,
-        ...inProgressVisible,
-        ...heldVisible,
-        ...paidVisible,
-        ...closedVisible,
-      ].map((c) => c.id),
-    [pending, inProgressVisible, heldVisible, paidVisible, closedVisible],
-  );
+  const visibleByTab: Record<PayoutTab, AdminPayoutCycle[]> = {
+    pending,
+    "in-progress": inProgressVisible,
+    held: heldVisible,
+    paid: paidVisible,
+    closed: closedVisible,
+  };
+  const tabCounts: Record<PayoutTab, number> = {
+    pending: pending.length,
+    "in-progress": inProgress.length,
+    held: held.length,
+    paid: paid.length,
+    closed: closed.length,
+  };
+  const activeRows = visibleByTab[tab];
+  const rowIds = useMemo(() => activeRows.map((c) => c.id), [activeRows]);
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
@@ -527,7 +536,13 @@ export function PayoutsQueue() {
           </button>
         </div>
       )}
-      <PayoutSlab
+      <AdminStatusTabs
+        label="Payout status"
+        tabs={PAYOUT_TABS.map((key) => ({ key, label: PAYOUT_TAB_LABEL[key], count: tabCounts[key] }))}
+        value={tab}
+        onChange={setTab}
+      />
+      {tab === "pending" && <PayoutSlab
         id="pending"
         number="01"
         title="Pending review"
@@ -545,8 +560,8 @@ export function PayoutsQueue() {
         onHold={handleSingleHoldRequest}
         onMarkPaid={handleSingleMarkPaid}
         onMarkProcessing={handleSingleMarkProcessing}
-      />
-      <PayoutSlab
+      />}
+      {tab === "in-progress" && <PayoutSlab
         id="in-progress"
         number="02"
         title="In progress"
@@ -571,8 +586,8 @@ export function PayoutsQueue() {
           onLoadMore: () =>
             setInProgressLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
-      />
-      <PayoutSlab
+      />}
+      {tab === "held" && <PayoutSlab
         id="held"
         number="03"
         title="Held"
@@ -597,8 +612,8 @@ export function PayoutsQueue() {
           onLoadMore: () =>
             setHeldLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
-      />
-      <PayoutSlab
+      />}
+      {tab === "paid" && <PayoutSlab
         id="paid"
         number="04"
         title="Paid"
@@ -623,8 +638,8 @@ export function PayoutsQueue() {
           onLoadMore: () =>
             setPaidLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
-      />
-      <PayoutSlab
+      />}
+      {tab === "closed" && <PayoutSlab
         id="closed"
         number="05"
         title="Closed"
@@ -649,7 +664,7 @@ export function PayoutsQueue() {
           onLoadMore: () =>
             setClosedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
-      />
+      />}
 
       <AdminPayoutBulkBar
         count={selected.size}
@@ -745,6 +760,16 @@ export function PayoutsQueue() {
   );
 }
 
+const PAYOUT_TABS = ["pending", "in-progress", "held", "paid", "closed"] as const;
+type PayoutTab = (typeof PAYOUT_TABS)[number];
+const PAYOUT_TAB_LABEL: Record<PayoutTab, string> = {
+  pending: "Pending review",
+  "in-progress": "In progress",
+  held: "Held",
+  paid: "Paid",
+  closed: "Closed",
+};
+
 function PayoutSlab({
   id,
   number,
@@ -798,12 +823,15 @@ function PayoutSlab({
       title={title}
       caption={caption}
       trailing={`${totalCount} ${noun}`}
+      collapsed={totalCount === 0}
     >
       {totalCount === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{empty}</p>
       ) : (
         <>
-          <ul className="space-y-4">
+          <div className="border border-line rounded-2xl bg-surface overflow-hidden">
+          <PayoutTableHeader />
+          <ul className="divide-y divide-line">
             {rows.map((row) => (
               <li key={row.id}>
                 <AdminPayoutRow
@@ -824,6 +852,7 @@ function PayoutSlab({
               </li>
             ))}
           </ul>
+          </div>
           {loadMore && (
             <LoadMoreButton
               shown={loadMore.shown}

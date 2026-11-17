@@ -11,23 +11,18 @@ import {
   usePhotographerEvents,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
+import { formatPrice } from "@/lib/utils";
 import {
   BRAND_COLOR_HEX,
   usePhotographerSettingsStore,
 } from "@/store/photographer-settings-store";
 
 // 2×2 quick-action grid that anchors the dashboard overview. Each card
-// carries a visual signature drawn from real photographer data — photo-tone
+// carries a visual signature drawn from real photographer data — logo
 // strip / brand band + avatar / sparkline / event-state dot rows — so the
 // tile pays its own way without a heavy stat block. Replaces the prior
 // race-day cockpit hero.
-
-const PHOTO_TONE_VARS = [
-  "var(--ink)",
-  "var(--ink-soft)",
-  "var(--slate)",
-  "var(--slate-soft)",
-] as const;
 
 export function DashboardActionGrid() {
   const { user } = useAuth();
@@ -42,7 +37,9 @@ export function DashboardActionGrid() {
         Welcome back, {firstName}.
       </h2>
 
-      <div className="mt-8 md:mt-10 grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6 auto-rows-fr">
+      {/* Phones: a compact 2×2 of labels; the decorative previews show from sm up
+          (stacked full-size, the four cards took ~800px before any real content). */}
+      <div className="mt-8 md:mt-10 grid grid-cols-2 gap-3 sm:gap-4 md:gap-6 auto-rows-fr">
         <UploadCard />
         <ProfileCard />
         <EarningsCard />
@@ -100,19 +97,12 @@ function CardCaption({
   );
 }
 
-// ─── Upload — photo-tone strip ────────────────────────────────────────────
+// ─── Upload — logo strip ────────────────────────────────────────────
 function UploadCard() {
   return (
     <CardShell href={ROUTES.DASHBOARD_UPLOAD}>
-      <div className="flex gap-1.5">
-        {PHOTO_TONE_VARS.concat(PHOTO_TONE_VARS[0]).map((color, i) => (
-          <div
-            key={i}
-            className="flex-1 h-10 md:h-12 rounded-md"
-            style={{ backgroundColor: color }}
-          />
-        ))}
-      </div>
+      {/* The QuickPitik logo stands in for photos, like every "no picture yet" placeholder. */}
+      <LogoPlaceholder size="md" className="hidden sm:flex h-10 md:h-12 rounded-md" />
       <CardLabel>
         <span className="text-fresh">+</span> Upload photos
       </CardLabel>
@@ -140,7 +130,7 @@ function ProfileCard() {
 
   return (
     <CardShell href={ROUTES.PROFILE}>
-      <div>
+      <div className="hidden sm:block">
         <div
           aria-hidden="true"
           className="h-1.5 rounded-full"
@@ -169,7 +159,7 @@ function EarningsCard() {
   if (!e) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
-        <TileSkeleton aspectRatio="h-16 md:h-20" className="rounded-md" />
+        <TileSkeleton aspectRatio="h-16 md:h-20" className="rounded-md hidden sm:block" />
         <CardLabel>View earnings</CardLabel>
         <Skeleton className="h-3 w-44 mt-2" />
       </CardShell>
@@ -177,13 +167,15 @@ function EarningsCard() {
   }
   return (
     <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
-      <Sparkline
-        data={e.weeklySeries}
-        ariaLabel="Weekly earnings, last 12 weeks"
-      />
+      <div className="hidden sm:block">
+        <Sparkline
+          data={e.weeklySeries}
+          ariaLabel="Weekly earnings, last 12 weeks"
+        />
+      </div>
       <CardLabel>View earnings</CardLabel>
       <CardCaption>
-        ₱{e.thisWeek.toLocaleString()} this week · +{e.thisWeekSold} sold
+        {formatPrice(e.thisWeek)} this week · +{e.thisWeekSold} sold
       </CardCaption>
     </CardShell>
   );
@@ -196,7 +188,7 @@ function EventsCard() {
   if (isLoading || !events) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EVENTS}>
-        <ul className="space-y-2">
+        <ul className="space-y-2 hidden sm:block">
           <li>
             <Skeleton className="h-3 w-32" />
           </li>
@@ -225,7 +217,7 @@ function EventsCard() {
 
   return (
     <CardShell href={ROUTES.DASHBOARD_EVENTS}>
-      <ul className="space-y-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+      <ul className="hidden sm:block space-y-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
         <li className="flex items-center gap-2.5">
           <span
             aria-hidden="true"

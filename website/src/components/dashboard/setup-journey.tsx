@@ -129,13 +129,14 @@ function buildSteps(
 function SetupHero({ current, total }: { current: number; total: number }) {
   return (
     <div>
-      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate tnum">
+      <p className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate tnum">
         Welcome · Step {current} of {total}
       </p>
-      <h1 className="font-display text-3xl md:text-5xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
+      {/* h2: the dashboard rail carries the page h1. */}
+      <h2 className="font-display text-3xl md:text-5xl font-medium tracking-tight text-ink mt-4 leading-[1.05]">
         Let&apos;s get you ready for
         <br className="hidden md:block" /> your first event.
-      </h1>
+      </h2>
       <p className="font-sans text-base md:text-lg text-ink-soft mt-4 max-w-xl">
         Three short steps before runners can find your photos. We&apos;ll keep
         this page simple until you&apos;re live.

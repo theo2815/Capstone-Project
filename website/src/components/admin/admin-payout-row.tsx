@@ -10,9 +10,10 @@ import {
   payoutActionsBlockedByHold,
   payoutMethodLabel,
 } from "@/lib/admin-payouts";
-import { formatPrice } from "@/lib/utils";
-import { formatLongDate } from "@/lib/format";
-import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
+import { cn, formatPrice } from "@/lib/utils";
+import { BTN_DANGER, BTN_SECONDARY } from "@/components/ui/button-styles";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
+import { type AdminStatusPillTone } from "./admin-status-pill";
 
 interface AdminPayoutRowProps {
   cycle: AdminPayoutCycle;
@@ -97,91 +98,84 @@ export function AdminPayoutRow({
       aria-label={`${subjectLabel}${
         selectionActive ? " — toggle selection" : " — open payout"
       }`}
-      className={`group rounded-2xl border p-5 md:p-6 transition-colors cursor-pointer ${
-        selected
-          ? "border-ink bg-fresh-tint/30"
-          : "border-line bg-bone hover:border-ink"
-      } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
+      className={cn(
+        "group cursor-pointer px-4 py-3 transition-colors",
+        // One table row: stacked on phones, the shared column grid from md up.
+        "flex flex-wrap items-start gap-x-4 gap-y-2",
+        "md:grid md:items-center md:gap-x-4",
+        PAYOUT_TABLE_COLUMNS,
+        selected ? "bg-fresh-tint/50" : "hover:bg-bone-deep/50",
+        focused && "ring-2 ring-inset ring-ink",
+      )}
     >
-      <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">
-        <input
-          type="checkbox"
-          aria-label={`Select payout ${cycle.id}`}
-          checked={selected}
-          disabled={submitting}
-          onChange={onToggleSelect}
-          onClick={(e) => e.stopPropagation()}
-          className="mt-1 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      <input
+        type="checkbox"
+        aria-label={`Select payout ${cycle.id}`}
+        checked={selected}
+        disabled={submitting}
+        onChange={onToggleSelect}
+        onClick={(e) => e.stopPropagation()}
+        className="mt-1 md:mt-0 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      />
+      <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] md:basis-auto">
+        <h3 className="font-display text-base font-semibold text-ink truncate">
+          {subjectLabel}
+        </h3>
+        <p className="font-sans text-sm text-slate truncate">
+          {cycle.handle && <span className="font-mono text-[13px]">@{cycle.handle}</span>}
+          {cycle.handle && " · "}
+          <span className="font-mono text-[13px]">{cycle.id}</span>
+        </p>
+        <PayoutFlagLine cycle={cycle} />
+        {cycle.status === "held" && cycle.holdReason && (
+          <p className="font-sans text-sm text-slate mt-1">Hold: {cycle.holdReason}</p>
+        )}
+        {cycle.status === "rejected" && cycle.rejectedReason && (
+          <p className="font-sans text-sm text-slate mt-1">Rejected: {cycle.rejectedReason}</p>
+        )}
+        {cycle.status === "failed" && cycle.failedReason && (
+          <p className="font-sans text-sm text-slate mt-1">Failed: {cycle.failedReason}</p>
+        )}
+        {cycle.status === "paid" && cycle.paymentReference && (
+          <p className="font-sans text-sm text-slate mt-1">
+            Ref <span className="font-mono text-[13px] text-ink">{cycle.paymentReference}</span>
+            {cycle.paidAt && ` · paid ${sentenceCaseDate(formatLongDate(cycle.paidAt))}`}
+          </p>
+        )}
+      </div>
+      {/* Request time, matching the photographer's own view: see the note on
+          PayoutSubtitle in payouts-queue.tsx. */}
+      <Cell label="Requested" className="text-ink-soft whitespace-nowrap">{sentenceCaseDate(formatLongDate(cycle.submittedAt))}</Cell>
+      <Cell label="Sales" className="md:text-right font-mono tnum text-[13px] text-ink-soft">{cycle.itemCount}</Cell>
+      <Cell label="Amount" className="md:text-right font-mono tnum text-[14px] font-medium text-ink">{formatPrice(cycle.amount)}</Cell>
+      <Cell label="Method" className="text-ink-soft">{payoutMethodLabel(cycle.method)}</Cell>
+      <Cell label="Status">
+        <StatusDot status={cycle.status} />
+      </Cell>
+      <div className="flex items-center justify-end gap-1 w-full md:w-auto">
+        {submitting && <p role="status" aria-busy="true" className="font-sans text-sm text-slate mr-2">{pendingLabel}</p>}
+        <RowActions
+          submitting={submitting}
+          status={cycle.status}
+          provider={cycle.provider ?? "manual"}
+          blocked={payoutActionsBlockedByHold(cycle)}
+          onApprove={(e) => {
+            e.stopPropagation();
+            onApprove();
+          }}
+          onHold={(e) => {
+            e.stopPropagation();
+            onHold();
+          }}
+          onMarkPaid={(e) => {
+            e.stopPropagation();
+            onMarkPaid();
+          }}
+          onMarkProcessing={(e) => {
+            e.stopPropagation();
+            onMarkProcessing();
+          }}
         />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-3 flex-wrap">
-            <h3 className="font-display text-lg md:text-xl font-medium text-ink truncate">
-              {subjectLabel}
-            </h3>
-            {cycle.handle && (
-              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
-                @{cycle.handle}
-              </p>
-            )}
-          </div>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 tnum">
-            {cycle.id}
-            <span className="text-slate-soft"> · </span>
-            {/* Request time, matching the photographer's own view — see the
-                note on PayoutSubtitle in payouts-queue.tsx. */}
-            {formatLongDate(cycle.submittedAt)}
-            <span className="text-slate-soft"> · </span>
-            {cycle.itemCount} {cycle.itemCount === 1 ? "sale" : "sales"}
-          </p>
-          <PayoutFlagLine cycle={cycle} />
-          {cycle.status === "held" && cycle.holdReason && (
-            <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
-                Hold:
-              </span>
-              {cycle.holdReason}
-            </p>
-          )}
-          {cycle.status === "rejected" && cycle.rejectedReason && (
-            <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
-                Rejected:
-              </span>
-              {cycle.rejectedReason}
-            </p>
-          )}
-          {cycle.status === "failed" && cycle.failedReason && (
-            <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
-                Failed:
-              </span>
-              {cycle.failedReason}
-            </p>
-          )}
-          {cycle.status === "paid" && cycle.paymentReference && (
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-2 tnum">
-              Ref: {cycle.paymentReference}
-              {cycle.paidAt && (
-                <>
-                  <span className="text-slate-soft"> · </span>
-                  {formatLongDate(cycle.paidAt)}
-                </>
-              )}
-            </p>
-          )}
-        </div>
-        <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
-          <AdminStatusPill
-            label={ADMIN_PAYOUT_STATUS_LABEL[cycle.status]}
-            tone={statusTone(cycle.status)}
-          />
-          <p className="font-display text-lg text-ink tnum">
-            {formatPrice(cycle.amount)}
-          </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
-            {payoutMethodLabel(cycle.method)}
-          </p>
-        </div>
         <button
           type="button"
           onClick={(e) => {
@@ -189,38 +183,67 @@ export function AdminPayoutRow({
             onOpenDrawer();
           }}
           aria-label={`Open payout ${cycle.id}`}
-          className="shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
+          className="shrink-0 size-11 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
         >
           <span aria-hidden="true" className="text-lg leading-none">
             ›
           </span>
         </button>
       </div>
-
-      {submitting && <p role="status" aria-busy="true">{pendingLabel}</p>}
-      <RowActions
-        submitting={submitting}
-        status={cycle.status}
-        provider={cycle.provider ?? "manual"}
-        blocked={payoutActionsBlockedByHold(cycle)}
-        onApprove={(e) => {
-          e.stopPropagation();
-          onApprove();
-        }}
-        onHold={(e) => {
-          e.stopPropagation();
-          onHold();
-        }}
-        onMarkPaid={(e) => {
-          e.stopPropagation();
-          onMarkPaid();
-        }}
-        onMarkProcessing={(e) => {
-          e.stopPropagation();
-          onMarkProcessing();
-        }}
-      />
     </article>
+  );
+}
+
+/** Column template shared by the payout rows and their header (md and up).
+ *  Fixed status and actions tracks: an `auto` track sized differently in the
+ *  header and in each row, so the headings drifted off their columns. */
+export const PAYOUT_TABLE_COLUMNS =
+  "md:grid-cols-[1rem_minmax(0,2fr)_minmax(0,1fr)_3.5rem_7.5rem_minmax(0,0.9fr)_8.5rem_16rem]";
+
+/** Column headings for the payout table; each row cell also names itself for screen readers. */
+export function PayoutTableHeader() {
+  const H = "font-mono uppercase tracking-[0.12em] text-[12px] text-slate";
+  return (
+    <div aria-hidden="true" className={cn("hidden md:grid md:items-center md:gap-x-4 px-4 py-3 border-b border-line", PAYOUT_TABLE_COLUMNS)}>
+      <span />
+      <span className={H}>Photographer</span>
+      <span className={H}>Requested</span>
+      <span className={cn(H, "text-right")}>Sales</span>
+      <span className={cn(H, "text-right")}>Amount</span>
+      <span className={H}>Method</span>
+      <span className={H}>Status</span>
+      <span className={cn(H, "text-right pr-12")}>Actions</span>
+    </div>
+  );
+}
+
+function Cell({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn("font-sans text-sm basis-[45%] md:basis-auto min-w-0", className)}>
+      {/* Visible on phones; on desktop only screen readers hear it, since the header row names the column. */}
+      <span className="md:sr-only font-mono uppercase tracking-[0.12em] text-[12px] text-slate-soft block">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+const STATUS_TEXT: Record<AdminStatusPillTone, string> = {
+  amber: "text-amber-700",
+  fresh: "text-fresh",
+  ink: "text-ink",
+  slate: "text-slate",
+  muted: "text-slate-soft",
+  error: "text-error",
+};
+
+// A dot plus the word: colour is never the only signal, and it reads quieter
+// than an outlined pill inside a table. The dot takes the text colour.
+function StatusDot({ status }: { status: AdminPayoutStatus }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-sm whitespace-nowrap", STATUS_TEXT[statusTone(status)])}>
+      <span aria-hidden="true" className="size-[7px] rounded-full bg-current" />
+      {ADMIN_PAYOUT_STATUS_LABEL[status]}
+    </span>
   );
 }
 
@@ -262,10 +285,9 @@ function RowActions({
   onMarkProcessing: (e: React.MouseEvent) => void;
 }) {
   if (provider !== "manual") return null;
-  const PILL =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-4 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed";
-  const GHOST =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed";
+  // House buttons in sentence case (proposal 11: mono uppercase is for labels only).
+  const PILL = cn(BTN_SECONDARY, "px-4 py-2 text-sm min-h-[44px] whitespace-nowrap");
+  const GHOST = cn(BTN_DANGER, "px-4 py-2 text-sm min-h-[44px] whitespace-nowrap");
 
   const canApprove = status === "pending_review" || status === "held";
   const canMarkProcessing = status === "approved";
@@ -279,7 +301,7 @@ function RowActions({
     return null;
   }
   return (
-    <div className="mt-4 flex items-center gap-2 flex-wrap">
+    <div className="flex items-center gap-2 flex-wrap justify-end">
       {canApprove && (
         <button type="button" disabled={submitting || blocked} onClick={onApprove} className={PILL}>
           Approve

@@ -133,7 +133,8 @@ export function AdminKpiStrip() {
 
   return (
     <nav aria-label="Queue counts" className="border-y border-line">
-      <ul className="flex flex-wrap items-baseline gap-x-8 md:gap-x-12 gap-y-4 py-4 md:py-5">
+      {/* One scrolling row on phones so the queue starts within the first screen. */}
+      <ul className="flex flex-nowrap md:flex-wrap overflow-x-auto md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden items-baseline gap-x-8 md:gap-x-12 gap-y-4 py-4 md:py-5 [&>li]:shrink-0 [&>li]:whitespace-nowrap [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none]">
         {entries.map((entry) => {
           const isPriority = entry.href === priorityHref;
           const labelText =

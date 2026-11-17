@@ -136,7 +136,9 @@ it("keeps the row confirming after byte progress and shows the backend processin
   expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
   await act(async () => { finish({ id: "photo-1", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" }); });
   expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
-  expect(screen.getByText("Uploaded — preparing preview").closest('[role="status"]')).toHaveAttribute("aria-live", "polite");
+  // Rows are not live regions (a big batch would flood screen readers); the batch total is the one live region.
+  expect(screen.getByText("Uploaded — preparing preview").closest("[aria-live]")).toBeNull();
+  expect([...document.querySelectorAll('[aria-live="polite"]')].some((el) => /confirmed/i.test(el.textContent ?? ""))).toBe(true);
 });
 
 it.each(["offline", "429", "malformed"])("continues with server authority when duplicate preflight is %s", async (failure) => {

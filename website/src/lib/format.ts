@@ -30,6 +30,11 @@ export function formatLongDate(iso: MaybeIso, dateOnly = false): string {
 // Convenience wrappers that name the call-site intent. They all flow through
 // formatLongDate / formatMonthYear so behavior stays consistent.
 export const formatMemberSince = formatMonthYear;
+
+/** "NOV 16 · 2026" → "Nov 16 · 2026", for dates shown in sentence-case admin rows. */
+export function sentenceCaseDate(label: string): string {
+  return label.charAt(0) + label.slice(1).toLowerCase();
+}
 export const formatPaidAt = (iso: MaybeIso) => formatLongDate(iso, false);
 export const formatRaceDate = (iso: MaybeIso) => formatLongDate(iso, true);
 

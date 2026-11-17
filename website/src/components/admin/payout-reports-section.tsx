@@ -116,7 +116,7 @@ export function PayoutReportsSection() {
   return (
     <Slab
       id="reports"
-      number="05"
+      number="06"
       title="Reports from photographers"
       caption="Filed against payouts they didn't receive or expect"
       trailing={
@@ -124,6 +124,7 @@ export function PayoutReportsSection() {
           ? `${openCount} open · ${reports.length} total`
           : `${reports.length} total`
       }
+      collapsed={reportsQuery.isSuccess && reports.length === 0}
     >
       {reportsQuery.isPending ? <p role="status">Loading reports…</p> :
         reportsQuery.isError && !reportsQuery.data ? (

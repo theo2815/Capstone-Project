@@ -27,7 +27,7 @@ it("the rail shows the Photo Relevance item", () => {
   const link = screen.getByRole("link", { name: /Photo Relevance/ });
   expect(link).toHaveAttribute("href", "/admin/relevance");
   expect(link).toHaveAttribute("aria-current", "page");
-  expect(within(link).getByText("12")).toBeInTheDocument();
+  expect(within(link).getByText("06")).toBeInTheDocument();
   // It sits with the queues, after Event requests, and leaves every other row as it was.
   const names = screen.getAllByRole("link").map((l) => l.textContent?.replace(/\d+/g, "").trim());
   expect(names).toEqual(["Inbox", "Disputes", "Flags", "Payouts", "Event requests", "Photo Relevance",

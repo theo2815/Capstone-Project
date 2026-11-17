@@ -11,9 +11,9 @@ import {
   matchEventDate,
   type EventDateKey,
 } from "@/components/dashboard/event-filter-bar";
-import { EventTile } from "@/components/events/event-tile";
+import { DashboardEventRow } from "@/components/dashboard/dashboard-event-row";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { TileSkeleton } from "@/components/ui/skeleton";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   usePhotographerEvents,
   COVERED_EVENTS_MAX,
@@ -95,9 +95,9 @@ export default function DashboardEventsPage() {
         title="My events"
         caption="Races you've created or covered"
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+        <div className="space-y-2">
           {[0, 1, 2, 3].map((i) => (
-            <TileSkeleton key={i} />
+            <Skeleton key={i} className="h-20 w-full rounded-xl" />
           ))}
         </div>
       </Slab>
@@ -195,19 +195,18 @@ function EventGroupSlab({
       caption={caption}
       trailing={`${items.length} ${noun}`}
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-        {visibleSlice.map(({ catalog, photographer }, i) => (
-          <EventTile
-            key={catalog.id}
-            mode="manage"
-            event={catalog}
-            index={i}
-            photoCount={photographer.photoCount}
-            salesCount={photographer.salesCount}
-            note={ownedEventNote(photographer)}
-          />
+      <ul className="border border-line rounded-2xl bg-surface divide-y divide-line overflow-hidden">
+        {visibleSlice.map(({ catalog, photographer }) => (
+          <li key={catalog.id}>
+            <DashboardEventRow
+              event={catalog}
+              photoCount={photographer.photoCount}
+              salesCount={photographer.salesCount}
+              note={ownedEventNote(photographer)}
+            />
+          </li>
         ))}
-      </div>
+      </ul>
       <LoadMoreButton
         shown={visibleSlice.length}
         total={items.length}
@@ -241,6 +240,9 @@ function CoveredEmpty() {
         Upload your first batch to a race from the Upload page, or create an
         event of your own — paid or free, public or link-only.
       </p>
+      <div className="mt-6">
+        <CreateEventLink />
+      </div>
     </div>
   );
 }

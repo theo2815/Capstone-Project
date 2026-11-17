@@ -13,8 +13,8 @@ export default function AdminRelevancePage() {
           Photo Relevance.
         </h1>
         <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-          Each case is one photographer&apos;s batch in one event, checked after upload for junk, wrong-event and
-          copied photos. A case marked &ldquo;would have hidden&rdquo; was only recorded: nothing was hidden.
+          Uploaded batches checked for junk, wrong-event and copied photos. &ldquo;Would have hidden&rdquo;
+          means recorded only; nothing was hidden.
         </p>
       </header>
       <RelevanceCases />

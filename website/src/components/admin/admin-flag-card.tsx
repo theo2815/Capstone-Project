@@ -18,7 +18,7 @@ import {
 } from "@/lib/admin-flags";
 import { useFlagActions } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
-import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
 import { AdminFlagHideModal } from "./admin-flag-hide-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
@@ -97,7 +97,6 @@ export function AdminFlagCard({
   const toggleConfirm = (kind: FlagConfirmKind) => setConfirm((c) => (c === kind ? null : kind));
 
   const eventName = flagEventName(flag);
-  const cover = syntheticCoverGradient(flag.id);
   const isOpen = flag.status === "open";
   const actionable = canDismiss(flag);
 
@@ -173,13 +172,7 @@ export function AdminFlagCard({
           />
         </div>
       ) : (
-        <div
-          className="aspect-[3/2] border-b border-line"
-          style={{
-            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-          }}
-          aria-label={flag.photoSnapshot.alt}
-        />
+        <LogoPlaceholder size="lg" label={flag.photoSnapshot.alt} className="aspect-[3/2] border-b border-line" />
       )}
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
