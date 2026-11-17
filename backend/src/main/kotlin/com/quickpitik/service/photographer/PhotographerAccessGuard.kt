@@ -20,8 +20,8 @@ import java.util.UUID
  *
  * Preserves the two 403 codes the clients already branch on:
  * [ErrorCodes.ACCOUNT_SUSPENDED] and [ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED].
- * APPROVED already implies field-complete — [AdminUserService.approve] re-runs
- * `collectMissing` before flipping the row — so this gate reads the stored status
+ * APPROVED already implies field-complete — [PhotographerSettingsService.approveIfReady]
+ * re-runs `collectMissing` before flipping the row — so this gate reads the stored status
  * rather than recomputing the required-field set.
  */
 @Service

@@ -37,7 +37,8 @@ spring:
     scheduling:
       # Boot default is 1 thread, which let a slow indexing reconcile sweep
       # starve the reaper / batch drain / poll / photos-ready sweeps.
-      pool-size: 6
+      pool:
+        size: 6
   flyway:
     enabled: true
     locations: classpath:db/migration
@@ -87,6 +88,17 @@ app:
     cleanup-interval: ${PHOTO_REMOVAL_CLEANUP_INTERVAL:PT1M}
     cleanup-backoff: ${PHOTO_REMOVAL_CLEANUP_BACKOFF:PT5M}
     in-request-cleanup-jobs: ${PHOTO_REMOVAL_IN_REQUEST_CLEANUP_JOBS:5}
+    email-sweep-interval: ${PHOTO_REMOVAL_EMAIL_SWEEP_INTERVAL:PT15M}
+    runner:
+      liveness-pass-min: ${RUNNER_REMOVAL_LIVENESS_PASS:90}
+      liveness-uncertain-min: ${RUNNER_REMOVAL_LIVENESS_UNCERTAIN:50}
+      auto-hide-min-similarity: ${RUNNER_REMOVAL_AUTO_HIDE_SIMILARITY:0.99}
+      auto-hide-max-per-request: ${RUNNER_REMOVAL_AUTO_HIDE_MAX:30}
+      photographer-daily-auto-hides: ${RUNNER_REMOVAL_PHOTOGRAPHER_DAILY:50}
+      candidate-limit: ${RUNNER_REMOVAL_CANDIDATE_LIMIT:50}
+      email-claim-stale-after: ${RUNNER_REMOVAL_EMAIL_CLAIM_STALE_AFTER:PT10M}
+      checks-per-day: ${RUNNER_REMOVAL_CHECKS_PER_DAY:3}
+      max-open-requests: ${RUNNER_REMOVAL_MAX_OPEN:3}
   security:
     origin-secret: ${ORIGIN_SECRET:}
   # Externally-reachable URLs the BE needs to embed in artifacts whose request
@@ -118,6 +130,14 @@ app:
     # their copy of the ID is unset, so the endpoint going dark is symmetric.
     google:
       client-id: ${GOOGLE_CLIENT_ID:}
+  # Privacy Policy / Terms version stamped on new sign-ups that tick the box
+  # (V91). No env var on purpose: it changes with the text, in code. The
+  # website's LEGAL_VERSION must equal it; "-draft" until the owner approves.
+  legal:
+    current-version: "1.7"
+    # RV-L4 (P5): photographers who accepted a version below this must accept the current Terms again at sign-in.
+    # Empty = nobody is asked. Set to 1.7 with the legal 1.7 texts (RV-L7). No env var, like current-version.
+    photographer-min-version: "1.7"
   admin:
     bootstrap-email: ${ADMIN_BOOTSTRAP_EMAIL:admin@quickpitik.local}
     bootstrap-password: ${ADMIN_BOOTSTRAP_PASSWORD:changeme123}
@@ -213,6 +233,11 @@ app:
     max-indexing-attempts: ${AI_MAX_INDEXING_ATTEMPTS:5}
     reconcile-interval-ms: ${AI_RECONCILE_INTERVAL_MS:60000}
     photos-ready-claim-ttl: ${AI_PHOTOS_READY_CLAIM_TTL:PT10M}
+    # Face templates (an event's Rekognition collection) are deleted this long
+    # after the event date, and face search on the event then answers 410
+    # FACE_SEARCH_ENDED; bib search keeps working (legal review M2, 2026-11-04).
+    face-retention: P6M
+    face-expiry-sweep-interval-ms: 86400000   # daily
     # Phase C bulk indexing. PER_PHOTO (default) = Phase-B behaviour (one enroll
     # + one bib HTTP call per photo, off the upload request). BATCH stands that
     # down and drains PENDING photos per event into mega jobs + webhook/poll
@@ -231,6 +256,169 @@ app:
       hmac-secret: ${AI_WEBHOOK_HMAC_SECRET:}
       poll-interval-ms: 30000
       poll-grace-seconds: 90
+  moderation:
+    # AA-I11: photographer avatar, cover and watermark go through AWS
+    # DetectModerationLabels (Rekognition, ap-southeast-1) before they are stored.
+    # AI off or an AWS error = accepted + an admin flag; a blocked label = refused.
+    # 0-1 like the other thresholds (sent as x100). Settled by AA-0.5 (2026-11-08): 0.8 holds on race photos; the true-positive side is not tested.
+    image-min-confidence: ${MODERATION_IMAGE_MIN_CONFIDENCE:0.8}
+    # A label is blocked when its name or parent name is listed (taxonomy v6 + v7).
+    # Swimwear, Alcohol, Tobacco, Drugs, Gambling, Rude Gestures stay off on purpose
+    # (race kits, sponsor banners). Owner reviews this list.
+    image-blocked-labels: ${MODERATION_IMAGE_BLOCKED_LABELS:Explicit Nudity,Explicit,Non-Explicit Nudity of Intimate parts and Kissing,Violence,Visually Disturbing,Hate Symbols}
+  identity:
+    # Auto-approval Plan 1. Off = today's upload rule (AA-I6 reads it).
+    gate-enabled: ${IDENTITY_GATE_ENABLED:false}
+    # The announced turn-on date (YYYY-MM-DD) shown to photographers; blank = none. An invalid date fails boot.
+    gate-starts-on: ${IDENTITY_GATE_STARTS_ON:}
+    # AWS Face Liveness sessions (create + read results) run here; CompareFaces stays in ap-southeast-1.
+    # The website's security policy allows only wss://streaming-rekognition.ap-southeast-5.amazonaws.com:
+    # a new region means changing website/next.config.ts and the browser role's region, and redeploying the website.
+    liveness-region: ${LIVENESS_REGION:ap-southeast-5}
+    # 0-100 (AWS's scale). Strict until measured. [NOT MEASURED: set from AA-0.4]
+    liveness-min-confidence: ${LIVENESS_MIN_CONFIDENCE:95}
+    face-min-similarity: ${FACE_MIN_SIMILARITY:99}
+    # Live checks per photographer per Manila day (the durable rate limit for C1).
+    liveness-attempts-per-day: ${LIVENESS_ATTEMPTS_PER_DAY:3}
+    # Failed automatic tries (a check the person failed, never an AWS fault) after which every later try,
+    # even a pass, goes to an admin as REPEATED_FAILED_CHECKS (R-8). At least 1.
+    max-failed-auto-checks: ${IDENTITY_MAX_FAILED_AUTO_CHECKS:3}
+    # IAM role quickpitik-liveness-browser (AA-0.2). Blank = the live check answers 503.
+    liveness-role-arn: ${LIVENESS_ROLE_ARN:}
+    liveness-credential-seconds: ${LIVENESS_CREDENTIAL_SECONDS:900}
+    # The typed ID number is stored only as HMAC-SHA256(this, "<ID_TYPE>:<number>") (AA-I4).
+    # Production refuses the dev value. Never rotate it casually: older rows stop matching.
+    id-number-hmac-secret: ${ID_NUMBER_HMAC_SECRET:dev-only-id-number-hmac-secret}
+    # A regex over the normalised number (uppercase, no spaces or dashes). Blank = an admin checks this ID type.
+    # [NOT MEASURED: set from the AA-0.5 ID run]
+    id-number-formats:
+      philsys: ${ID_NUMBER_FORMAT_PHILSYS:}
+      drivers-license: ${ID_NUMBER_FORMAT_DRIVERS_LICENSE:}
+      passport: ${ID_NUMBER_FORMAT_PASSPORT:}
+      umid: ${ID_NUMBER_FORMAT_UMID:}
+      prc: ${ID_NUMBER_FORMAT_PRC:}
+      postal: ${ID_NUMBER_FORMAT_POSTAL:}
+      voters: ${ID_NUMBER_FORMAT_VOTERS:}
+    # POST /admin/identity-notice (AA-I22) mails one photographer at a time, at most this many a second.
+    # Settled: Resend's limit is about 2 requests a second (ResendClient).
+    notice-send-per-second: ${IDENTITY_NOTICE_SEND_PER_SECOND:2}
+  races:
+    # AA-R1 (auto-approval Plan 2): shared race events. Off = today's flow; on lets
+    # photographers create, join and edit races and set a race price.
+    self-serve-enabled: ${SELF_SERVE_RACES_ENABLED:false}
+    # A new race's date must fall within this window around today. Settled by the owner (fraud review): decided, not measured; tune after real races.
+    date-window-past-days: ${RACE_DATE_WINDOW_PAST_DAYS:3}
+    date-window-ahead-days: ${RACE_DATE_WINDOW_AHEAD_DAYS:90}
+    # Races one photographer may create per Manila day before review. Settled (fraud review, P2-Q3): decided, not measured; tune after real races.
+    daily-create-cap: ${RACE_DAILY_CREATE_CAP:3}
+    duplicate:
+      # Tuned on the AA-R2 Cebu race-name fixture (2026-11-08).
+      strong-score: ${RACE_DUP_STRONG_SCORE:0.85}
+      medium-score: ${RACE_DUP_MEDIUM_SCORE:0.5}
+      date-tolerance-days: ${RACE_DUP_DATE_TOLERANCE_DAYS:1}
+    proof:
+      min-photographers: ${RACE_PROOF_MIN_PHOTOGRAPHERS:2}
+      # Settled for launch (AA-0.6, 2026-11-08): keep 20; re-run AA-0.6 query 4 after the first real races.
+      min-indexed-photos: ${RACE_PROOF_MIN_INDEXED_PHOTOS:20}
+      min-bib-share: ${RACE_PROOF_MIN_BIB_SHARE:0.30}
+      # Below this share of indexed photos the proof sweep only flags. [NOT MEASURED]
+      min-indexed-share: ${RACE_PROOF_MIN_INDEXED_SHARE:0.5}
+      sweep-interval-ms: ${RACE_PROOF_SWEEP_INTERVAL_MS:3600000}
+      # Comma list; for these types a failed bib rule only flags. Interim (P2-Q10). [NOT MEASURED: set from the AA-0.5 cycling run]
+      bib-flag-only-types: ${RACE_PROOF_BIB_FLAG_ONLY_TYPES:CYCLING}
+    same-bib:
+      min-shared-bibs: ${RACE_SAME_BIB_MIN_SHARED:30} # settled (fraud review): decided, not measured
+    reports:
+      hide-threshold: ${RACE_REPORT_HIDE_THRESHOLD:3} # distinct accounts; settled (fraud review): decided, not measured
+  relevance:
+    # Photo relevance kill switch, read through RelevanceSwitch. off = nothing runs;
+    # record-only = relevance rows and admin alerts only; auto-hide = may hide, but runs as
+    # record-only until app.admin.flags-enabled is on and both junk cut-offs are set.
+    # Old names still boot: shadow = record-only; flag = retired in RV-1.10 (P2), runs as
+    # record-only with a boot warning and raises no flag.
+    # An unknown value stops the boot.
+    mode: ${RELEVANCE_MODE:off}
+    sweep-interval-ms: ${RELEVANCE_SWEEP_INTERVAL_MS:60000}
+    quiet-minutes: ${RELEVANCE_QUIET_MINUTES:10}
+    lookups-per-tick: ${RELEVANCE_LOOKUPS_PER_TICK:100}
+    max-batches-per-tick: ${RELEVANCE_MAX_BATCHES_PER_TICK:5}
+    rescore-minutes: ${RELEVANCE_RESCORE_MINUTES:60}
+    settle-days: ${RELEVANCE_SETTLE_DAYS:7}
+    lookup-timeout: ${RELEVANCE_LOOKUP_TIMEOUT:5s}
+    copy:
+      tight-distance: ${RELEVANCE_COPY_TIGHT_DISTANCE:4} # [NOT MEASURED: PE-0]
+      weak-distance: ${RELEVANCE_COPY_WEAK_DISTANCE:8} # [NOT MEASURED: PE-0]
+      min-hits: ${RELEVANCE_COPY_MIN_HITS:3} # [NOT MEASURED: PE-0]
+      min-hit-share-percent: ${RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT:5} # [NOT MEASURED: PE-0]
+    date:
+      window-days: ${RELEVANCE_DATE_WINDOW_DAYS:2} # [NOT MEASURED: PE-0]
+      min-dated-photos: ${RELEVANCE_DATE_MIN_DATED_PHOTOS:10} # [NOT MEASURED: PE-0]
+      outside-share-percent: ${RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80} # [NOT MEASURED: PE-0]
+    junk:
+      # 0-100. Empty = not set; auto-hide stays record-only until both are set.
+      blur-cutoff: ${RELEVANCE_JUNK_BLUR_CUTOFF:} # [NOT MEASURED: O7]
+      dark-cutoff: ${RELEVANCE_JUNK_DARK_CUTOFF:} # [NOT MEASURED: O7]
+      label-min-confidence: ${RELEVANCE_JUNK_LABEL_MIN_CONFIDENCE:0.6} # 0-1 [NOT MEASURED: O7]
+      race-labels: ${RELEVANCE_JUNK_RACE_LABELS:Running,Marathon,Road} # [NOT MEASURED: O7]
+      fits-below-percent: ${RELEVANCE_JUNK_FITS_BELOW_PERCENT:10}
+      dump-above-percent: ${RELEVANCE_JUNK_DUMP_ABOVE_PERCENT:70}
+    check:
+      min-batch-size: ${RELEVANCE_CHECK_MIN_BATCH_SIZE:30}
+      near-line-points: ${RELEVANCE_CHECK_NEAR_LINE_POINTS:5}
+      sample-size: ${RELEVANCE_CHECK_SAMPLE_SIZE:300}
+      count-trigger: ${RELEVANCE_CHECK_COUNT_TRIGGER:500}
+      tick-interval-ms: ${RELEVANCE_CHECK_TICK_INTERVAL_MS:15000}
+      max-batches-per-tick: ${RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3}
+      claim-minutes: ${RELEVANCE_CHECK_CLAIM_MINUTES:10}
+      measures-per-tick: ${RELEVANCE_CHECK_MEASURES_PER_TICK:60}
+      workers: ${RELEVANCE_CHECK_WORKERS:2}
+      measure-max-tries: ${RELEVANCE_CHECK_MEASURE_MAX_TRIES:5}
+      # A case waits this long for version 1 to score its upload before it is decided without the newest copy and date results.
+      wait-for-rules-minutes: ${RELEVANCE_CHECK_WAIT_FOR_RULES_MINUTES:30}
+      decide-max-attempts: ${RELEVANCE_CHECK_DECIDE_MAX_ATTEMPTS:3}
+      # A check that failed or was skipped is tried again this long after it ended, at most max-retries times per upload (0 = never).
+      retry-after-minutes: ${RELEVANCE_CHECK_RETRY_AFTER_MINUTES:60}
+      max-retries: ${RELEVANCE_CHECK_MAX_RETRIES:3}
+    words:
+      # Once a batch has settled (settle-days after its final scoring), words on under this share of its photos are deleted.
+      min-share-percent: ${RELEVANCE_WORDS_MIN_SHARE_PERCENT:3}
+      # Version 2: at most this many of a batch's words (each on at least min-share-percent of its photos) go into the summary sent to the model.
+      top-n: ${RELEVANCE_WORDS_TOP_N:30}
+    llm:
+      # Version 2 verdict: the Claude Messages API (O6, Anthropic direct). Blank key = no call is ever made. Secret: never log it.
+      # Not ANTHROPIC_API_KEY: many developer shells already hold one, and a local run must not pick it up.
+      api-key: ${RELEVANCE_LLM_API_KEY:}
+      base-url: ${RELEVANCE_LLM_BASE_URL:https://api.anthropic.com}
+      model: ${RELEVANCE_LLM_MODEL:claude-sonnet-5-5}
+      connect-timeout: ${RELEVANCE_LLM_CONNECT_TIMEOUT:5s}
+      read-timeout: ${RELEVANCE_LLM_READ_TIMEOUT:30s}
+      # Tries per verdict, the first included (1 to 5); a 429, 5xx or timeout is retried after retry-backoff.
+      max-attempts: ${RELEVANCE_LLM_MAX_ATTEMPTS:3}
+      retry-backoff: ${RELEVANCE_LLM_RETRY_BACKOFF:1s}
+      # Includes the model's thinking; an answer cut off at this limit is stored as can't tell.
+      max-tokens: ${RELEVANCE_LLM_MAX_TOKENS:4096}
+    alerts:
+      # Version 2: a hide (in record-only, a would-be hide) of at least this many photos in one batch raises one admin alert.
+      big-hide-photos: ${RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500}
+    hide:
+      # Version 2 automatic hide: photos per chunk (each its own transaction, at most 1000) and chunks per case a tick.
+      chunk-size: ${RELEVANCE_HIDE_CHUNK_SIZE:1000}
+      chunks-per-tick: ${RELEVANCE_HIDE_CHUNKS_PER_TICK:10}
+    scan:
+      # Version 2 full scan: photos per case a turn, cases a tick, and the upload-indexing load (active plus queued
+      # imageProcessing tasks on this server copy) above which a tick skips scanning.
+      photos-per-turn: ${RELEVANCE_SCAN_PHOTOS_PER_TURN:200}
+      max-batches-per-tick: ${RELEVANCE_SCAN_MAX_BATCHES_PER_TICK:2}
+      yield-above: ${RELEVANCE_SCAN_YIELD_ABOVE:0}
+    restore:
+      # Version 2: minutes after an admin's batch restore during which the tick finishes holds a running hide left behind.
+      sweep-minutes: ${RELEVANCE_RESTORE_SWEEP_MINUTES:60}
+    appeal:
+      # Version 2: days a photographer may appeal after the note that started the clock; the note names the last day.
+      window-days: ${RELEVANCE_APPEAL_WINDOW_DAYS:14}
+    strikes:
+      # Version 2: months a confirmed case counts toward the second-case warning and the third-case admin alert.
+      window-months: ${RELEVANCE_STRIKES_WINDOW_MONTHS:6}
   watermark:
     # Async watermark pipeline (2026-08-28): uploads insert photos as PROCESSING
     # and PhotoWatermarkTrigger generates the derivative + flips them LIVE off
@@ -329,8 +517,20 @@ app:
     refund-link-per-dispute:
       capacity: 3
       refill-period: PT1H
+    # Event and photographer reports per account (AA-R9).
+    report:
+      capacity: 10
+      refill-period: PT1H
+    # Billed profile-image checks per user per day (AF-8); over it the image is stored unchecked.
+    image-moderation-daily:
+      capacity: 30
+      refill-period: PT24H
   platform:
     photo-price-php: ${PHOTO_PRICE_PHP:125}
+    # AA-R11: a photographer's own race price is between the race price and this times it (owner D3).
+    race-price-ceiling-multiplier: ${RACE_PRICE_CEILING_MULTIPLIER:2.0}
+    # Wait between two race price changes. Settled (fraud review, backend decisions): decided, not measured.
+    race-price-cooldown: ${RACE_PRICE_COOLDOWN:PT24H}
     platform-cut-rate: ${PLATFORM_CUT_RATE:0.25}
     # Largest photographer coupon (whole percent of the photographer's share).
     # The platform cut never moves, whatever this is set to.
@@ -398,6 +598,12 @@ app:
       refund-link-allowed-prefixes: ${PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES:https://transfer.paymongo.com/}
       qrph-refund-window: ${PAYMONGO_QRPH_REFUND_WINDOW:P30D}
       refund-link-validity: ${PAYMONGO_REFUND_LINK_VALIDITY:P3D}
+  disputes:
+    # Deadlines behind each admin dispute's due time (DisputeQueueProperties).
+    review-business-days: ${DISPUTE_REVIEW_BUSINESS_DAYS:3}
+    refund-send-within: ${DISPUTE_REFUND_SEND_WITHIN:PT48H}
+    link-expiring-soon: ${DISPUTE_LINK_EXPIRING_SOON:PT24H}
+    refund-stuck-after: ${DISPUTE_REFUND_STUCK_AFTER:PT24H}
   email:
     resend:
       # Resend transactional email wiring. Free-tier dev sender

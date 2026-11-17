@@ -18,7 +18,8 @@ export function formatMonthYear(iso: MaybeIso): string {
 // time component (YYYY-MM-DD) so the local-tz parse doesn't shift the day.
 export function formatLongDate(iso: MaybeIso, dateOnly = false): string {
   if (typeof iso !== "string" || !iso) return "—";
-  const d = new Date(dateOnly ? `${iso}T00:00:00` : iso);
+  // A bare "YYYY-MM-DD" is read at local midnight so it doesn't shift a day; a full timestamp is read as is.
+  const d = new Date(dateOnly && !iso.includes("T") ? `${iso}T00:00:00` : iso);
   if (Number.isNaN(d.getTime())) return "—";
   const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
   const day = d.getDate().toString().padStart(2, "0");

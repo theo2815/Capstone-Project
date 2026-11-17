@@ -73,6 +73,7 @@ import com.quickpitik.mobile.data.remote.PhotographerLibraryPhotoDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.WEBSITE_ORIGIN
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.common.toOwnerPreviewData
 import com.quickpitik.mobile.ui.theme.Bone
@@ -203,12 +204,12 @@ fun PhotographerEventShareScreen(
     // disabled instead of copying a broken quickpitik.com/your-handle/… link.
     val handle = event.handle?.takeIf { it.isNotBlank() }
     val hasHandle = handle != null
+    val fullUrl = if (hasHandle) "$WEBSITE_ORIGIN/$handle/events/${event.slug}" else ""
     val displayUrl = if (hasHandle) {
-        "quickpitik.com/$handle/events/${event.slug}"
+        fullUrl.removePrefix("https://")
     } else {
         "Set a handle in Settings to share this gallery"
     }
-    val fullUrl = if (hasHandle) "https://quickpitik.com/$handle/events/${event.slug}" else ""
 
     Box(modifier = Modifier.fillMaxSize()) {
         Surface(modifier = Modifier.fillMaxSize(), color = Bone) {

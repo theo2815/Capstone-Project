@@ -8,6 +8,7 @@ import jakarta.persistence.Id
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
 import org.hibernate.annotations.DynamicUpdate
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -82,6 +83,23 @@ class User(
     @Column(name = "locked_until")
     var lockedUntil: OffsetDateTime? = null,
 
+    // Legal version agreed at sign-up and when (V91). NULL for accounts that
+    // predate the tick or came from an old app build; nothing gates on it.
+    @Column(name = "terms_version", length = 32)
+    var termsVersion: String? = null,
+
+    @Column(name = "terms_accepted_at")
+    var termsAcceptedAt: OffsetDateTime? = null,
+
+    // Start date of the identity notice this user was last mailed for (V104); see IdentityNoticeService.
+    @Column(name = "identity_notice_sent_for")
+    var identityNoticeSentFor: LocalDate? = null,
+
+    // RV-L7 part a (V107): when an admin recorded that this photographer withdrew the consent to automatic
+    // Photo Relevance actions; NULL means not withdrawn. Written only by AdminRelevanceService.
+    @Column(name = "relevance_consent_withdrawn_at")
+    var relevanceConsentWithdrawnAt: OffsetDateTime? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
 
@@ -91,5 +109,10 @@ class User(
     @PreUpdate
     fun onUpdate() {
         updatedAt = OffsetDateTime.now()
+    }
+
+    fun recordTermsAcceptance(version: String, at: OffsetDateTime) {
+        termsVersion = version
+        termsAcceptedAt = at
     }
 }

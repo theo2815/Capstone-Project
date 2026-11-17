@@ -123,6 +123,26 @@ class AdminDecisionLogService(
             ),
         )
 
+    // RV-2.1 (G17): a decision the system made with no admin (an automatic hide or hold). The row has no admin and
+    // automatic = true; the database refuses a row with neither.
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun logAutomaticUserDecision(
+        targetUserId: UUID,
+        decision: String,
+        reason: String? = null,
+        meta: Map<String, Any?>? = null,
+    ): AdminDecisionLog =
+        adminDecisionLogRepository.save(
+            AdminDecisionLog(
+                adminId = null,
+                targetUserId = targetUserId,
+                decision = decision,
+                reason = reason,
+                meta = meta,
+                automatic = true,
+            ),
+        )
+
     @Transactional(propagation = Propagation.MANDATORY)
     fun pushMessage(
         photographerId: UUID,
@@ -134,7 +154,11 @@ class AdminDecisionLogService(
          *  Other kinds derive their label from MESSAGE_KIND_LABEL. */
         title: String? = null,
         photoRemovalLink: PhotoRemovalMessageLink? = null,
+        // RV-3.1: a message with this key is stored once; a retry or a second server copy gets the stored one back.
+        noticeKey: String? = null,
+        relevanceCaseId: UUID? = null,
     ): PhotographerMessage {
+        noticeKey?.let { photographerMessageRepository.findByNoticeKey(it) }?.let { return it }
         val saved = photographerMessageRepository.save(
             PhotographerMessage(
                 photographerId = photographerId,
@@ -144,8 +168,9 @@ class AdminDecisionLogService(
                 sourceAdminId = sourceAdminId,
                 sourceDecisionId = sourceDecisionId,
                 photoRemovalRequestId = photoRemovalLink?.requestId,
-                noticeKey = photoRemovalLink?.noticeKey,
+                noticeKey = noticeKey ?: photoRemovalLink?.noticeKey,
                 createdAt = photoRemovalLink?.createdAt ?: OffsetDateTime.now(),
+                relevanceCaseId = relevanceCaseId,
             ),
         )
         // Publish for the WS broadcaster — fires only AFTER_COMMIT so a
@@ -166,6 +191,7 @@ class AdminDecisionLogService(
                         "createdAt" to saved.createdAt.toString(),
                         "readAt" to saved.readAt?.toString(),
                         "photoRemovalRequestId" to saved.photoRemovalRequestId?.toString(),
+                        "relevanceCaseId" to saved.relevanceCaseId?.toString(),
                     ),
                 ),
             ),

@@ -90,5 +90,6 @@ class PhotographerMessageService(
             createdAt = createdAt,
             readAt = readAt,
             photoRemovalRequestId = photoRemovalRequestId,
+            relevanceCaseId = relevanceCaseId,
         )
 }

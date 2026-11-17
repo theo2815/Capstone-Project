@@ -25,6 +25,8 @@ import {
 } from "@/lib/image-utils";
 import type { SelfieRef } from "@/store/user-media-store";
 import { cn } from "@/lib/utils";
+import { BibNotice, FaceNotice } from "@/components/legal/face-notice";
+import { useBibConsent, useFaceConsent } from "@/store/face-consent-store";
 
 export type { SearchPanelMode } from "./find-photos-controls";
 import { BibInput, SelfieActionCard, CameraGlyph, UploadGlyph } from "./find-photos-controls";
@@ -42,12 +44,16 @@ export function BibPanel({
   onSwitchToSelfie: () => void;
   inputRef?: RefObject<HTMLInputElement | null>;
 }) {
+  // Review S10: no bib search before the tick, whatever submits the form.
+  const bibOk = useBibConsent();
   return (
-    <form onSubmit={onSubmit} className="mt-8">
+    <form onSubmit={(e) => (bibOk ? onSubmit(e) : e.preventDefault())} className="mt-8">
+      <BibNotice className="mb-3" />
       <BibInput bib={bibInput} onChange={onBibChange} inputRef={inputRef} />
       <button
         type="submit"
-        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors"
+        disabled={!bibOk}
+        className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Search by bib →
       </button>
@@ -112,6 +118,9 @@ export function SelfieSearchPanel({
   const [saveToLibrary, setSaveToLibrary] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  // Privacy plan D2: nothing reaches face matching before the tick.
+  const faceOk = useFaceConsent();
+  const locked = isSearching || !faceOk;
 
   useEffect(() => {
     setIsSearching(false);
@@ -146,6 +155,7 @@ export function SelfieSearchPanel({
   }
 
   async function searchWithFile(file: File) {
+    if (!faceOk) return;
     const isCurrent = captureAuthSession();
     const validation = validateImageFile(file);
     if (validation) {
@@ -189,6 +199,7 @@ export function SelfieSearchPanel({
   }
 
   async function searchWithAllSelfies() {
+    if (!faceOk) return;
     const isCurrent = captureAuthSession();
     setError(null);
     setIsSearching(true);
@@ -205,6 +216,7 @@ export function SelfieSearchPanel({
   }
 
   async function searchWithSelfieId(selfieId: string) {
+    if (!faceOk) return;
     const isCurrent = captureAuthSession();
     setError(null);
     setIsSearching(true);
@@ -226,12 +238,14 @@ export function SelfieSearchPanel({
         Selfie match · fastest way
       </p>
 
+      <FaceNotice className="mb-3" />
+
       <div className="space-y-3">
         <SelfieActionCard
           label="Take a selfie"
           caption="Use your camera to snap one now."
           isPrimary={!hasLibrary}
-          disabled={isSearching}
+          disabled={locked}
           accept={ACCEPTED_IMAGE_MIME.join(",")}
           captureUser
           onFile={(f) => void searchWithFile(f)}
@@ -241,7 +255,7 @@ export function SelfieSearchPanel({
           label="Upload a selfie"
           caption="Pick an existing photo from your device."
           isPrimary={false}
-          disabled={isSearching}
+          disabled={locked}
           accept={ACCEPTED_IMAGE_MIME.join(",")}
           captureUser={false}
           onFile={(f) => void searchWithFile(f)}
@@ -250,7 +264,7 @@ export function SelfieSearchPanel({
         {hasLibrary && (
           <SelfieLibraryCard
             isPrimary={true}
-            disabled={isSearching}
+            disabled={locked}
             open={libraryOpen}
             onToggle={() => setLibraryOpen((v) => !v)}
             selfies={selfies}

@@ -5,7 +5,7 @@ import { ConnectDesktop } from "@/components/auth/connect-desktop";
 import { ROUTES } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "Connect BatchMyPhotos | QuickPitik",
+  title: "Connect BatchMyPhotos",
   robots: { index: false, follow: false },
 };
 

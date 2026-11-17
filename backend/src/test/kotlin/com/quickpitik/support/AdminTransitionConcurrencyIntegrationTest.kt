@@ -256,7 +256,7 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         val principal = AuthPrincipal(actor, "admin@test.local", Role.ADMIN)
         SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
-            val mvc = MockMvcBuilders.standaloneSetup(AdminEventsController(eventAdmin))
+            val mvc = MockMvcBuilders.standaloneSetup(AdminEventsController(eventAdmin, org.mockito.Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java)))
                 .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
                 .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
             val body = mutableMapOf<String, Any>()
@@ -271,7 +271,7 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         val principal = AuthPrincipal(actor, "admin@test.local", Role.ADMIN)
         SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
-            val mvc = MockMvcBuilders.standaloneSetup(AdminEventsController(eventAdmin))
+            val mvc = MockMvcBuilders.standaloneSetup(AdminEventsController(eventAdmin, org.mockito.Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java)))
                 .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
                 .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
             val request = multipart(HttpMethod.PATCH, "/api/v1/admin/events/${e.id}").param("title", "Edited")

@@ -123,6 +123,12 @@ export function EventTile(props: EventTileProps) {
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
           {event.location}
         </p>
+        {/* Some photographer in this race charges above the race price (AA-R14). */}
+        {event.priceVaries && event.pricePerPhoto != null && (
+          <span className="mt-3 inline-flex items-center rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap tnum">
+            From ₱{event.pricePerPhoto}
+          </span>
+        )}
         {mode === "browse" && <BrowseFooter isUpcoming={isUpcoming} />}
         {mode === "upload" && (
           <UploadFooter

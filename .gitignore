@@ -97,3 +97,6 @@ dev-start.ps1
 
 # Fujifilm Camera Control SDK (confidential; copied by hand, never committed)
 mobile/fuji-sdk/
+
+# Playwright CLI snapshots, screenshots and saved logins (may hold session tokens)
+.playwright-cli/

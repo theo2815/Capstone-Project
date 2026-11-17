@@ -36,6 +36,7 @@ class ProductionSecretsGuard(
     @Value("\${app.admin.bootstrap-password:}") adminBootstrapPassword: String,
     @Value("\${app.storage.backend}") storageBackend: String,
     @Value("\${app.security.origin-secret}") originSecret: String,
+    @Value("\${app.identity.id-number-hmac-secret}") idNumberHmacSecret: String,
     paymongoProperties: PaymongoProperties,
 ) : FlywayConfigurationCustomizer {
     override fun customize(configuration: org.flywaydb.core.api.configuration.FluentConfiguration) = Unit
@@ -52,6 +53,7 @@ class ProductionSecretsGuard(
             adminBootstrapPassword = adminBootstrapPassword,
             storageBackend = storageBackend,
             originSecret = originSecret,
+            idNumberHmacSecret = idNumberHmacSecret,
             refundLinkAllowedPrefixes = paymongoProperties.refundLinkAllowedPrefixes,
         )
         check(offenders.isEmpty()) {
@@ -75,6 +77,7 @@ class ProductionSecretsGuard(
             adminBootstrapPassword: String,
             storageBackend: String,
             originSecret: String,
+            idNumberHmacSecret: String,
             refundLinkAllowedPrefixes: List<String>,
         ): List<String> = buildList {
             if (PLACEHOLDER in jwtSecret) add("JWT_SECRET")
@@ -87,6 +90,7 @@ class ProductionSecretsGuard(
             if (adminBootstrapPassword == "changeme123") add("ADMIN_BOOTSTRAP_PASSWORD")
             if (!storageBackend.equals("S3", ignoreCase = true)) add("STORAGE_BACKEND")
             if (originSecret.isBlank() || PLACEHOLDER in originSecret) add("ORIGIN_SECRET")
+            if (PLACEHOLDER in idNumberHmacSecret) add("ID_NUMBER_HMAC_SECRET")
             if (refundLinkAllowedPrefixes.isEmpty() || !refundLinkAllowedPrefixes.all(::isPaymongoPrefix)) {
                 add("PAYMONGO_REFUND_LINK_ALLOWED_PREFIXES")
             }

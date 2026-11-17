@@ -71,6 +71,7 @@ fun FloatingCart(
     if (!rememberIsTrueRunner()) return
     val items by cartViewModel.cartItems.collectAsState()
     val total by cartViewModel.cartTotal.collectAsState()
+    val badgeCount by cartViewModel.cartCount.collectAsState()
     val cartOpen by cartViewModel.cartSheetOpen.collectAsState()
     val checkoutOpen by cartViewModel.checkoutSheetOpen.collectAsState()
     val expressPending by cartViewModel.expressCheckoutPending.collectAsState()
@@ -193,7 +194,7 @@ fun FloatingCart(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = if (itemCount > 99) "99+" else itemCount.toString(),
+                        text = if (badgeCount > 99) "99+" else badgeCount.toString(),
                         style = NumeralStyle.copy(fontSize = 10.sp),
                         color = Color.White,
                     )
@@ -261,7 +262,7 @@ fun FloatingCart(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = if (itemCount > 99) "99+" else itemCount.toString(),
+                        text = if (badgeCount > 99) "99+" else badgeCount.toString(),
                         style = NumeralStyle.copy(fontSize = 10.sp),
                         color = Color.White,
                     )

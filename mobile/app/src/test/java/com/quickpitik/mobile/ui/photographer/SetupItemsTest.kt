@@ -94,4 +94,13 @@ class SetupItemsTest {
         assertEquals(emptyList<String>(), verificationSummary(verification("incomplete", emptyList()), null).missingCodes)
         assertEquals(listOf("REGION"), verificationSummary(verification("incomplete", listOf("REGION")), null).missingCodes)
     }
+
+    @Test
+    fun `only a pending profile the backend holds waits for an admin`() {
+        val held = VerificationSubmitResponseDto("pending", null, null, null, null, awaitingAdmin = true)
+        assertTrue(verificationSummary(held, null).awaitingAdmin)
+        assertFalse(verificationSummary(verification("pending"), null).awaitingAdmin)
+        assertFalse(verificationSummary(held.copy(status = "approved"), null).awaitingAdmin)
+        assertFalse(verificationSummary(null, null).awaitingAdmin)
+    }
 }

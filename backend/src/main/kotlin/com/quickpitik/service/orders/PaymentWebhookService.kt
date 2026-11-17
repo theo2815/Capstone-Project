@@ -16,6 +16,7 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.service.earnings.TransactionMintingService
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.OffsetDateTime
@@ -42,6 +43,8 @@ class PaymentWebhookService(
     private val transactionMintingService: TransactionMintingService,
     private val removalService: OrderPhotoRemovalService,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     fun handle(provider: String, request: PaymentWebhookRequest): PaymentWebhookResponse {
         if (provider.isBlank()) {
             throw ValidationException(
@@ -86,7 +89,10 @@ class PaymentWebhookService(
             )
         }
 
-        if (request.status.equals("SUCCEEDED", ignoreCase = true) && order.status != OrderStatus.PAID &&
+        // A refunded order stays refunded: a late or replayed success must not bring back its downloads.
+        if (request.status.equals("SUCCEEDED", ignoreCase = true) && order.status == OrderStatus.REFUNDED) {
+            log.warn("Payment webhook from {} for refunded order {} ignored", provider, order.id)
+        } else if (request.status.equals("SUCCEEDED", ignoreCase = true) && order.status != OrderStatus.PAID &&
             order.status != OrderStatus.FULFILLED
         ) {
             removalService.lockSettlementPhotos(listOf(order.id))

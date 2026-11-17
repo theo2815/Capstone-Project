@@ -1,6 +1,8 @@
 package com.quickpitik.service.profile
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.LegalProperties
+import java.time.Clock
 import com.quickpitik.config.AuthLockoutProperties
 import com.quickpitik.dto.profile.PasswordChangeRequest
 import com.quickpitik.entity.Role
@@ -47,6 +49,8 @@ class ProfileServiceTest {
         refreshTokenService,
         userDtoMapper,
         LoginAttemptService(userRepository, AuthLockoutProperties()),
+        LegalProperties(currentVersion = "1.5"),
+        Clock.systemUTC(),
     )
 
     private fun stubUser(googleSub: String? = null, passwordHash: String = "old-hash"): User {

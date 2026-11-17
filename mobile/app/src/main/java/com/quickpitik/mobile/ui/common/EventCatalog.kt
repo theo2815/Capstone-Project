@@ -65,4 +65,4 @@ fun canOwnerUploadToEvent(date: String, today: LocalDate = LocalDate.now(ZoneId.
 
 fun canUploadToEvent(event: PhotographerEventSummaryDto, today: LocalDate = LocalDate.now(ZoneId.of("Asia/Manila"))): Boolean =
     if (event.ownedByMe) event.reviewStatus in setOf("approved", "change_pending") && canOwnerUploadToEvent(event.date, today)
-    else canUploadToEvent(event.date, today)
+    else event.reviewStatus in setOf("approved", "change_pending") && event.hidden != true && canUploadToEvent(event.date, today)

@@ -44,6 +44,8 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var uploads: com.quickpitik.service.photographer.PhotoUploadService
     @Autowired lateinit var settings: PhotographerSettingsRepository
     @Autowired lateinit var registry: io.micrometer.core.instrument.MeterRegistry
+    @Autowired lateinit var relevance: com.quickpitik.repository.BatchRelevanceRepository
+    @Autowired lateinit var dataSource: javax.sql.DataSource
     @MockBean lateinit var storage: StorageService
     lateinit var owner: User
     lateinit var admin: User
@@ -104,6 +106,23 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
             RemovalActorType.PHOTOGRAPHER, owner.id, "Photographer permanent deletion", commandId = UUID.randomUUID()))
         assertEquals(listOf(ordinary.id), manager.permanentDelete(owner.id, event.id, listOf(ordinary.id)).deleted)
         assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+    }
+
+    // UP-10 Session 8: parallel permanent deletes emptied the pool, each holding a connection through its R2 calls.
+    @Test fun storageCallsHoldNoDatabaseConnection() {
+        val pool = dataSource.unwrap(com.zaxxer.hikari.HikariDataSource::class.java).hikariPoolMXBean
+        val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+            s3Key = "erasure/${UUID.randomUUID()}/trashed", thumbnailS3Key = "erasure/${UUID.randomUUID()}/trashed-thumb",
+            pricePhp = BigDecimal("125"), deletedAt = OffsetDateTime.now()))
+        val held = mutableListOf<Int>()
+        Mockito.`when`(storage.exists(Mockito.anyString())).thenAnswer { held += pool.activeConnections; false }
+        Mockito.doAnswer { held += pool.activeConnections; null }.`when`(storage).delete(Mockito.anyString())
+        val job = eraser.request(PhotoErasureCommand(trashed.id, PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
+            RemovalActorType.PHOTOGRAPHER, owner.id, "Photographer permanent deletion", commandId = UUID.randomUUID()))
+
+        assertEquals(PhotoErasureOutcome.COMPLETE, eraser.attempt(job))
+        assertTrue(held.isNotEmpty())
+        assertEquals(List(held.size) { 0 }, held, "active pool connections during each storage call")
     }
 
     @Test fun soldPrivacyRemovalPreservesTombstoneAndLedger() {
@@ -236,6 +255,36 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertFalse(jobs.findById(first).orElseThrow().lastError!!.contains("secret"))
     }
 
+    private fun photographerDelete(): UUID {
+        val trashed = photos.saveAndFlush(Photo(eventId = event.id, photographerId = owner.id,
+            s3Key = "erasure/${UUID.randomUUID()}/due", pricePhp = BigDecimal("125"), deletedAt = OffsetDateTime.now()))
+        return eraser.request(PhotoErasureCommand(trashed.id, PhotoErasurePurpose.PHOTOGRAPHER_DELETE,
+            RemovalActorType.PHOTOGRAPHER, owner.id, "Photographer permanent deletion", commandId = UUID.randomUUID()))
+    }
+
+    // PEIT does not empty the table between tests, so compare positions in a large page.
+    private fun duePositions(vararg ids: UUID): List<Int> {
+        val due = jobs.findDue(java.time.Instant.now().plusSeconds(1), org.springframework.data.domain.PageRequest.of(0, 1000))
+        return ids.map { id -> due.indexOf(id).also { assertTrue(it >= 0, "job $id is due") } }
+    }
+
+    @Test fun `a new job is picked before an older one that keeps failing`() {
+        val failing = photographerDelete()
+        jdbc.update("UPDATE photo_erasure_jobs SET attempts = 50, next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 day' WHERE id = ?", failing)
+        val fresh = photographerDelete()
+        val (freshAt, failingAt) = duePositions(fresh, failing)
+        assertTrue(freshAt < failingAt, "new job at $freshAt, failing job at $failingAt")
+    }
+
+    @Test fun `a privacy removal is picked before photographer deletes with fewer attempts`() {
+        val removal = eraser.request(privacy())
+        jdbc.update("UPDATE photo_erasure_jobs SET attempts = 3, next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = ?", removal)
+        val delete = photographerDelete()
+        jdbc.update("UPDATE photo_erasure_jobs SET next_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 hour' WHERE id = ?", delete)
+        val (removalAt, deleteAt) = duePositions(removal, delete)
+        assertTrue(removalAt < deleteAt, "privacy removal at $removalAt, photographer delete at $deleteAt")
+    }
+
     @Test fun `sweep resumes a persisted due job without another user request`() {
         val job = eraser.request(privacy())
         assertTrue(sweep.sweepDue(java.time.Instant.now().plusSeconds(1), 100) > 0)
@@ -255,7 +304,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertTrue(photos.faceWorkPending(page).any { it.photoId == removedId })
         val reaper = com.quickpitik.service.photographer.PhotoOrphanReaper(photos,
             Mockito.mock(com.quickpitik.service.ai.AiApiClient::class.java), com.quickpitik.config.AiApiProperties(enabled = true), faceErasure,
-            com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC())
+            com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC(), com.quickpitik.config.AiProperties())
         reaper.reap()
         assertFalse(photos.faceWorkPending(page).any { it.photoId == removedId }, "Persistent failures monopolize the first page")
     }
@@ -312,6 +361,9 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         photo.indexedProvider = "ai_api"
         photos.saveAndFlush(photo)
         metadata.saveAndFlush(PhotoMetadata(photo.id, originalFilename = "private-name.jpg"))
+        tx.execute { relevance.ensureBatch(photo.eventId, photo.photographerId!!) }
+        jdbc.update("INSERT INTO relevance_photo_checks (photo_id, batch_id, words_counted_at) VALUES (?, ?, now())",
+            photo.id, relevance.findByEventIdAndPhotographerId(photo.eventId, photo.photographerId!!)!!.id)
         val job = eraser.request(privacy())
         assertEquals(PhotoErasureOutcome.RETRY_REQUIRED, eraser.attempt(job))
         assertTrue(blobs.isEmpty())
@@ -333,7 +385,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
             com.quickpitik.config.AiApiProperties(enabled = true), fence, json, tx, java.time.Clock.systemUTC())
         val retry = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceService, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-            tx, json, java.time.Clock.systemUTC(), registry)
+            tx, json, java.time.Clock.systemUTC(), registry, relevance)
         assertEquals(PhotoErasureOutcome.COMPLETE, retry.attempt(job))
         assertFalse(metadata.existsById(photo.id))
         val tombstone = photos.findById(photo.id).orElseThrow()
@@ -341,6 +393,8 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         assertTrue(tombstone.bibs.isEmpty())
         assertTrue(tombstone.facePersons.isEmpty())
         assertTrue(photos.faceWorkForPhoto(event.id, photo.id).all { it.facesErasedAt != null })
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_photo_checks WHERE photo_id = ?", Int::class.java, photo.id),
+            "an erased photo loses its relevance check row")
     }
 
     @Test fun `existing future staging recheck is retained even after the original cleanup horizon`() {
@@ -384,6 +438,54 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
             now.plusHours(1), receipt.photoId) }
         assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
         assertNull(photos.findById(photo.id).orElseThrow().purgedAt)
+    }
+
+    // Staging key cleaned a day ago: its 7-day re-check window ends in about 6 days.
+    private fun receiptCleanedYesterday(): PhotoUploadIntent {
+        val now = OffsetDateTime.now()
+        return intents.saveAndFlush(PhotoUploadIntent(photographerId = owner.id, eventId = event.id,
+            contentHash = UUID.randomUUID().toString().replace("-", "").repeat(2), contentType = "image/jpeg", sizeBytes = 1,
+            stagingKey = "staging/${photo.id}", originalKey = photo.s3Key, state = PhotoUploadIntentState.COMMITTED,
+            resultPhotoId = photo.id, createdAt = now.minusDays(2), putExpiresAt = now.minusDays(2),
+            expiresAt = now.minusDays(2), cleanedAt = now.minusDays(1)))
+    }
+
+    @Test fun `a job held only by the re-check window waits for the window end`() {
+        receiptCleanedYesterday()
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        assertTrue(blobs.isEmpty())
+        val saved = jobs.findById(job).orElseThrow()
+        val windowEnd = saved.manifest.intents.maxOf { it.recheckUntil }
+        assertFalse(saved.nextAttemptAt.isBefore(windowEnd.minusSeconds(1)), "A waiting job was retried before its re-check window ends")
+    }
+
+    @Test fun `a waiting job sleeps until a later cleanup_after when it ends after the stored window`() {
+        val receipt = receiptCleanedYesterday()
+        val job = eraser.request(privacy())
+        val cleanupAfter = OffsetDateTime.now().plusDays(10)
+        jdbc.update("UPDATE photo_upload_intents SET cleanup_after = ? WHERE photo_id = ?", cleanupAfter, receipt.photoId)
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        val saved = jobs.findById(job).orElseThrow()
+        assertTrue(saved.manifest.intents.maxOf { it.recheckUntil }.isBefore(cleanupAfter.toInstant()))
+        assertFalse(saved.nextAttemptAt.isBefore(cleanupAfter.toInstant().minusSeconds(1)), "A waiting job woke before its receipt's cleanup_after")
+    }
+
+    @Test fun `a job blocked by unfinished work keeps the short backoff`() {
+        receiptCleanedYesterday()
+        jdbc.update("""INSERT INTO photo_work_outputs (token, photo_id, event_id, generation, kind, provider, expires_at)
+            VALUES (?, ?, ?, 0, 'WATERMARK', 'local', ?)""", UUID.randomUUID(), photo.id, event.id, OffsetDateTime.now().plusHours(1))
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        assertTrue(jobs.findById(job).orElseThrow().nextAttemptAt.isBefore(java.time.Instant.now().plusSeconds(600)))
+    }
+
+    @Test fun `a failed delete inside the window keeps the short backoff`() {
+        receiptCleanedYesterday()
+        failingKey = photo.thumbnailS3Key
+        val job = eraser.request(privacy())
+        assertEquals(PhotoErasureOutcome.PENDING, eraser.attempt(job))
+        assertTrue(jobs.findById(job).orElseThrow().nextAttemptAt.isBefore(java.time.Instant.now().plusSeconds(600)))
     }
 
     @Test fun `privacy tombstone retains the exact byte hash to prevent reupload`() {
@@ -465,7 +567,7 @@ class PhotoErasureIntegrationTest : PostgresIntegrationTest() {
         val later = java.time.Clock.offset(java.time.Clock.systemUTC(), java.time.Duration.ofDays(10))
         val resumed = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceErasure, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
-            tx, json, later, registry)
+            tx, json, later, registry, relevance)
         assertEquals(PhotoErasureOutcome.COMPLETE, resumed.attempt(job))
         assertFalse(receipt.stagingKey in blobs)
         assertFalse(receipt.originalKey in blobs)

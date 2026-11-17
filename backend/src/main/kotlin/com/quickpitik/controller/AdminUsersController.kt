@@ -4,9 +4,9 @@ import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
+import com.quickpitik.dto.admin.ApproveUserRequest
 import com.quickpitik.dto.admin.AdminUserDetailDto
 import com.quickpitik.dto.admin.AdminUserRowDto
-import com.quickpitik.dto.admin.ApproveUserRequest
 import com.quickpitik.dto.admin.RejectUserRequest
 import com.quickpitik.dto.admin.ResetVerificationRequest
 import com.quickpitik.dto.admin.SuspendUserRequest
@@ -53,14 +53,6 @@ class AdminUsersController(
     fun photographerSettings(@PathVariable userId: UUID): AdminPhotographerSettingsDto =
         adminUserService.photographerSettings(userId)
 
-    @PostMapping("/{userId}/approve")
-    @Operation(description = "Approve a complete PENDING photographer. Optional expectedRevision rejects stale review generations with 409; omitting the body remains supported for v1 callers.")
-    fun approve(
-        @AuthenticationPrincipal principal: AuthPrincipal,
-        @PathVariable userId: UUID,
-        @Valid @RequestBody(required = false) body: ApproveUserRequest? = null,
-    ): AdminUserRowDto = adminUserService.approve(principal.userId, userId, body?.expectedRevision)
-
     @PostMapping("/{userId}/reject")
     @Operation(description = "Reject a PENDING photographer. Optional expectedRevision rejects stale review generations with 409.")
     fun reject(
@@ -68,6 +60,14 @@ class AdminUsersController(
         @PathVariable userId: UUID,
         @Valid @RequestBody body: RejectUserRequest,
     ): AdminUserRowDto = adminUserService.reject(principal.userId, userId, body.reason, body.expectedRevision)
+
+    @PostMapping("/{userId}/approve")
+    @Operation(description = "Release a PENDING photographer held after an admin reset or reject (R-10); 409 CONFLICT otherwise. It approves at once when identity has passed. Optional expectedRevision rejects stale review generations with 409.")
+    fun approve(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @PathVariable userId: UUID,
+        @Valid @RequestBody(required = false) body: ApproveUserRequest?,
+    ): AdminUserRowDto = adminUserService.approveHeld(principal.userId, userId, body?.expectedRevision)
 
     @PostMapping("/{userId}/reset-verification")
     @Operation(description = "Reset a PENDING, APPROVED or legacy REJECTED photographer. Optional expectedRevision rejects stale review generations with 409.")

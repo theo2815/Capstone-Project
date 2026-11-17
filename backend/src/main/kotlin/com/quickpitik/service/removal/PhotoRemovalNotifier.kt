@@ -6,6 +6,7 @@ import com.quickpitik.repository.*
 import com.quickpitik.service.admin.AdminDecisionLogService
 import com.quickpitik.service.admin.PhotoRemovalMessageLink
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -30,6 +31,8 @@ class PhotoRemovalNotifier(
     private val clock: Clock,
     private val properties: PhotoRemovalProperties,
     private val audit: PhotoRemovalHistoryRepository,
+    private val publisher: ApplicationEventPublisher,
+    private val photos: PhotoRepository,
 ) {
     fun notifyReview(reviewId: UUID) {
         val requestId = reviews.findById(reviewId).orElse(null)?.requestId ?: return
@@ -57,10 +60,13 @@ class PhotoRemovalNotifier(
                 it.reviewId == reviewId && it.awaitingDecision(pendingOwnerReviews)
             }
             if (selected.isEmpty()) return@execute
+            // A message that already exists (a retry, or one the photographer removed) is reused and sends no new email.
             val message = messages.findByNoticeKey(noticeKey) ?: writer.pushMessage(owner.id, PhotographerMessageKind.PHOTO_REMOVAL_REQUEST,
-                body = "${request.publicToOwnerReason}. Please review these selected items: ${selected.joinToString(", ") { it.id.toString() }}.",
+                body = "${request.publicToOwnerReason}. Please review these photos: ${references(selected.map { it.photoIdSnapshot })}. " +
+                    "Please reply within ${properties.photographerResponseWindow.toHours()} hours.",
                 title = "Photo removal review requested",
-                photoRemovalLink = PhotoRemovalMessageLink(request.id, noticeKey, clock.instant().atOffset(ZoneOffset.UTC)))
+                photoRemovalLink = PhotoRemovalMessageLink(request.id, noticeKey, clock.instant().atOffset(ZoneOffset.UTC)),
+            ).also { publisher.publishEvent(PhotographerRemovalNoticeStored(it.id)) }
             review.notifiedMessageId = message.id
             review.notifiedAt = message.createdAt.toInstant()
             review.deadline = review.notifiedAt!!.plus(properties.photographerResponseWindow)
@@ -88,8 +94,9 @@ class PhotoRemovalNotifier(
                 val available = owner != null && owner.role == Role.PHOTOGRAPHER && owner.suspendedAt == null && scoped.isNotEmpty()
                 val message = if (available) messages.findByNoticeKey(key) ?: writer.pushMessage(owner!!.id,
                     PhotographerMessageKind.PHOTO_REMOVAL_OUTCOME,
-                    body = scoped.joinToString("; ") { "${it.itemId}: ${outcomeLabel(it.toState)}" },
-                    title = "Photo removal review outcome", photoRemovalLink = PhotoRemovalMessageLink(request.id, key, clock.instant().atOffset(ZoneOffset.UTC))) else null
+                    body = outcomeBody(scoped),
+                    title = "Photo removal review outcome", photoRemovalLink = PhotoRemovalMessageLink(request.id, key, clock.instant().atOffset(ZoneOffset.UTC)),
+                ).also { publisher.publishEvent(PhotographerRemovalNoticeStored(it.id)) } else null
                 history.record(RemovalHistoryEvent(requestId, reviewId = reviewId, actorType = RemovalActorType.SYSTEM,
                     action = if (message != null) RemovalHistoryActions.NOTICE_STORED else RemovalHistoryActions.OWNER_UNAVAILABLE,
                     reason = if (message != null) null else "Outcome cannot be delivered to this current owner review",
@@ -99,6 +106,28 @@ class PhotoRemovalNotifier(
             }
             review.notificationNextAttemptAt = clock.instant()
         }
+    }
+
+    private fun outcomeBody(changes: List<PhotoRemovalHistory>): String {
+        val shown = changes.take(MAX_REFERENCES)
+        val byId = photos.findAllById(shown.mapNotNull { it.photoIdSnapshot }).associateBy { it.id }
+        val lines = shown.joinToString("; ") { "${reference(it.photoIdSnapshot?.let(byId::get), it.photoIdSnapshot)}: ${outcomeLabel(it.toState)}" }
+        return if (changes.size > shown.size) "$lines; and ${changes.size - shown.size} more." else lines
+    }
+
+    // People recognise a photo by its bib (as the download filename picks it) or, untagged, by a short id and its capture time.
+    private fun references(photoIds: List<UUID>): String {
+        val shown = photoIds.take(MAX_REFERENCES)
+        val byId = photos.findAllById(shown).associateBy { it.id }
+        val list = shown.joinToString(", ") { reference(byId[it], it) }
+        return if (photoIds.size > shown.size) "$list and ${photoIds.size - shown.size} more" else list
+    }
+
+    private fun reference(photo: Photo?, id: UUID?): String {
+        val bib = photo?.bibs?.minByOrNull { it.bibNumber }?.bibNumber?.takeIf { it.isNotBlank() }
+        val name = if (bib != null) "Photo (bib $bib)" else "Photo ${id.toString().take(8)}"
+        val taken = photo?.capturedAt?.atZoneSameInstant(MANILA)?.format(TAKEN)
+        return if (taken != null) "$name taken $taken" else name
     }
 
     private fun outcomeLabel(state: String?) = when (state) {
@@ -132,5 +161,10 @@ class PhotoRemovalNotifier(
         }
     }
 
-    companion object { private val log = LoggerFactory.getLogger(PhotoRemovalNotifier::class.java) }
+    companion object {
+        private val log = LoggerFactory.getLogger(PhotoRemovalNotifier::class.java)
+        private const val MAX_REFERENCES = 20
+        private val MANILA = java.time.ZoneId.of("Asia/Manila")
+        private val TAKEN = java.time.format.DateTimeFormatter.ofPattern("MMM d, h:mm a")
+    }
 }

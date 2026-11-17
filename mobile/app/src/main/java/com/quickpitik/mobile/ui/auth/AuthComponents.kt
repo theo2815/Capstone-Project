@@ -47,6 +47,8 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.quickpitik.mobile.BuildConfig
 import com.quickpitik.mobile.R
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import com.quickpitik.mobile.ui.common.SIGNUP_TICK_ERROR
+import com.quickpitik.mobile.ui.common.SignupAgreementRow
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 
@@ -469,6 +471,7 @@ fun GoogleSignInRow(
     enabled: Boolean,
     onIdToken: (String) -> Unit,
     onError: (String) -> Unit,
+    footnote: (@Composable () -> Unit)? = null,
 ) {
     if (BuildConfig.GOOGLE_SERVER_CLIENT_ID.isBlank()) return
 
@@ -525,6 +528,11 @@ fun GoogleSignInRow(
             Text(text = "CONTINUE WITH GOOGLE", style = Typography.labelLarge)
         }
 
+        if (footnote != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            footnote()
+        }
+
         Spacer(modifier = Modifier.height(20.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -568,6 +576,8 @@ fun GoogleRoleSheet(
 @Composable
 private fun GoogleRoleSheetContent(onPick: (isPhotographer: Boolean) -> Unit) {
     var isPhotographer by remember { mutableStateOf(false) }
+    var agreed by remember { mutableStateOf(false) }
+    var showTickError by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -613,10 +623,16 @@ private fun GoogleRoleSheetContent(onPick: (isPhotographer: Boolean) -> Unit) {
                 modifier = Modifier.weight(1f),
             )
         }
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SignupAgreementRow(agreed) { agreed = it; showTickError = false }
+        if (showTickError) {
+            Text(SIGNUP_TICK_ERROR, style = Typography.bodyMedium, color = ErrorRed)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(
-            onClick = { onPick(isPhotographer) },
+            onClick = { if (agreed) onPick(isPhotographer) else showTickError = true },
             shape = PillShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Fresh,

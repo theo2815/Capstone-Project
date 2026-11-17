@@ -127,3 +127,31 @@ it("runner photo_removed notice shows its label and keeps the receipt link", asy
   expect(labels).toHaveLength(2); labels.forEach((label) => expect(label).toBeVisible());
   expect(screen.getByRole("button", { name: "View receipt →" })).toBeEnabled();
 });
+it("a photo_removal_update inbox row opens the status page", async () => {
+  rows = [{ ...message, id: "message-3", kind: "photo_removal_update", title: "Your photos are hidden", photoRemovalRequestId: "req /7",
+    readAt: "2026-11-12T00:00:00Z", body: "We hid 4 photos while our team reviews your request." }];
+  const user = userEvent.setup(); mount("RUNNER");
+  await user.click(await screen.findByRole("button", { name: /Inbox ·/ }));
+  expect(screen.getByText("Photo deletion")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "View request →" }));
+  await waitFor(() => expect(push).toHaveBeenCalledWith("/account/photo-deletion/req%20%2F7"));
+  expect(screen.queryByRole("dialog", { name: "Inbox" })).not.toBeInTheDocument();
+});
+it("a photo_removed row with a request id still opens the receipt", async () => {
+  // A buyer's notice carries another person's case id: it must keep the order link.
+  rows = [{ ...message, id: "message-4", kind: "photo_removed", title: null, orderId: "order-9", photoRemovalRequestId: "someone-elses-case",
+    readAt: "2026-11-12T00:00:00Z", body: "A photo in this order was removed." }];
+  const user = userEvent.setup(); mount("RUNNER");
+  await user.click(await screen.findByRole("button", { name: /Inbox ·/ }));
+  expect(screen.queryByRole("button", { name: "View request →" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View receipt →" }));
+  await waitFor(() => expect(push).toHaveBeenCalledWith("/orders?expand=order-9"));
+});
+it("an unknown kind shows Update", async () => {
+  // An older tab meets a kind added later: label falls back, nothing crashes.
+  rows = [{ ...message, id: "message-5", kind: "brand_new_kind" as RunnerMessage["kind"], title: null, body: "Something new." }];
+  const user = userEvent.setup(); mount("RUNNER");
+  await user.click(await screen.findByRole("button", { name: /Inbox ·/ }));
+  expect(screen.getAllByText("Update")).toHaveLength(2); // kind kicker + null-title fallback
+  expect(screen.getByText("Something new.")).toBeVisible();
+});

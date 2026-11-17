@@ -5,7 +5,7 @@ import { RegisterForm } from "@/components/auth/register-form";
 import { ROUTES } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "Create account | QuickPitik",
+  title: "Create account",
 };
 
 export default function RegisterPage() {

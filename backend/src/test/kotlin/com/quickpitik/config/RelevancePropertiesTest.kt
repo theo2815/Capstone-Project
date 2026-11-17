@@ -1,0 +1,211 @@
+package com.quickpitik.config
+
+import org.junit.jupiter.api.Test
+import org.springframework.boot.context.properties.bind.BindException
+import org.springframework.boot.context.properties.bind.Binder
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource
+import org.springframework.boot.env.YamlPropertySourceLoader
+import org.springframework.core.env.StandardEnvironment
+import org.springframework.core.io.ClassPathResource
+import java.time.Duration
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class RelevancePropertiesTest {
+
+    @Test fun `defaults are off with the placeholder thresholds`() {
+        val p = RelevanceProperties()
+        assertEquals(RelevanceMode.OFF, p.mode)
+        assertEquals(60_000L, p.sweepIntervalMs)
+        assertEquals(10L, p.quietMinutes)
+        assertEquals(100, p.lookupsPerTick)
+        assertEquals(5, p.maxBatchesPerTick)
+        assertEquals(60L, p.rescoreMinutes)
+        assertEquals(7L, p.settleDays)
+        assertEquals(Duration.ofSeconds(5), p.lookupTimeout)
+        assertEquals(RelevanceProperties.Copy(tightDistance = 4, weakDistance = 8, minHits = 3, minHitSharePercent = 5), p.copy)
+        assertEquals(RelevanceProperties.Date(windowDays = 2, minDatedPhotos = 10, outsideSharePercent = 80), p.date)
+        assertEquals(RelevanceProperties.Junk(blurCutoff = null, darkCutoff = null, labelMinConfidence = 0.6,
+            raceLabels = listOf("Running", "Marathon", "Road"), fitsBelowPercent = 10, dumpAbovePercent = 70), p.junk)
+        assertEquals(RelevanceProperties.Check(minBatchSize = 30, nearLinePoints = 5, sampleSize = 300, countTrigger = 500,
+            tickIntervalMs = 15_000, maxBatchesPerTick = 3, claimMinutes = 10, measuresPerTick = 60, workers = 2,
+            measureMaxTries = 5, waitForRulesMinutes = 30, decideMaxAttempts = 3, retryAfterMinutes = 60, maxRetries = 3), p.check)
+        assertEquals(RelevanceProperties.Words(minSharePercent = 3, topN = 30), p.words)
+        assertEquals(RelevanceProperties.Llm(apiKey = "", baseUrl = "https://api.anthropic.com", model = "claude-sonnet-5-5",
+            connectTimeout = Duration.ofSeconds(5), readTimeout = Duration.ofSeconds(30), maxAttempts = 3,
+            retryBackoff = Duration.ofSeconds(1), maxTokens = 4096), p.llm)
+        assertEquals(RelevanceProperties.Alerts(bigHidePhotos = 500), p.alerts)
+        assertEquals(RelevanceProperties.Hide(chunkSize = 1000, chunksPerTick = 10), p.hide)
+        assertEquals(RelevanceProperties.Scan(photosPerTurn = 200, maxBatchesPerTick = 2, yieldAbove = 0), p.scan)
+        assertEquals(RelevanceProperties.Restore(sweepMinutes = 60), p.restore)
+        assertEquals(RelevanceProperties.Appeal(windowDays = 14), p.appeal)
+        assertEquals(RelevanceProperties.Strikes(windowMonths = 6), p.strikes)
+    }
+
+    @Test fun `an appeal window below one day is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Appeal(windowDays = 0) }
+    }
+
+    @Test fun `a strikes window below one month is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Strikes(windowMonths = 0) }
+    }
+
+    @Test fun `a restore sweep window below one minute is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Restore(sweepMinutes = 0) }
+    }
+
+    @Test fun `scan photos or batches below one, or a negative yield, are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Scan(photosPerTurn = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Scan(maxBatchesPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Scan(yieldAbove = -1) }
+    }
+
+    @Test fun `a hide chunk outside one to a thousand, or no chunks a tick, is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Hide(chunkSize = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Hide(chunkSize = 1001) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Hide(chunksPerTick = 0) }
+    }
+
+    @Test fun `the yml binds every key and names its env override`() {
+        val env = StandardEnvironment()
+        YamlPropertySourceLoader().load("yml", ClassPathResource("application.yml")).forEach { env.propertySources.addLast(it) }
+        val bound = Binder.get(env).bind("app.relevance", RelevanceProperties::class.java).get()
+        assertEquals(RelevanceProperties(), bound)
+
+        val yml = javaClass.getResource("/application.yml")!!.readText()
+        listOf(
+            "RELEVANCE_MODE:off", "RELEVANCE_SWEEP_INTERVAL_MS:60000", "RELEVANCE_QUIET_MINUTES:10",
+            "RELEVANCE_LOOKUPS_PER_TICK:100", "RELEVANCE_MAX_BATCHES_PER_TICK:5", "RELEVANCE_RESCORE_MINUTES:60",
+            "RELEVANCE_SETTLE_DAYS:7", "RELEVANCE_LOOKUP_TIMEOUT:5s", "RELEVANCE_COPY_TIGHT_DISTANCE:4", "RELEVANCE_COPY_WEAK_DISTANCE:8",
+            "RELEVANCE_COPY_MIN_HITS:3", "RELEVANCE_COPY_MIN_HIT_SHARE_PERCENT:5", "RELEVANCE_DATE_WINDOW_DAYS:2",
+            "RELEVANCE_DATE_MIN_DATED_PHOTOS:10", "RELEVANCE_DATE_OUTSIDE_SHARE_PERCENT:80",
+            "RELEVANCE_JUNK_BLUR_CUTOFF:}", "RELEVANCE_JUNK_DARK_CUTOFF:}",
+            "RELEVANCE_JUNK_LABEL_MIN_CONFIDENCE:0.6", "RELEVANCE_JUNK_RACE_LABELS:Running,Marathon,Road",
+            "RELEVANCE_JUNK_FITS_BELOW_PERCENT:10", "RELEVANCE_JUNK_DUMP_ABOVE_PERCENT:70",
+            "RELEVANCE_CHECK_MIN_BATCH_SIZE:30", "RELEVANCE_CHECK_NEAR_LINE_POINTS:5",
+            "RELEVANCE_CHECK_SAMPLE_SIZE:300", "RELEVANCE_CHECK_COUNT_TRIGGER:500", "RELEVANCE_CHECK_TICK_INTERVAL_MS:15000",
+            "RELEVANCE_CHECK_MAX_BATCHES_PER_TICK:3", "RELEVANCE_CHECK_CLAIM_MINUTES:10",
+            "RELEVANCE_CHECK_MEASURES_PER_TICK:60", "RELEVANCE_CHECK_WORKERS:2", "RELEVANCE_CHECK_MEASURE_MAX_TRIES:5",
+            "RELEVANCE_CHECK_WAIT_FOR_RULES_MINUTES:30", "RELEVANCE_CHECK_DECIDE_MAX_ATTEMPTS:3",
+            "RELEVANCE_CHECK_RETRY_AFTER_MINUTES:60", "RELEVANCE_CHECK_MAX_RETRIES:3",
+            "RELEVANCE_WORDS_MIN_SHARE_PERCENT:3", "RELEVANCE_WORDS_TOP_N:30",
+            "RELEVANCE_LLM_API_KEY:}","RELEVANCE_LLM_BASE_URL:https://api.anthropic.com", "RELEVANCE_LLM_MODEL:claude-sonnet-5-5",
+            "RELEVANCE_LLM_CONNECT_TIMEOUT:5s", "RELEVANCE_LLM_READ_TIMEOUT:30s", "RELEVANCE_LLM_MAX_ATTEMPTS:3",
+            "RELEVANCE_LLM_RETRY_BACKOFF:1s", "RELEVANCE_LLM_MAX_TOKENS:4096", "RELEVANCE_ALERTS_BIG_HIDE_PHOTOS:500",
+            "RELEVANCE_HIDE_CHUNK_SIZE:1000", "RELEVANCE_HIDE_CHUNKS_PER_TICK:10",
+            "RELEVANCE_SCAN_PHOTOS_PER_TURN:200", "RELEVANCE_SCAN_MAX_BATCHES_PER_TICK:2", "RELEVANCE_SCAN_YIELD_ABOVE:0",
+            "RELEVANCE_RESTORE_SWEEP_MINUTES:60", "RELEVANCE_APPEAL_WINDOW_DAYS:14", "RELEVANCE_STRIKES_WINDOW_MONTHS:6",
+        ).forEach { assertTrue(it in yml, "missing $it in application.yml") }
+    }
+
+    private fun bind(vararg pairs: Pair<String, String>): RelevanceProperties =
+        Binder(MapConfigurationPropertySource(pairs.associate { "app.relevance.${it.first}" to it.second }))
+            .bindOrCreate("app.relevance", RelevanceProperties::class.java)
+
+    @Test fun `record-only and auto-hide bind`() {
+        assertEquals(RelevanceMode.RECORD_ONLY, bind("mode" to "record-only").mode)
+        assertEquals(RelevanceMode.AUTO_HIDE, bind("mode" to "auto-hide").mode)
+        assertEquals(RelevanceMode.OFF, bind("mode" to "off").mode)
+    }
+
+    @Test fun `the old names shadow and flag still bind`() {
+        assertEquals(RelevanceMode.SHADOW, bind("mode" to "shadow").mode)
+        assertEquals(RelevanceMode.FLAG, bind("mode" to "flag").mode)
+    }
+
+    @Test fun `an unknown mode stops the boot`() {
+        assertFailsWith<BindException> { bind("mode" to "hide-everything") }
+    }
+
+    @Test fun `an empty cut-off binds as not set`() {
+        val p = bind("junk.blur-cutoff" to "", "junk.dark-cutoff" to "")
+        assertNull(p.junk.blurCutoff)
+        assertNull(p.junk.darkCutoff)
+        assertEquals(RelevanceProperties.Junk(blurCutoff = 42.5, darkCutoff = 0.0),
+            bind("junk.blur-cutoff" to "42.5", "junk.dark-cutoff" to "0").junk)
+    }
+
+    @Test fun `a cut-off above 100 is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(blurCutoff = 100.1) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(darkCutoff = 101.0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(blurCutoff = -0.1) }
+        assertFailsWith<BindException> { bind("junk.dark-cutoff" to "250") }
+    }
+
+    @Test fun `junk shares out of order, a confidence above one or no race labels are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(fitsBelowPercent = 71, dumpAbovePercent = 70) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(fitsBelowPercent = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(dumpAbovePercent = 100) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(labelMinConfidence = 60.0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Junk(raceLabels = emptyList()) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(minBatchSize = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(nearLinePoints = -1) }
+    }
+
+    @Test fun `check sample, trigger, tick and claim values below one are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(sampleSize = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(countTrigger = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(tickIntervalMs = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(maxBatchesPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(claimMinutes = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(measuresPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(workers = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(measureMaxTries = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(waitForRulesMinutes = -1) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(decideMaxAttempts = 0) }
+    }
+
+    @Test fun `a wait below one minute fails boot`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(retryAfterMinutes = 0) }
+    }
+
+    @Test fun `a negative max-retries fails boot`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Check(maxRetries = -1) }
+        RelevanceProperties.Check(maxRetries = 0)
+    }
+
+    @Test fun `a tight distance above the weak distance is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(tightDistance = 9, weakDistance = 8) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(tightDistance = -1) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(weakDistance = 65) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(minHits = 0) }
+    }
+
+    @Test fun `a share percent outside one to a hundred is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(minHitSharePercent = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Copy(minHitSharePercent = 101) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(outsideSharePercent = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(outsideSharePercent = 101) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(minSharePercent = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(minSharePercent = 101) }
+    }
+
+    @Test fun `a top-n of words outside one to a hundred is refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(topN = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Words(topN = 101) }
+    }
+
+    @Test fun `model tries outside one to five, or a zero timeout, are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(maxAttempts = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(maxAttempts = 6) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(maxTokens = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(readTimeout = Duration.ZERO) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(connectTimeout = Duration.ZERO) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Llm(retryBackoff = Duration.ofMillis(-1)) }
+    }
+
+    @Test fun `intervals and tick counts below one, or too many look-ups, are refused`() {
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(sweepIntervalMs = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(quietMinutes = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(lookupsPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(lookupsPerTick = 1001) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(maxBatchesPerTick = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(rescoreMinutes = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(settleDays = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties(lookupTimeout = Duration.ZERO) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(windowDays = 0) }
+        assertFailsWith<IllegalArgumentException> { RelevanceProperties.Date(minDatedPhotos = 0) }
+    }
+}

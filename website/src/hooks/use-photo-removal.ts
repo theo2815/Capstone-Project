@@ -10,17 +10,20 @@ import { usePrivateQuerySession } from "./use-private-query-session";
 import type {
   PhotoRemovalRequestDto, PhotographerRemovalRequestDto, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters,
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand, DecideRemovalCommand,
-  RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand,
+  RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand, ReviewSuggestionsCommand, RunnerRemovalRequestDetailDto,
 } from "@/types/photo-removal";
+type RemovalDetail = PhotoRemovalRequestDto | PhotographerRemovalRequestDto | RunnerRemovalRequestDetailDto;
 
 type SessionKey = ReturnType<typeof usePrivateQuerySession>["key"];
-type RemovalRole = "ADMIN" | "PHOTOGRAPHER";
+type RemovalRole = "ADMIN" | "PHOTOGRAPHER" | "RUNNER";
 export const removalKeys = {
   all: ["photo-removal"] as const,
   admin: (session: SessionKey) => ["photo-removal", "admin", ...session] as const,
   photographer: (session: SessionKey) => ["photo-removal", "photographer", ...session] as const,
+  runner: (session: SessionKey) => ["photo-removal", "runner", ...session] as const,
 };
 function scope(role: RemovalRole, session: SessionKey) {
+  if (role === "RUNNER") return removalKeys.runner(session);
   return role === "ADMIN" ? removalKeys.admin(session) : removalKeys.photographer(session);
 }
 function useRemovalQuery<T>(role: RemovalRole, suffix: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, enabled = true) {
@@ -55,6 +58,18 @@ export function useRemovalHistory(id: string, filters: RemovalPageFilters = {}) 
 export function useRemovalEvidence(id: string) {
   return useRemovalQuery("ADMIN", ["evidence", id], (signal) => api.getRemovalEvidence(id, signal), !!id);
 }
+export function useRunnerRemovalReasons() {
+  return useRemovalQuery("RUNNER", ["reasons"], (signal) => api.listRunnerRemovalReasons(signal));
+}
+export function useRunnerRemovalEligibility(eventId: string | null) {
+  return useRemovalQuery("RUNNER", ["eligibility", eventId], (signal) => api.getRunnerRemovalEligibility(eventId!, signal), !!eventId);
+}
+export function useRunnerRemovalRequests(filters: RemovalPageFilters = {}) {
+  return useRemovalQuery("RUNNER", ["list", filters], (signal) => api.listRunnerRemovalRequests(filters, signal));
+}
+export function useRunnerRemovalRequest(id: string) {
+  return useRemovalQuery("RUNNER", ["detail", id], (signal) => api.getRunnerRemovalRequest(id, signal), !!id);
+}
 export function usePhotographerRemovalRequests(filters: RemovalRequestFilters = {}) {
   return useRemovalQuery("PHOTOGRAPHER", ["list", filters], (signal) => api.listPhotographerRemovalRequests(filters, signal));
 }
@@ -78,8 +93,9 @@ function useRemovalActionContext(role: RemovalRole) {
       current.user.id === session.key[0] && current.sessionVersion === session.key[2];
   };
   const detailKey = (id: string) => [...key, "detail", id];
-  const readDetail = (id: string, signal: AbortSignal) => role === "ADMIN"
-    ? api.getAdminRemovalRequest(id, signal) : api.getPhotographerRemovalRequest(id, signal);
+  const readDetail = (id: string, signal: AbortSignal): Promise<RemovalDetail> => role === "RUNNER"
+    ? api.getRunnerRemovalRequest(id, signal)
+    : role === "ADMIN" ? api.getAdminRemovalRequest(id, signal) : api.getPhotographerRemovalRequest(id, signal);
   async function run<T>(id: string | undefined, operation: () => Promise<T>, detailResult = true): Promise<T> {
     const isCurrent = captureAuthSession();
     if (!isAllowed()) throw new Error("Session changed");
@@ -115,7 +131,7 @@ function useRemovalActionContext(role: RemovalRole) {
       await Promise.all(affected.map((queryKey) => qc.cancelQueries({ queryKey })));
       if (!isCurrent()) throw new Error("Session changed");
       if (detailResult) {
-        const detail = result as PhotoRemovalRequestDto | PhotographerRemovalRequestDto;
+        const detail = result as RemovalDetail;
         qc.setQueryData(detailKey(detail.id), detail);
       }
       await Promise.all(affected.map((queryKey) => qc.invalidateQueries({ queryKey })));
@@ -127,7 +143,7 @@ function useRemovalActionContext(role: RemovalRole) {
   }
   const reviewCurrentState = (id: string, version: number) => {
     if (!isAllowed()) return false;
-    const current = qc.getQueryState<PhotoRemovalRequestDto | PhotographerRemovalRequestDto>(detailKey(id));
+    const current = qc.getQueryState<RemovalDetail>(detailKey(id));
     if (!current?.data || current.isInvalidated || current.fetchStatus !== "idle" || current.data.version !== version) return false;
     conflicts.current.delete(conflictKey(id));
     refresh((value) => value + 1);
@@ -146,10 +162,16 @@ export function useAdminRemovalActions() {
   const decide = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<DecideRemovalCommand>) => context.run(id, () => api.decideRemovalRequest(id, command)) });
   const retryCleanup = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<RetryRemovalCleanupCommand>) => context.run(id, () => api.retryRemovalCleanup(id, command)) });
   const supportUpdate = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<RemovalSupportUpdateCommand>) => context.run(id, () => api.addRemovalSupportUpdate(id, command), false) });
-  return { create, replaceEvidence, match, verify, cancel, decide, retryCleanup, supportUpdate, reviewCurrentState: context.reviewCurrentState, reviewRequired: context.reviewRequired };
+  const reviewSuggestions = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<ReviewSuggestionsCommand>) => context.run(id, () => api.reviewRemovalSuggestions(id, command)) });
+  return { create, replaceEvidence, match, verify, cancel, decide, retryCleanup, supportUpdate, reviewSuggestions, reviewCurrentState: context.reviewCurrentState, reviewRequired: context.reviewRequired };
 }
 export function usePhotographerRemovalActions() {
   const context = useRemovalActionContext("PHOTOGRAPHER");
   const respond = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, command }: CaseCommand<RespondToRemovalCommand>) => context.run(id, () => api.respondToRemovalRequest(id, command)) });
   return { respond, reviewCurrentState: context.reviewCurrentState, reviewRequired: context.reviewRequired };
+}
+export function useRunnerRemovalActions() {
+  const context = useRemovalActionContext("RUNNER");
+  const withdraw = useMutation({ mutationKey: context.mutationKey, retry: false, mutationFn: ({ id, expectedVersion, idempotencyKey }: { id: string; expectedVersion: number; idempotencyKey: string }) => context.run(id, () => api.withdrawRunnerRemoval(id, expectedVersion, idempotencyKey)) });
+  return { withdraw, reviewCurrentState: context.reviewCurrentState, reviewRequired: context.reviewRequired };
 }

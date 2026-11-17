@@ -25,7 +25,8 @@ export type PhotographerMessageKind =
   | "payout_report_resolved"
   | "admin_message"
   | "photo_removal_request"
-  | "photo_removal_outcome";
+  | "photo_removal_outcome"
+  | "relevance_notice";
 
 // FE shape mirrors the BE PhotographerMessageDto (see
 // backend/dto/photographer/PhotographerMessageDtos.kt). `title` is non-null
@@ -42,6 +43,8 @@ export interface PhotographerMessage {
   // Removal notices carry their case ID; the inbox links only to the local
   // dashboard route built from it, never to anything in the body.
   photoRemovalRequestId?: string | null;
+  // Photo Relevance notes carry their case ID the same way (RV-3.1).
+  relevanceCaseId?: string | null;
 }
 
 export const MESSAGE_KIND_LABEL: Record<PhotographerMessageKind, string> = {
@@ -66,6 +69,8 @@ export const MESSAGE_KIND_LABEL: Record<PhotographerMessageKind, string> = {
   admin_message: "Message from admin",
   photo_removal_request: "Removal review",
   photo_removal_outcome: "Removal decision",
+  // V2-T21 kicker ("QuickPitik · Uploads").
+  relevance_notice: "Uploads",
 };
 
 // Resolve the title shown in the inbox row header. admin_message carries

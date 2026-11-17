@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
-  fetchAdminDisputes, fetchAdminDispute, resolveDispute, denyDispute, escalateDispute, sendRefundLink, markRefunded,
-  type AdminDisputeListArgs, type ResolveDisputeArgs,
+  fetchAdminDisputes, fetchAdminDispute, fetchAdminDisputePage, resolveDispute, denyDispute, denyDisputeWithCode, fetchDisputeDenyReasons, escalateDispute, sendRefundLink, markRefunded,
+  type AdminDisputeListArgs, type AdminDisputePageArgs, type AdminDisputeView, type ResolveDisputeArgs,
 } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
 import { useAuthStore } from "@/store/auth-store";
@@ -19,9 +19,24 @@ export const adminDisputeKeys = {
   lists: (userId: string | null) => [...adminDisputeKeys.owner(userId), "list"] as const,
   list: (userId: string | null, args: AdminDisputeListArgs = {}) =>
     [...adminDisputeKeys.lists(userId), args] as const,
+  // Under lists, so every invalidation of the lists also refetches the queue pages.
+  page: (userId: string | null, args: AdminDisputePageArgs = {}) =>
+    [...adminDisputeKeys.lists(userId), "page", args] as const,
   detail: (userId: string | null, id: string) =>
     [...adminDisputeKeys.owner(userId), "detail", id] as const,
+  reasons: (userId: string | null) => [...adminDisputeKeys.owner(userId), "deny-reasons"] as const,
 };
+
+// The deny reasons are server-owned and fixed per deploy; the modal fetches them when it first opens.
+export function useDisputeDenyReasons(enabled = true) {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: adminDisputeKeys.reasons(user?.id ?? null),
+    queryFn: fetchDisputeDenyReasons,
+    enabled: enabled && user?.role === "ADMIN",
+    staleTime: Infinity,
+  });
+}
 
 export function useAdminDisputes(args: AdminDisputeListArgs = {}) {
   const user = useAuthStore((s) => s.user);
@@ -30,6 +45,23 @@ export function useAdminDisputes(args: AdminDisputeListArgs = {}) {
     queryFn: () => fetchAdminDisputes(args),
     enabled: user?.role === "ADMIN",
     staleTime: 60_000,
+  });
+}
+
+const DISPUTES_STALE_MS = 60_000;
+// Due times pass without any websocket event, so the deadline views poll.
+const LIVE_VIEW_REFETCH_MS = 60_000;
+const LIVE_VIEWS: readonly AdminDisputeView[] = ["needs_me", "overdue", "refund_run"];
+
+export function useAdminDisputePage(args: AdminDisputePageArgs = {}) {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: adminDisputeKeys.page(user?.id ?? null, args),
+    queryFn: ({ signal }) => fetchAdminDisputePage({ ...args, signal }),
+    enabled: user?.role === "ADMIN",
+    staleTime: DISPUTES_STALE_MS,
+    placeholderData: keepPreviousData,
+    refetchInterval: args.view && LIVE_VIEWS.includes(args.view) ? LIVE_VIEW_REFETCH_MS : false,
   });
 }
 
@@ -76,7 +108,9 @@ export function useDisputeActions() {
       // An older read must not overwrite the confirmed mutation response.
       await qc.cancelQueries({ queryKey: adminDisputeKeys.owner(userId) });
       if (!isCurrent()) return null;
-      for (const [key] of qc.getQueriesData<Dispute[]>({ queryKey: adminDisputeKeys.lists(userId) })) {
+      for (const [key, rows] of qc.getQueriesData<Dispute[]>({ queryKey: adminDisputeKeys.lists(userId) })) {
+        // Queue pages ({items, total}) are left to the refetch below.
+        if (!Array.isArray(rows)) continue;
         const args = key.at(-1) as AdminDisputeListArgs;
         qc.setQueryData<Dispute[]>(key, (rows) => rows?.flatMap((row) => {
           if (row.id !== dispute.id) return [row];
@@ -101,26 +135,22 @@ export function useDisputeActions() {
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "dispute", id }]),
       resolve: (id: string, args: ResolveDisputeArgs) => run(id, "Resolving…", "resolve", () => resolveDispute(id, args)),
       deny: async (id: string, reason: string | null) => !!(await run(id, "Denying…", "deny", () => denyDispute(id, reason))),
+      denyWithCode: async (id: string, reasonCode: string, note: string | null) =>
+        !!(await run(id, "Denying…", "deny", () => denyDisputeWithCode(id, reasonCode, note))),
       escalate: async (id: string, reason: string | null) => !!(await run(id, "Escalating…", "escalate", () => escalateDispute(id, reason))),
       sendRefundLink: async (id: string, url: string) =>
         !!(await run(id, "Sending link…", "send the refund link for this", () => sendRefundLink(id, url))),
-      markRefunded: async (id: string) =>
-        !!(await run(id, "Marking refunded…", "record the refund on this", () => markRefunded(id))),
+      // onFieldError gets the server's message when it refuses the reference, so the form can show it on the field.
+      markRefunded: async (id: string, refundReference: string, onFieldError?: (message: string) => void) =>
+        !!(await run(id, "Marking refunded…", "record the refund on this", () => markRefunded(id, refundReference).catch((error) => {
+          const entry = error instanceof ApiError ? error.errors.find((e) => e.field === "refundReference") : undefined;
+          if (entry) onFieldError?.(entry.message);
+          throw error;
+        }))),
     };
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
-export function useOpenDisputesCount(): number {
-  const serverDisputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
-  return useMemo(
-    () =>
-      serverDisputes.filter(
-        (d) => d.status === "open",
-      ).length,
-    [serverDisputes],
-  );
-}
 
 export function useRefundedThisWeekTotal(): number {
   const serverDisputes = useAdminDisputes().data ?? EMPTY_DISPUTES;

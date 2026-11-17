@@ -11,7 +11,11 @@ import androidx.compose.ui.test.onAncestors
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.Density
+import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.quickpitik.mobile.data.local.SessionManager
 import com.quickpitik.mobile.support.MainDispatcherRule
 import com.quickpitik.mobile.support.MockBackend
@@ -36,9 +40,12 @@ class PhotographerEventsScreenTest {
     @get:Rule val main = MainDispatcherRule()
     @get:Rule val backend = MockBackend()
     private lateinit var application: Application
+    private val viewModels = ViewModelStore()
 
     @Before fun setUp() {
         application = ApplicationProvider.getApplicationContext()
+        WorkManagerTestInitHelper.initializeTestWorkManager(application,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
         signInAs("PHOTOGRAPHER")
         backend.server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse =
@@ -48,6 +55,8 @@ class PhotographerEventsScreenTest {
     }
 
     @After fun tearDown() {
+        viewModels.clear()
+        WorkManagerTestInitHelper.closeWorkDatabase()
         closeRoom(application)
         SessionManager.getInstance(application).clearSession()
     }
@@ -57,6 +66,8 @@ class PhotographerEventsScreenTest {
     @Test fun `status chips stay whole by scrolling sideways at large font scale`() {
         val dashboard = PhotographerDashboardViewModel(application)
         val tether = TetherViewModel(application, dashboard.eventsState)
+        viewModels.put("dashboard", dashboard)
+        viewModels.put("tether", tether)
         dashboard.fetchEvents()
         dashboard.eventsState.awaitFirst { it is EventsState.Success }
         dashboard.fetchPublicEvents()

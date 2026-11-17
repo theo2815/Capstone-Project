@@ -113,6 +113,8 @@ class SecurityConfig(
                 // no-op (no handler registered).
                 // Case evidence is served only by the ADMIN case stream, even for a known key.
                 auth.requestMatchers(RegexRequestMatcher("^/storage/photo-removal(?:/.*|\\?.*)?$", null, true)).denyAll()
+                // Seller-check ID photos too; so on a STORAGE_BACKEND=LOCAL backend the admin view cannot show them (accepted).
+                auth.requestMatchers(RegexRequestMatcher("^/storage/seller-details(?:/.*|\\?.*)?$", null, true)).denyAll()
                 auth.requestMatchers(HttpMethod.GET, "/storage/**").permitAll()
                 // The four public event reads, listed by shape: a `/**` here also
                 // permitted the RUNNER-only `GET /events/{slug}/photo-alert`, which then
@@ -125,6 +127,7 @@ class SecurityConfig(
                     "/api/v1/events/*/photos/*/download",
                 ).permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/regions").permitAll()
+                auth.requestMatchers(HttpMethod.GET, "/api/v1/race-types").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/platform/**").permitAll()
                 auth.requestMatchers(HttpMethod.GET, "/api/v1/public/**").permitAll()
                 // Photo verification is public by design — whoever holds a

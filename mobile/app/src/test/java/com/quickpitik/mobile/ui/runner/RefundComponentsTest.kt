@@ -145,15 +145,31 @@ class RefundComponentsTest {
     }
 
     @Test fun `the refund policy copy matches the website`() {
+        assertEquals(
+            listOf(
+                "Our promise", "Download problems", "Blurred photos", "Charged more than once", "Checkout errors",
+                "What we don't refund", "How to ask", "How long it takes", "How much comes back", "Photos bought together",
+            ),
+            REFUND_POLICY_BULLETS.map { it.first },
+        )
         val bullets = REFUND_POLICY_BULLETS.toMap()
         assertEquals(
-            "We review every request within 3 business days. You'll see the status update on this receipt.",
-            bullets["Review time"],
+            "We review every request within 3 business days and show the status on this receipt. Once we approve it, we send your refund within 24–48 hours as a PayMongo refund link, shown on this receipt with a claim-by date and sent to your e-mail. Open it before that date and choose where the money goes. Your bank or e-wallet (GCash, for example) may then take 3–10 business days to show it.",
+            bullets["How long it takes"],
         )
         assertEquals(
-            "Approved refunds come as a PayMongo refund link, shown on this receipt with its claim-by date and sent to your e-mail. Open it to choose where the money goes.",
-            bullets["Where the money goes"],
+            "Within 7 days of buying, open Orders, choose the receipt and tap Request a refund. Pick the photos and the reason, and add a note if it helps. Charged but no order showed up? E-mail quickpitiksupport@gmail.com with your transaction ID, the e-mail you used and a screenshot if you have one.",
+            bullets["How to ask"],
         )
+    }
+
+    @Test fun `the reason list drops Wrong runner but old requests keep its label`() {
+        assertEquals(
+            listOf("Too blurred to recognise", "Won't download or file is broken", "Charged more than once", "Checkout error or something else"),
+            REFUND_REASONS.map { it.second },
+        )
+        assertEquals("Wrong runner", refundReasonLabel("wrong_runner"))
+        assertEquals("Charged more than once", refundReasonLabel("duplicate_charge"))
     }
 
     private fun dispute(

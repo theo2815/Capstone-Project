@@ -101,10 +101,10 @@ it.each([
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenLastCalledWith(`/admin/users/${adminUser.userId}/${endpoint}`, { reason: expect.stringContaining("Keep this reason"), ...(endpoint === "suspend" ? {} : { expectedRevision: 7 }) });
 });
-it.each([false, true])("awaits approval/unsuspension and locks the action cluster (suspended=%s)", async (suspended) => {
-  if (suspended) rows = [{ ...adminUser, suspendedAt: "2026-09-10T00:00:00Z" }];
+it("awaits unsuspension and locks the action cluster", async () => {
+  rows = [{ ...adminUser, suspendedAt: "2026-09-10T00:00:00Z" }];
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise); mount();
-  const submit = screen.getByRole("button", { name: suspended ? "Unsuspend" : "Approve" });
+  const submit = screen.getByRole("button", { name: "Unsuspend" });
   await userEvent.click(submit); await userEvent.click(submit);
   expect(screen.getAllByRole("button").every((button) => button.hasAttribute("disabled"))).toBe(true);
   expect(post).toHaveBeenCalledTimes(1); expect(useToastStore.getState().toasts).toEqual([]);
@@ -138,15 +138,117 @@ it("retains only failed bulk rejections, keeps their reason, and retries them on
   await user.click(within(dialog).getByRole("button", { name: "Send back" })); await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenCalledTimes(3); expect(post.mock.calls[2][0]).toContain("photographer-2/reject");
 });
-it("names the pending bulk approval and blocks repeat Enter until it settles", async () => {
+it("names the pending bulk send back and blocks repeat Enter until it settles", async () => {
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
   mount(true); const user = userEvent.setup();
   await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
-  await user.click(screen.getByRole("button", { name: "Approve 1" }));
-  expect(screen.getByRole("button", { name: "Approving…" })).toHaveAttribute("aria-busy", "true");
-  expect(screen.getByRole("button", { name: /Test Studio — toggle selection/ })).toHaveAttribute("aria-busy", "true");
+  await user.click(screen.getByRole("button", { name: "Reject 1…" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Send back" }));
+  expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Sending back…" })).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("button", { name: /Test Studio — toggle selection/, hidden: true })).toHaveAttribute("aria-busy", "true");
   await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   await act(async () => { request.resolve(adminUser); });
+});
+// Q7 (AA-I17): profiles approve themselves once identity passes; only a held profile gets an Approve (below).
+it("drawer shows no Approve and E does nothing", async () => {
+  navigation.search = `row=${adminUser.userId}`;
+  const post = vi.spyOn(api, "post"); mount(true); const user = userEvent.setup();
+  const drawer = await screen.findByRole("dialog");
+  expect(within(drawer).getByRole("button", { name: "Reject…" })).toBeInTheDocument();
+  expect(within(drawer).queryByRole("button", { name: /approv/i })).toBeNull();
+  await user.keyboard("e"); await user.keyboard("E");
+  expect(post).not.toHaveBeenCalled();
+});
+const HOLD_LINE = "Held after an admin reset or rejection";
+it("a held profile shows the hold line and an Approve button", async () => {
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  // An older backend's detail answer has no adminHold: the hold comes from the list row.
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, decisionLog: [] } : listGet(path));
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
+  expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+});
+it("a held profile shows Approve from the detail answer when the list has no row for it", async () => {
+  rows = []; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, adminHold: true, decisionLog: [] } : listGet(path));
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByRole("button", { name: "Approve" })).toBeInTheDocument();
+  expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
+});
+it("the drawer subtitle has no empty place between two dots when region and city are blank", async () => {
+  rows = [{ ...adminUser, region: null, city: "" }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByText(/^@test-studio/)).not.toHaveTextContent(/·\s*·/);
+});
+it("the list row has no leading dot when region and city are blank", async () => {
+  rows = [{ ...adminUser, region: null, city: "" }]; client.setQueryData(key, rows);
+  mount(true);
+  const line = (await screen.findByText(/^Joined/)).closest("p")!;
+  expect(line.textContent!.trim()).toMatch(/^Joined/);
+});
+it("the list row keeps the city and its dot when the region is blank", async () => {
+  rows = [{ ...adminUser, region: "", city: "Cebu" }]; client.setQueryData(key, rows);
+  mount(true);
+  expect((await screen.findByText(/^Joined/)).closest("p")!.textContent!.trim()).toMatch(/^Cebu · Joined/);
+});
+it("the detail answer's hold wins over a stale list row", async () => {
+  rows = [{ ...adminUser, adminHold: false }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, adminHold: true, decisionLog: [] } : listGet(path));
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
+  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+});
+it("a profile that is not held has no hold line and no Approve button", async () => {
+  navigation.search = `row=${adminUser.userId}`; mount(true);
+  const drawer = await screen.findByRole("dialog");
+  expect(within(drawer).queryByText(HOLD_LINE)).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Approve" })).toBeNull();
+});
+it("approve waits for the server before showing success and shows the server's error on a conflict", async () => {
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  // An older backend's detail answer has no adminHold: the hold comes from the list row.
+  const listGet = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, decisionLog: [] } : listGet(path));
+  const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
+  mount(true); const user = userEvent.setup();
+  const drawer = await screen.findByRole("dialog");
+  await user.click(within(drawer).getByRole("button", { name: "Approve" }));
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(post).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}/approve`, { expectedRevision: 7 });
+  expect(useToastStore.getState().toasts).toEqual([]);
+  await act(async () => request.resolve({ ...adminUser, adminHold: false }));
+  expect(useToastStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([["success", "Hold released · Test Studio"]]);
+  useToastStore.getState().clear();
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows);
+  post.mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", field: "", message: "This profile is not on hold." }], 409));
+  await user.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(useToastStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([["error", "This profile is not on hold."]]));
+});
+it("bulk bar offers only Send back", async () => {
+  mount(true); const user = userEvent.setup();
+  await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
+  const bar = screen.getByRole("region", { name: "Verifications bulk action bar" });
+  expect(within(bar).getByRole("button", { name: "Reject 1…" })).toBeInTheDocument();
+  expect(within(bar).queryByRole("button", { name: /approv/i })).toBeNull();
+});
+it("aside shows Reject, Reset, Suspend but no Approve", () => {
+  mount();
+  for (const name of ["Reject…", "Reset verification…", "Suspend…"]) expect(screen.getByRole("button", { name })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /approv/i })).toBeNull();
+});
+it("open-queue rows say they wait for the identity check and link to Seller details", async () => {
+  mount(true);
+  const link = await screen.findByRole("link", { name: "Seller details" });
+  expect(link).toHaveAttribute("href", "/admin/verifications#seller-details");
+  expect(link.closest("p")).toHaveTextContent("Waits for the identity check. Decide it under Seller details.");
 });
 it("shows the join month for a backend timestamp instead of an invalid date", async () => {
   mount(true);

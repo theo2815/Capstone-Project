@@ -1,0 +1,37 @@
+# Tagalog / Filipino words refused in a photographer's brand name, handle or bio
+# (WordList.BAD_WORDS). Same rules as bad-words-en.txt. Left out on purpose: words with
+# an innocent common meaning ("leche", "hayop", "boto", "bakla", "puke", "titi", "gaga").
+# Starter list: a Tagalog speaker on the team skims it before the race switch-on.
+puta
+putangina
+putang ina
+tangina
+tang ina
+taena
+inamo
+ina mo
+punyeta
+punyemas
+pucha
+gago
+ulol
+ulul
+tarantado
+tarantada
+bobo
+tanga
+kupal
+hindot
+kantot
+kantutan
+jakol
+salsal
+burat
+bayag
+tamod
+libog
+malibog
+pokpok
+pekpek
+pakyu
+pakshet

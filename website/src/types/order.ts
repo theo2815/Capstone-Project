@@ -17,6 +17,10 @@ export interface CartItem {
   eventSlug?: string;
   tone?: number;
   time?: string;
+  // false = the photographer is suspended (GET /me/cart?includeUnavailable=true); missing = available.
+  available?: boolean;
+  // The price when added (AA-R14): fixed at a guest add, from the server once signed in.
+  priceAtAdd?: number;
 }
 
 export interface Order {

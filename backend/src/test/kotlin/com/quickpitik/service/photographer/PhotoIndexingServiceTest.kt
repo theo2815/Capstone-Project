@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.SimpleTransactionStatus
@@ -33,6 +34,7 @@ import java.util.Optional
 import java.util.UUID
 import java.time.OffsetDateTime
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -56,6 +58,57 @@ class PhotoIndexingServiceTest {
 
         Mockito.verify(aiClient, Mockito.never()).facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId)
         assertEquals(setOf("old-person"), p.facePersons.map { it.aiPersonId }.toSet())
+        Mockito.verify(workFence, Mockito.never()).confirmPriorCleanup(anyArg())
+    }
+
+    @Test fun `a worker paused in prior cleanup cannot lose its claim to a replacement`() {
+        val p = photo(IndexingStatus.PARTIAL)
+        p.indexedProvider = "rekognition"
+        p.facePersons.add(PhotoFacePersonEmbed(0, "${p.eventId}.${p.id}", com.quickpitik.entity.FaceProvider.REKOGNITION))
+        expectPhoto(p)
+        var now = java.time.Instant.parse("2026-11-11T00:00:00Z")
+        val clock = Mockito.mock(java.time.Clock::class.java)
+        Mockito.`when`(clock.instant()).thenAnswer { now }
+        Mockito.`when`(clock.zone).thenReturn(java.time.ZoneOffset.UTC)
+        val output = Mockito.mock(com.quickpitik.repository.PhotoFaceWork::class.java)
+        Mockito.`when`(output.token).thenAnswer { p.indexingWorkToken }
+        Mockito.`when`(output.expiresAt).thenAnswer { p.indexingWorkExpiresAt!!.toInstant() }
+        Mockito.`when`(output.provider).thenReturn("rekognition")
+        var cleanupFinished: java.time.Instant? = null
+        Mockito.`when`(output.priorCleanupFinishedAt).thenAnswer { cleanupFinished }
+        Mockito.`when`(photoRepo.faceWorkForPhoto(p.eventId, p.id)).thenReturn(listOf(output))
+        Mockito.`when`(photoRepo.findAllByIdForUpdate(listOf(p.id))).thenReturn(listOf(p))
+        Mockito.`when`(photoRepo.claimWork(anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            p.indexingWorkToken = it.getArgument(2)
+            p.indexingWorkExpiresAt = it.getArgument(3)
+            1
+        }
+        Mockito.`when`(photoRepo.confirmPriorCleanup(anyArg(), anyArg())).thenAnswer {
+            cleanupFinished = it.getArgument<OffsetDateTime>(1).toInstant()
+            1
+        }
+        val realFence = com.quickpitik.service.photos.PhotoWorkFence(photoRepo,
+            com.quickpitik.config.StorageProperties(operationTimeout = java.time.Duration.ofSeconds(7)), props(),
+            AiProperties(AiProvider.REKOGNITION), com.quickpitik.config.RekognitionProperties(operationTimeout = java.time.Duration.ofSeconds(11)),
+            com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), clock)
+        val cleanup = Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java)
+        Mockito.doAnswer {
+            now = p.indexingWorkExpiresAt!!.toInstant().plusSeconds(45)
+            // A replacement here could finish, then this old cleanup would erase its fixed face identity.
+            kotlin.test.assertFalse(realFence.releaseEndedIndexing(p.id))
+            Unit
+        }.`when`(cleanup).erasePrior(p)
+        Mockito.`when`(storage.getBytes(p.s3Key)).thenAnswer {
+            kotlin.test.assertNotNull(cleanupFinished, "cleanup must be confirmed after it returns and before later work")
+            jpegBytes
+        }
+        val indexer = PhotoIndexingService(photoRepo, storage, aiClient, props(), AiProperties(AiProvider.REKOGNITION),
+            publisher, template(), SimpleMeterRegistry(), realFence, cleanup, faceExpiry, wordWriter)
+
+        indexer.index(p.id)
+
+        kotlin.test.assertNotNull(cleanupFinished)
+        Mockito.verify(aiClient, Mockito.never()).facesEnroll(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
     }
 
     @Test fun `new enrollment stores the provider with its face target`() {
@@ -76,6 +129,61 @@ class PhotoIndexingServiceTest {
         service.index(p.id)
         Mockito.verify(workFence, Mockito.never()).finish(anyArg())
         assertTrue(p.facePersons.isEmpty())
+    }
+
+    // ─── IX-W3b: a failed run frees a resolved claim and always costs one attempt ───
+
+    @Test fun `a failed outcome write releases the claim and records one attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(photoRepo.save(p)).thenThrow(DataIntegrityViolationException("value too long"))
+
+        assertFailsWith<DataIntegrityViolationException> { service.index(p.id) }
+
+        val order = Mockito.inOrder(photoRepo, workFence)
+        order.verify(photoRepo).failIndexingAttempt(p.id, "DataIntegrityViolationException", 5)
+        order.verify(workFence).finish(anyArg())
+    }
+
+    @Test fun `an unresolved enrolment whose write fails keeps its claim and records one attempt`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId))
+            .thenThrow(AiApiException(HttpStatus.SERVICE_UNAVAILABLE, null, "response lost"))
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(photoRepo.save(p)).thenThrow(DataIntegrityViolationException("value too long"))
+
+        assertFailsWith<DataIntegrityViolationException> { service.index(p.id) }
+
+        Mockito.verify(photoRepo).failIndexingAttempt(p.id, "DataIntegrityViolationException", 5)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+    }
+
+    @Test fun `an exception inside inference records one attempt and keeps the claim`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(faceExpiry.ended(p.eventId)).thenThrow(IllegalStateException("database down"))
+
+        assertFailsWith<IllegalStateException> { service.index(p.id) }
+
+        Mockito.verify(photoRepo).failIndexingAttempt(p.id, "IllegalStateException", 5)
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
+    }
+
+    @Test fun `when the attempt cannot be recorded the claim is kept`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+        Mockito.`when`(photoRepo.save(p)).thenThrow(DataIntegrityViolationException("value too long"))
+        Mockito.`when`(photoRepo.failIndexingAttempt(anyArg(), Mockito.anyString(), Mockito.anyInt()))
+            .thenThrow(IllegalStateException("database down"))
+
+        assertFailsWith<DataIntegrityViolationException> { service.index(p.id) }
+
+        Mockito.verify(workFence, Mockito.never()).finish(anyArg())
     }
 
     @Test fun `removal during enrollment prevents publishing its face and bib results`() {
@@ -102,7 +210,9 @@ class PhotoIndexingServiceTest {
     private lateinit var service: PhotoIndexingService
     private lateinit var workFence: com.quickpitik.service.photos.PhotoWorkFence
     private lateinit var faceErasure: com.quickpitik.service.photos.PhotoFaceErasureService
+    private lateinit var faceExpiry: com.quickpitik.service.events.EventFaceExpiry
     private fun <T> anyArg(): T = Mockito.any()
+    private val wordWriter = Mockito.mock(com.quickpitik.service.relevance.RelevanceWordWriter::class.java)
 
     // FF D8 FF → sniffed as image/jpeg by PhotoIndexingService.sniffContentType.
     private val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0x00)
@@ -136,9 +246,29 @@ class PhotoIndexingServiceTest {
         faceErasure = com.quickpitik.service.photos.PhotoFaceErasureService(photoRepo, aiClient,
             org.springframework.beans.factory.support.StaticListableBeanFactory().getBeanProvider(com.quickpitik.service.ai.RekognitionAiClient::class.java),
             props(), workFence, com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), template(), java.time.Clock.systemUTC())
+        faceExpiry = Mockito.mock(com.quickpitik.service.events.EventFaceExpiry::class.java)
         service = PhotoIndexingService(
             photoRepo, storage, aiClient, props(), AiProperties(AiProvider.AI_API), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
+            faceExpiry, wordWriter,
         )
+    }
+
+    @Test
+    fun `face search ended - no face cleanup or enroll, bibs still read so bib search keeps working`() {
+        val p = photo()
+        p.facePersons.add(PhotoFacePersonEmbed(0, "old-person"))
+        expectPhoto(p)
+        Mockito.`when`(faceExpiry.ended(p.eventId)).thenReturn(true)
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.92))))
+
+        service.index(p.id)
+
+        Mockito.verify(aiClient, Mockito.never()).facesEnroll(anyArg(), anyArg(), anyArg(), anyArg(), Mockito.isNull(), anyArg())
+        Mockito.verify(aiClient, Mockito.never()).erasePhotoFaces(anyArg(), anyArg())
+        Mockito.verify(aiClient, Mockito.never()).deleteFacesPerson(anyArg())
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        assertEquals(listOf("1234"), p.bibs.map { it.bibNumber })
+        assertTrue(p.facePersons.isEmpty())
     }
 
     private fun photo(status: IndexingStatus = IndexingStatus.PENDING): Photo =
@@ -270,6 +400,69 @@ class PhotoIndexingServiceTest {
         Mockito.`when`(aiClient.bibsRecognize(jpegBytes, "image/jpeg", "${p.id}.jpg")).thenReturn(result)
     }
 
+    // RV-1.2: the words of the text read go to the relevance writer only after the outcome has committed.
+    private fun indexer(manager: PlatformTransactionManager, writer: com.quickpitik.service.relevance.RelevanceWordWriter) =
+        PhotoIndexingService(photoRepo, storage, aiClient, props(), AiProperties(AiProvider.AI_API), publisher,
+            TransactionTemplate(manager), SimpleMeterRegistry(), workFence, faceErasure, faceExpiry, writer)
+
+    private fun manager() = Mockito.mock(PlatformTransactionManager::class.java).also {
+        Mockito.`when`(it.getTransaction(Mockito.any())).thenReturn(SimpleTransactionStatus())
+    }
+
+    @Test
+    fun `the words go to the writer after the outcome commits`() {
+        val p = photo().also { it.photographerId = UUID.randomUUID() }
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("1234", 0.92)), words = listOf("Cebu", "Marathon")))
+        val manager = manager()
+
+        indexer(manager, wordWriter).index(p.id)
+
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        val order = Mockito.inOrder(photoRepo, manager, wordWriter)
+        order.verify(photoRepo).save(p)
+        order.verify(manager).commit(anyArg())
+        order.verify(wordWriter).record(p.id, p.eventId, p.photographerId!!, listOf("Cebu", "Marathon"))
+    }
+
+    @Test
+    fun `a failed text read writes no words`() {
+        val p = photo().also { it.photographerId = UUID.randomUUID() }
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        Mockito.`when`(aiClient.bibsRecognize(jpegBytes, "image/jpeg", "${p.id}.jpg"))
+            .thenThrow(AiApiException(HttpStatus.BAD_GATEWAY, "AI_API_ERROR", "boom"))
+
+        indexer(manager(), wordWriter).index(p.id)
+
+        assertEquals(IndexingStatus.PARTIAL, p.indexingStatus)
+        Mockito.verifyNoInteractions(wordWriter)
+    }
+
+    @Test
+    fun `a writer failure does not undo or fail the indexing outcome`() {
+        val p = photo().also { it.photographerId = UUID.randomUUID() }
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(emptyList(), words = listOf("Cebu")))
+        val relevance = Mockito.mock(com.quickpitik.repository.BatchRelevanceRepository::class.java)
+        Mockito.`when`(relevance.ensureBatch(p.eventId, p.photographerId!!)).thenThrow(RuntimeException("db down"))
+        val writer = com.quickpitik.service.relevance.RelevanceWordWriter(relevance,
+            com.quickpitik.service.relevance.RelevanceSwitch(
+                com.quickpitik.config.RelevanceProperties(mode = com.quickpitik.config.RelevanceMode.RECORD_ONLY),
+                com.quickpitik.config.AdminProperties(), props()),
+            template(), java.time.Clock.systemUTC())
+        val manager = manager()
+
+        indexer(manager, writer).index(p.id)
+
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        Mockito.verify(photoRepo).save(p)
+        Mockito.verify(manager, Mockito.never()).rollback(anyArg())
+        Mockito.verify(relevance).ensureBatch(p.eventId, p.photographerId!!)
+    }
+
     @Test
     fun `both calls succeed - INDEXED with one face person and the bib`() {
         val p = photo()
@@ -287,6 +480,20 @@ class PhotoIndexingServiceTest {
         // V33 provider stamp — which ID space the stored person id belongs to.
         assertEquals("ai_api", p.indexedProvider)
         Mockito.verify(publisher).publishEvent(Mockito.any(PhotoIndexedEvent::class.java))
+    }
+
+    @Test
+    fun `indexing stores the enrolled face count`() {
+        val p = photo()
+        expectPhoto(p)
+        Mockito.`when`(
+            aiClient.facesEnroll(jpegBytes, "image/jpeg", "${p.id}.jpg", p.id.toString(), null, p.eventId),
+        ).thenReturn(FacesEnrollResult(person_id = "person-3", faces_enrolled = 3))
+        stubBibsReturns(p, BibsRecognizeResult(emptyList()))
+
+        service.index(p.id)
+
+        assertEquals(3.toShort(), p.faceCount)
     }
 
     @Test
@@ -436,6 +643,7 @@ class PhotoIndexingServiceTest {
         Mockito.`when`(photoRepo.findById(p.id)).thenReturn(Optional.of(p))
         val disabled = PhotoIndexingService(
             photoRepo, storage, aiClient, props(enabled = false), AiProperties(), publisher, template(), SimpleMeterRegistry(), workFence, faceErasure,
+            faceExpiry, wordWriter,
         )
 
         disabled.index(p.id)
@@ -506,5 +714,30 @@ class PhotoIndexingServiceTest {
         service.index(p.id)
 
         assertTrue(p.bibs.isEmpty())
+    }
+
+    @Test fun `a detected word longer than twenty characters is dropped and the real bib is kept`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("A".repeat(21), 0.95), BibDetection("1234", 0.92))))
+
+        service.index(p.id)
+
+        assertEquals(setOf("1234"), p.bibs.map { it.bibNumber }.toSet())
+        assertEquals(IndexingStatus.INDEXED, p.indexingStatus)
+        Mockito.verify(workFence, Mockito.times(1)).finish(anyArg())
+    }
+
+    // Guard: passes before and after the cap (only the empty-key filter existed before).
+    @Test fun `a twenty character word is kept`() {
+        val p = photo()
+        expectPhoto(p)
+        stubEnrollReturns(p, "person-1")
+        stubBibsReturns(p, BibsRecognizeResult(listOf(BibDetection("B".repeat(20), 0.95))))
+
+        service.index(p.id)
+
+        assertEquals(setOf("B".repeat(20)), p.bibs.map { it.bibNumber }.toSet())
     }
 }

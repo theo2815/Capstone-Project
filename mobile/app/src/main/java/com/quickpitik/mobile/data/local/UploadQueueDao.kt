@@ -35,6 +35,10 @@ interface UploadQueueDao {
 
     @Query("SELECT COALESCE(MAX(retryAfter), 0) FROM upload_queue WHERE photographerId = :owner AND uploadStatus = 'QUEUED'")
     suspend fun retryNotBefore(owner: String): Long
+
+    @Query("SELECT COALESCE(MAX(retryAfter), 0) FROM upload_queue WHERE photographerId = :owner AND uploadStatus = 'UPLOADING'")
+    fun observeBusyUntil(owner: String): Flow<Long>
+
     @Query("SELECT * FROM upload_queue WHERE photographerId = :owner AND eventId = :event AND contentHash = :hash AND localDeletedAt IS NULL AND (uploadStatus IN ('QUEUED', 'UPLOADING') OR (uploadStatus = 'COMPLETED' AND uploadedPhotoId IS NOT NULL)) LIMIT 1")
     suspend fun findContent(owner: String, event: String, hash: String): UploadRecord?
 

@@ -5,10 +5,12 @@ import com.quickpitik.config.AiProperties
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoBibEmbed
+import com.quickpitik.entity.MAX_BIB_LENGTH
 import com.quickpitik.entity.PhotoFacePersonEmbed
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiException
 import com.quickpitik.service.ai.FaceBibProvider
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.service.photos.PhotoWorkFence
 import com.quickpitik.service.photos.PhotoWorkClaim
@@ -16,6 +18,7 @@ import com.quickpitik.service.photos.PhotoWorkKind
 import com.quickpitik.entity.RemovalState
 import com.quickpitik.entity.FaceProvider
 import com.quickpitik.service.photos.PhotoFaceErasureService
+import com.quickpitik.service.relevance.RelevanceWordWriter
 import com.quickpitik.websocket.PhotoIndexedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -47,6 +50,8 @@ class PhotoIndexingService(
     private val meterRegistry: MeterRegistry,
     private val workFence: PhotoWorkFence,
     private val faceErasure: PhotoFaceErasureService,
+    private val eventFaceExpiry: EventFaceExpiry,
+    private val wordWriter: RelevanceWordWriter,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -72,13 +77,35 @@ class PhotoIndexingService(
             log.warn("Indexing {}: work claim not granted (another worker holds it); left for the sweep", photoId)
             return
         }
-        val outcome = runInference(photo, claim)
+        // Finish only with proof every remote write ended (PhotoWorkFence.finish): inference returned and
+        // the face call is resolved. Otherwise the claim is kept for reconciliation.
+        var resolved = false
+        try {
+            val outcome = runInference(photo, claim)
+            resolved = !outcome.facesUnresolved
 
-        // Phase C — short write transaction.
-        transactionTemplate.execute {
-            if (workFence.isCurrent(claim)) writeOutcome(photoId, outcome)
+            // Phase C — short write transaction.
+            val written = transactionTemplate.execute {
+                workFence.isCurrent(claim) && writeOutcome(photoId, outcome)
+            } == true
+            // RV-1.2: after the commit, so the words can never undo or fail the outcome.
+            if (written && outcome.bibsOk) {
+                photo.photographerId?.let { wordWriter.record(photoId, photo.eventId, it, outcome.words) }
+            }
+        } catch (ex: Exception) {
+            // The outcome's own attempt bump rolled back with it; record one here (class name only, never provider text).
+            try {
+                transactionTemplate.execute {
+                    photoRepository.failIndexingAttempt(photoId, ex.javaClass.simpleName, aiApiProperties.maxIndexingAttempts)
+                }
+            } catch (attemptEx: Exception) {
+                ex.addSuppressed(attemptEx)
+                resolved = false // no attempt counted: keep the claim so the sweep cannot loop on it
+            }
+            throw ex
+        } finally {
+            if (resolved) workFence.finish(claim)
         }
-        if (!outcome.facesUnresolved) workFence.finish(claim)
     }
 
     // Everything phase C needs to persist, produced without touching the
@@ -95,16 +122,29 @@ class PhotoIndexingService(
         val error: String? = null,
         val facesUnresolved: Boolean = false,
         val facesThrottled: Boolean = false,
+        val faceCount: Int? = null,
+        val words: List<String> = emptyList(),
     )
 
     private fun runInference(photo: Photo, claim: PhotoWorkClaim): InferenceOutcome {
-        try {
+        // Face templates deleted or past retention (EventFaceExpiry): no face
+        // cleanup or enroll (an enroll would re-create the deleted collection);
+        // bibs are still read so bib search keeps working.
+        // shortcut: an enroll that passed this check just before an admin deletes the event can
+        // re-create its collection seconds after the delete (faces_deleted_at is already set, so
+        // nothing deletes it again); re-check ended() after a successful enroll if admin deletes
+        // during uploads become common.
+        val facesEnded = eventFaceExpiry.ended(photo.eventId)
+        if (!facesEnded) try {
             faceErasure.erasePrior(photo)
         } catch (ex: AiApiException) {
             // No new writer was submitted. Keep prior IDs and retry budget;
             // required old-provider cleanup cannot be hidden by new enrollment.
             return InferenceOutcome(error = "Prior face cleanup unconfirmed", facesTransport = true, bibsTransport = true)
         }
+
+        // A released worker must never resume cleanup and erase a replacement's faces.
+        workFence.confirmPriorCleanup(claim)
 
         val bytes = try {
             storageService.getBytes(photo.s3Key)
@@ -132,16 +172,18 @@ class PhotoIndexingService(
         // any of them matches at search time. NO_FACES / LOW_QUALITY are benign —
         // the call ran, there was simply nothing usable to enroll.
         var personId: String? = null
+        var faceCount: Int? = null
         var facesOk = false
         var facesTransport = false
         var facesUnresolved = false
         var facesThrottled = false
         // A face write may start only while the claim is current, so its call deadline bounds when it ended.
-        if (!workFence.isCurrent(claim)) {
+        if (!facesEnded && !workFence.isCurrent(claim)) {
             log.warn("Indexing {}: work claim ended before enrollment; nothing written, left for the sweep", photo.id)
             return InferenceOutcome(error = "Indexing claim ended before enrollment", facesTransport = true, bibsTransport = true)
         }
-        try {
+        if (facesEnded) facesOk = true // nothing to enroll, like NO_FACES
+        else try {
             val enroll = meterRegistry.timer("qp.ai.call", "op", "enroll").recordCallable {
                 aiApiClient.facesEnroll(
                     file = inline,
@@ -153,6 +195,7 @@ class PhotoIndexingService(
                 )
             }!!
             personId = enroll.person_id
+            faceCount = enroll.faces_enrolled
             personId?.let { workFence.recordPerson(claim, it) }
             facesOk = true
         } catch (ex: AiApiException) {
@@ -176,6 +219,7 @@ class PhotoIndexingService(
         var bibs: Map<String, BigDecimal> = emptyMap()
         var bibsOk = false
         var bibsTransport = false
+        var words: List<String> = emptyList()
         try {
             val result = meterRegistry.timer("qp.ai.call", "op", "bib").recordCallable {
                 aiApiClient.bibsRecognize(inline, contentType, filename)
@@ -187,8 +231,9 @@ class PhotoIndexingService(
             bibs = result.detections
                 .filter { it.confidence >= aiApiProperties.bibConfidenceThresholdDefault }
                 .groupBy { it.bib_number.trim().uppercase() }
-                .filterKeys { it.isNotEmpty() }
+                .filterKeys { it.isNotEmpty() && it.length <= MAX_BIB_LENGTH }
                 .mapValues { (_, detections) -> BigDecimal.valueOf(detections.maxOf { it.confidence }) }
+            words = result.words
             bibsOk = true
         } catch (ex: Exception) {
             log.warn("Bib recognize failed for photo {}: {}", photo.id, ex.message)
@@ -206,6 +251,8 @@ class PhotoIndexingService(
             error = error,
             facesUnresolved = facesUnresolved,
             facesThrottled = facesThrottled,
+            faceCount = faceCount,
+            words = words,
         )
     }
 
@@ -219,15 +266,16 @@ class PhotoIndexingService(
         ).increment()
     }
 
-    private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome) {
-        val photo = photoRepository.findById(photoId).orElse(null) ?: return
-        if (photo.deletionStartedAt != null) return
-        if (photo.removalState != RemovalState.NONE) return
+    // True when this outcome was stored.
+    private fun writeOutcome(photoId: UUID, outcome: InferenceOutcome): Boolean {
+        val photo = photoRepository.findById(photoId).orElse(null) ?: return false
+        if (photo.deletionStartedAt != null) return false
+        if (photo.removalState != RemovalState.NONE) return false
         if (photo.indexingStatus == IndexingStatus.INDEXED ||
             photo.indexingStatus == IndexingStatus.SKIPPED
         ) {
             // The output ledger retains our result for shared cleanup.
-            return
+            return false
         }
 
         if (outcome.bytesUnavailable != null) {
@@ -239,7 +287,7 @@ class PhotoIndexingService(
             photo.indexedAt = null
             photoRepository.save(photo)
             recordOutcome("failed")
-            return
+            return true
         }
 
         if (!outcome.facesOk && !outcome.bibsOk && outcome.facesTransport && outcome.bibsTransport) {
@@ -253,7 +301,7 @@ class PhotoIndexingService(
             photoRepository.save(photo)
             recordOutcome("pending_transport")
             log.warn("Indexing {}: provider unreachable; back to PENDING, attempt not consumed", photoId)
-            return
+            return true
         }
 
         // A busy minute at AWS is not a bad photo: the PARTIAL (bibs kept) is re-driven by the sweep.
@@ -269,6 +317,7 @@ class PhotoIndexingService(
             photo.facePersons.add(PhotoFacePersonEmbed(faceIndex = 0, aiPersonId = it,
                 provider = FaceProvider.valueOf(aiProperties.provider.name)))
         }
+        photo.faceCount = outcome.faceCount?.toShort()
         outcome.bibs.forEach { (bibNumber, confidence) ->
             photo.bibs.add(PhotoBibEmbed(bibNumber = bibNumber, ocrConfidence = confidence))
         }
@@ -312,6 +361,7 @@ class PhotoIndexingService(
                 ),
             )
         }
+        return true
     }
 
     // ai-api validates by magic bytes, not Content-Type, but the multipart part

@@ -1,8 +1,10 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { api } from "@/lib/api";
+import { useAuthStore } from "@/store/auth-store";
+import type { User } from "@/types/user";
 import { adminEvent, eventRegions } from "@/test/fixtures/admin";
 import { AdminEventFormModal } from "./admin-event-form-modal";
 
@@ -93,4 +95,57 @@ it("preserves the dirty draft across refetch, resets on a fresh session, and own
   rerender({ open: false }); rerender({ open: true });
   await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Cebu Race"));
   expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Province: Cebu" })).toBeInTheDocument();
+});
+
+// AA-R16a: each photographer's price in a race, and the admin reset.
+it("reset needs a confirm and refreshes the list after the API answers", async () => {
+  const row = { photographerId: "p-1", name: "Paksit Photos", handle: "paksit", effectivePhp: 180, custom: true, priceChangedAt: "2026-11-10T02:00:00Z" };
+  const list = { floorPhp: 125, ceilingPhp: 250, prices: [row], history: [] };
+  vi.spyOn(api, "get").mockImplementation(async (path) =>
+    path === "/admin/events/event-1/photographer-prices" ? list : { selfServeEnabled: false, types: [] });
+  let answer!: (value: unknown) => void;
+  const post = vi.spyOn(api, "post").mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+  useAuthStore.setState({ isAuthenticated: true, user: { id: "admin-1", role: "ADMIN" } as User });
+  onTestFinished(() => useAuthStore.setState({ isAuthenticated: false, user: null }));
+  mount("edit", { ...adminEvent, eventType: "ROAD_RACE" });
+  expect(await screen.findByText("Paksit Photos")).toBeInTheDocument();
+  expect(screen.getByText("₱180.00")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Reset Paksit Photos" }));
+  expect(post).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Confirm reset" }));
+  expect(post).toHaveBeenCalledWith("/admin/events/event-1/photographer-prices/p-1/reset");
+  expect(screen.getByText("₱180.00")).toBeInTheDocument();
+  await act(async () => answer({ ...list, prices: [{ ...row, effectivePhp: 125, custom: false }] }));
+  expect(await screen.findByText("₱125.00")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reset Paksit Photos" })).not.toBeInTheDocument();
+});
+
+it("shows no price list on an untyped event", async () => {
+  const get = vi.spyOn(api, "get").mockResolvedValue({ selfServeEnabled: false, types: [] });
+  mount("edit");
+  await screen.findByLabelText("Title");
+  expect(screen.queryByText("Photographer prices")).not.toBeInTheDocument();
+  expect(get.mock.calls.some(([path]) => String(path).includes("photographer-prices"))).toBe(false);
+});
+
+// AA-R17b: a typed admin create checks for duplicates first.
+it("duplicate warning needs a second confirm", async () => {
+  const candidate = { id: "race-0", slug: "cebu-marathon", name: "Cebu Marathon", date: "2026-11-01", location: "SRP", regionCode: null, provinceCode: null, organizerName: "", eventType: "ROAD_RACE", bannerUrl: null, reviewStatus: "approved", strength: "strong" };
+  const raceTypes = { selfServeEnabled: false, types: [
+    { code: "ROAD_RACE", label: "Road race", hint: "5K to 42K", shared: true },
+    { code: "OTHER", label: "Other", hint: "Not a race", shared: false },
+  ] };
+  const get = vi.spyOn(api, "get").mockImplementation(async (path) => path === "/race-types" ? raceTypes : [candidate]);
+  const checks = () => get.mock.calls.filter(([path]) => String(path).startsWith("/admin/events/duplicate-candidates"));
+  const { submit } = mount("create", adminEvent);
+  await userEvent.click(await screen.findByRole("radio", { name: /^Road race/ }));
+  expect(screen.queryByRole("radio", { name: /^Other/ })).not.toBeInTheDocument();
+  fillCreate(); await pick("Region", eventRegions[0].name); await pick("Province", "Cebu");
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  expect(checks()).toEqual([["/admin/events/duplicate-candidates?name=Race&date=2026-11-01&provinceCode=cebu"]]);
+  expect(submit).not.toHaveBeenCalled();
+  expect(await screen.findByText(/Cebu Marathon/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Create anyway" }));
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ eventType: "ROAD_RACE", name: "Race" }));
+  expect(checks()).toHaveLength(1);
 });

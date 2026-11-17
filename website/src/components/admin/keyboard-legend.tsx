@@ -29,8 +29,8 @@ const ROWS: ShortcutRow[] = [
 // useAdminLegendShortcut) and by the bottom-right <KeyboardHintPill>.
 //
 // Verbs are scope-aware — pressing E/R/H/S inside a drawer only fires
-// when the queue has wired the verb (e.g. Approve runs in verifications
-// and pending payouts; Hide runs only inside an open flag drawer). The
+// when the queue has wired the verb (e.g. Approve runs in pending
+// payouts; Hide runs only inside an open flag drawer). The
 // modal copy makes that clear so users don't expect blanket coverage.
 export function KeyboardLegend() {
   const open = useAdminLegendStore((s) => s.open);

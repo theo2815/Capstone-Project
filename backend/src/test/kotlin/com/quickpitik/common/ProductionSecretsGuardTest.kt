@@ -18,11 +18,18 @@ class ProductionSecretsGuardTest {
         adminPassword: String = "a-strong-operator-password",
         storage: String = "S3",
         originSecret: String = "real-origin-secret",
+        idNumberSecret: String = "real-id-number-secret",
         paymongo: PaymongoProperties = PaymongoProperties(),
     ) = ProductionSecretsGuard(
         jwt, capability, seed, webhook, paymongoKey, paymongoWebhook, resend, adminPassword, storage, originSecret,
-        paymongo,
+        idNumberSecret, paymongo,
     )
+
+    @Test
+    fun `refuses the dev id-number secret under prod`() {
+        val ex = assertThrows(IllegalStateException::class.java) { guard(idNumberSecret = "dev-only-id-number-hmac-secret") }
+        assertEquals(true, "ID_NUMBER_HMAC_SECRET" in ex.message.orEmpty())
+    }
 
     @Test
     fun `boots when every secret is real and storage is S3`() {

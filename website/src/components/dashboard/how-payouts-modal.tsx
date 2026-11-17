@@ -221,6 +221,11 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
               <span className="text-ink">Withdraw request</span>, then submit a
               new one. Refunded sales reduce your next available balance.
             </p>
+            <p className="mt-3 font-sans text-sm md:text-base text-slate max-w-md">
+              Separately, if we are reviewing some of your uploads, all your
+              payouts can be put on hold until the review is finished.
+              You&apos;ll see a notice on this page and a message in your inbox.
+            </p>
           </section>
         </div>
       </div>

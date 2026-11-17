@@ -21,4 +21,8 @@ data class UserDto(
     val emailVerified: Boolean = false,
     val hasGoogleAuth: Boolean = false,
     val createdAt: OffsetDateTime,
+    // RV-L4 (P5): the version this user accepted, the server's current one, and whether a photographer must accept again.
+    val termsVersion: String? = null,
+    val legalCurrentVersion: String? = null,
+    val termsAcceptanceRequired: Boolean = false,
 )

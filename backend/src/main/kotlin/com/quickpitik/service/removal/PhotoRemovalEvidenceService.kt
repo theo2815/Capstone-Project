@@ -54,10 +54,13 @@ class PhotoRemovalEvidenceService(
 ) {
     fun replace(adminId: UUID, requestId: UUID, commandId: UUID, expectedVersion: Long, image: SearchImage): PhotoRemovalRequestDto {
         val hash = commandHash(mapper, listOf(expectedVersion.toString(), image.contentType, image.filename, hashBytes(image.bytes)))
-        val key = "photo-removal/$requestId/evidence/$commandId"
+        val key = recordedEvidenceKey(requestId, commandId)
         val replay = tx.execute {
             requireActiveAdmin(users, adminId)
             val request = requests.findForUpdate(requestId) ?: removalNotFound()
+            // A runner case's evidence is the live check's own image; an admin upload never replaces it.
+            if (request.source == RemovalRequestSource.RUNNER)
+                throw ApiException(HttpStatus.CONFLICT, ErrorCodes.CONFLICT, "A runner request keeps its live check image")
             commands.findByCommandId(commandId)?.let { return@execute it.replay(adminId, requestId, RemovalCommandOperation.REPLACE_EVIDENCE, hash, mapper) }
             transitions.ensureVersion(request, expectedVersion)
             if (request.status !in setOf(RemovalRequestStatus.DRAFT, RemovalRequestStatus.OPEN) ||
@@ -144,6 +147,21 @@ class PhotoRemovalEvidenceService(
         }
         outcome("write_confirmed")
         return result
+    }
+
+    companion object {
+        // Pure (no proxy, no transaction rule), so a caller can name the key inside its own transaction.
+        fun recordedEvidenceKey(requestId: UUID, commandId: UUID) = "photo-removal/$requestId/evidence/$commandId"
+    }
+
+    /** A runner submit's upload of the live check image. The caller recorded [key] on the case first. */
+    fun putSystemEvidence(key: String, image: SearchImage) {
+        try {
+            storage.put(key, image.bytes, image.contentType.lowercase())
+        } catch (error: Exception) {
+            outcome("write_unresolved")
+            throw unavailable()
+        }
     }
 
     fun stream(adminId: UUID, requestId: UUID): RemovalEvidenceStream {

@@ -181,6 +181,8 @@ export interface PhotographerSettings {
   /** Stable machine codes paired 1:1 with verificationMissing (e.g.
    *  "PROFILE_PHOTO"), for mapping a missing item to its settings section. */
   verificationMissingCodes: string[] | null;
+  /** Pending and held after an admin reset or reject: an admin must approve. */
+  verificationAwaitingAdmin: boolean;
   /** ISO timestamp when admin suspended the account, or null. Orthogonal
    *  to verificationStatus — suspended takes priority for gating + banners. */
   suspendedAt: string | null;
@@ -205,6 +207,7 @@ interface PhotographerSettingsState extends PhotographerSettings {
   setHandle: (handle: string) => void;
   setVerificationStatus: (status: VerificationStatus) => void;
   setVerificationMissing: (missing: string[], codes: string[]) => void;
+  setVerificationAwaitingAdmin: (awaiting: boolean) => void;
   setSuspension: (suspendedAt: string | null, reason: string | null) => void;
   setRegion: (region: PhotographerRegion | null) => void;
   addSocial: (platform: SocialPlatform, url: string) => string;
@@ -237,6 +240,7 @@ const SEED: PhotographerSettings = {
   verificationStatus: "incomplete",
   verificationMissing: null,
   verificationMissingCodes: null,
+  verificationAwaitingAdmin: false,
   suspendedAt: null,
   suspensionReason: null,
   region: null,
@@ -280,6 +284,8 @@ export const usePhotographerSettingsStore = create<PhotographerSettingsState>()(
         set({ verificationStatus }),
       setVerificationMissing: (verificationMissing, verificationMissingCodes) =>
         set({ verificationMissing, verificationMissingCodes }),
+      setVerificationAwaitingAdmin: (verificationAwaitingAdmin) =>
+        set({ verificationAwaitingAdmin }),
       setSuspension: (suspendedAt, suspensionReason) =>
         set({ suspendedAt, suspensionReason }),
       setRegion: (region) => set({ region }),

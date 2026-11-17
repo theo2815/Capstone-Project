@@ -28,6 +28,7 @@ import com.quickpitik.repository.PhotographerCouponRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.photographer.PhotographerAccessGuard
+import com.quickpitik.service.photos.PhotographerSuspension
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -59,6 +60,7 @@ class CouponServiceTest {
     private lateinit var settingsRepository: PhotographerSettingsRepository
     private lateinit var userRepository: UserRepository
     private lateinit var service: CouponService
+    private val suspension: PhotographerSuspension = Mockito.mock(PhotographerSuspension::class.java)
 
     @BeforeEach
     fun setUp() {
@@ -94,6 +96,7 @@ class CouponServiceTest {
             eventPhotographerRepository,
             orderRepository,
             PhotographerAccessGuard(userRepository, settingsRepository),
+            suspension,
         )
     }
 
@@ -351,6 +354,41 @@ class CouponServiceTest {
 
         assertEquals(emptyMap(), resolved)
         Mockito.verify(couponRepository).findActiveByEventIdInForUpdate(setOf(otherEventId))
+    }
+
+    @Test
+    fun `preview leaves out a suspended photographer's photo`() {
+        val thirdPhotographerId = UUID.randomUUID()
+        val a1 = photo(photographerId, "125.00")
+        val c1 = photo(thirdPhotographerId, "150.00")
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(a1, c1))
+        Mockito.`when`(couponRepository.findLiveForEvent(eqArg(eventId), anyArg(), anyArg()))
+            .thenReturn(listOf(coupon(code = "AAAA"), coupon(code = "CCCC", owner = thirdPhotographerId)))
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(thirdPhotographerId))
+
+        val preview = service.preview(CouponPreviewRequest(code = null, photoIds = listOf(a1.id, c1.id)))
+
+        assertEquals(listOf(a1.id), preview.items.map { it.photoId })
+        assertEquals(1, preview.eligibleCount)
+    }
+
+    // AA-R14: a guest cart reads each photo's own price, coupon or not.
+    @Test
+    fun `preview lists live prices without a code`() {
+        val suspendedOwner = UUID.randomUUID()
+        val mine = photo(photographerId, "125.00")
+        val raised = photo(otherPhotographerId, "180.00")
+        val offSale = photo(suspendedOwner, "150.00")
+        Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(listOf(mine, raised, offSale))
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(suspendedOwner))
+
+        val preview = service.preview(CouponPreviewRequest(code = null, photoIds = listOf(mine.id, raised.id, offSale.id)))
+
+        assertEquals(emptyList(), preview.items)
+        assertEquals(
+            mapOf(mine.id to BigDecimal("125.00"), raised.id to BigDecimal("180.00")),
+            preview.livePrices.associate { it.photoId to it.price },
+        )
     }
 
     @Test

@@ -2,17 +2,23 @@ package com.quickpitik.service.profile
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.auth.UserDto
+import com.quickpitik.entity.Role
 import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.SystemFlagService
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ProfileImageModeration
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -34,9 +40,14 @@ class AvatarService(
     private val userRepository: UserRepository,
     private val storageService: StorageService,
     private val userDtoMapper: UserDtoMapper,
+    private val imageModerationService: ImageModerationService,
+    private val systemFlagService: SystemFlagService,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    // No transaction: the moderation call (AWS) runs first; the store runs in its own template.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun upload(userId: UUID, file: ByteArray, contentType: String?): UserDto {
         if (file.isEmpty()) {
             throw ValidationException(
@@ -77,19 +88,30 @@ class AvatarService(
             )
         }
         val processed = centerCropToJpeg(file)
-        val user = userRepository.findById(userId).orElseThrow {
-            UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
+        // Runner avatars are not shown publicly, so only photographers' are moderated (owner question N5).
+        val verdict = if (findUser(userId).role == Role.PHOTOGRAPHER) {
+            ProfileImageModeration.checkOrRefuse(imageModerationService, systemFlagService, userId, "avatar", processed)
+        } else {
+            null
         }
-        val previousKey = user.avatarS3Key
-        val newKey = "avatars/$userId/${UUID.randomUUID()}.jpg"
-        storageService.put(newKey, processed, "image/jpeg")
-        user.avatarS3Key = newKey
-        userRepository.save(user)
-        if (previousKey != null && previousKey != newKey) {
-            runCatching { storageService.delete(previousKey) }
-                .onFailure { log.warn("avatar delete of previous key {} failed: {}", previousKey, it.message) }
-        }
-        return userDtoMapper.toDto(user)
+        return transactionTemplate.execute {
+            val user = findUser(userId)
+            val previousKey = user.avatarS3Key
+            val newKey = "avatars/$userId/${UUID.randomUUID()}.jpg"
+            storageService.put(newKey, processed, "image/jpeg")
+            user.avatarS3Key = newKey
+            userRepository.save(user)
+            ProfileImageModeration.flagIfUnchecked(systemFlagService, verdict, userId, "avatar")
+            if (previousKey != null && previousKey != newKey) {
+                runCatching { storageService.delete(previousKey) }
+                    .onFailure { log.warn("avatar delete of previous key {} failed: {}", previousKey, it.message) }
+            }
+            userDtoMapper.toDto(user)
+        }!!
+    }
+
+    private fun findUser(userId: UUID) = userRepository.findById(userId).orElseThrow {
+        UnauthorizedException(code = ErrorCodes.UNAUTHORIZED, message = "User not found")
     }
 
     fun delete(userId: UUID): UserDto {

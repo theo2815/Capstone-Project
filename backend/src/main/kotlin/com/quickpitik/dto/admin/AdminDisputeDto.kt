@@ -71,6 +71,36 @@ data class AdminDisputeDto(
     // open disputes (no admin action yet) or disputes closed before the
     // decision log went live.
     val activity: List<DisputeActivityEntry> = emptyList(),
+    // When the refund was approved (null until then).
+    val refundRequestedAt: String? = null,
+    // What the dispute needs from an admin now and by when (service/admin/DisputeAttention.kt):
+    // closed | refund_in_progress | send_link | awaiting_claim | link_expired | check_paymongo |
+    // refund_problem | escalated | review. Worked out when read, not stored.
+    val attention: String = "closed",
+    val dueAt: String? = null,
+    val overdue: Boolean = false,
+    val linkExpiringSoon: Boolean = false,
+    // Whether a full refund can be approved now, and if not why (bought_together | window_closed | no_payment)
+    // with the admin text `prepare` would refuse with. paymentPhotoCount: photos the PayMongo payment covers.
+    // All null once a refund is under way or the dispute is closed; a failed refund can be tried again, so it is filled.
+    val refundable: Boolean? = null,
+    val refundBlockedReason: String? = null,
+    val refundBlockedMessage: String? = null,
+    val paymentPhotoCount: Int? = null,
+    // Downloads started for this photo on this order (null when there is no grant, for example after a full refund).
+    val downloadCount: Int? = null,
+    val lastDownloadedAt: String? = null,
+    // The runner's other requests, this one left out; null only when the runner's account was deleted.
+    val runnerHistory: RunnerDisputeHistoryDto? = null,
+)
+
+// Counted per request (dispute row): refunded = resolved, open = open or escalated.
+data class RunnerDisputeHistoryDto(
+    val total: Int,
+    val refunded: Int,
+    val denied: Int,
+    val withdrawn: Int,
+    val open: Int,
 )
 
 // POST /admin/disputes/{id}/resolve — body { resolution, refundAmount?, reason }.
@@ -90,14 +120,30 @@ data class SendRefundLinkRequest(
     val url: String,
 )
 
-// POST /admin/disputes/{id}/deny — body { reason }.
+// POST /admin/disputes/{id}/mark-refunded - body { refundReference }, the PayMongo refund ID pasted from the dashboard.
+// Not validated here: the service trims it first, so the checks live there.
+data class MarkRefundedRequest(val refundReference: String? = null)
+
+// POST /admin/disputes/{id}/deny — body { reasonCode, note? } or the legacy { reason }.
 //
 // `reason` is shown to the runner: verbatim in the inbox message body, and as
 // `RunnerDisputeDto.resolutionNote` in the /orders refund timeline. Write it
-// for the customer. See the KDoc on AdminDisputeService.deny.
+// for the customer. See the KDoc on AdminDisputeService.deny. A `reasonCode`
+// (GET /admin/disputes/deny-reasons) is stored as its runner text, plus the note.
 data class DenyDisputeRequest(
     @field:Size(max = 500)
     val reason: String? = null,
+    val reasonCode: String? = null,
+    @field:Size(max = 280)
+    val note: String? = null,
+)
+
+// GET /admin/disputes/deny-reasons — one row per DisputeDenyReason.
+data class DisputeDenyReasonDto(
+    val code: String,
+    val label: String,
+    val runnerText: String,
+    val noteRequired: Boolean,
 )
 
 // POST /admin/disputes/{id}/escalate — body { reason }.

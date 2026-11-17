@@ -104,6 +104,7 @@ import com.quickpitik.mobile.ui.photographer.StudioEarningsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioInboxLifecycle
 import com.quickpitik.mobile.ui.photographer.StudioSettingsViewModel
 import com.quickpitik.mobile.ui.photographer.StudioTabScaffold
+import com.quickpitik.mobile.ui.photographer.TermsAcceptanceViewModel
 import com.quickpitik.mobile.ui.photographer.StudioTheme
 import com.quickpitik.mobile.ui.photographer.TetherViewModel
 import com.quickpitik.mobile.ui.photographer.VerificationUiState
@@ -686,6 +687,7 @@ class MainActivity : ComponentActivity() {
                                         settingsViewModel = settingsVm,
                                         tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
+                                        termsViewModel = studioTermsViewModel(navController, entry),
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
@@ -706,6 +708,7 @@ class MainActivity : ComponentActivity() {
                                         settingsViewModel = studioSettingsViewModel(navController, entry),
                                         tetherViewModel = tetherVm,
                                         onLogout = studioLogout,
+                                        termsViewModel = studioTermsViewModel(navController, entry),
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
@@ -723,6 +726,7 @@ class MainActivity : ComponentActivity() {
                                         settingsViewModel = studioSettingsViewModel(navController, entry),
                                         tetherViewModel = tetherVm,
                                         onLogout = studioLogout,
+                                        termsViewModel = studioTermsViewModel(navController, entry),
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
@@ -752,6 +756,7 @@ class MainActivity : ComponentActivity() {
                                         settingsViewModel = studioSettingsViewModel(navController, entry),
                                         tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
+                                        termsViewModel = studioTermsViewModel(navController, entry),
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
@@ -771,6 +776,7 @@ class MainActivity : ComponentActivity() {
                                         settingsViewModel = settingsVm,
                                         tetherViewModel = studioTetherViewModel(navController, entry),
                                         onLogout = studioLogout,
+                                        termsViewModel = studioTermsViewModel(navController, entry),
                                         onPreviewProfile = openProfilePreview,
                                         onSwitchToRunner = switchToRunnerView,
                                     ) {
@@ -815,9 +821,12 @@ class MainActivity : ComponentActivity() {
                                 ) { entry ->
                                     val vm = studioViewModel(navController, entry)
                                     val eventId = entry.arguments?.getString("eventId")
+                                    val settingsVm = studioSettingsViewModel(navController, entry)
+                                    val regions by settingsVm.regions.collectAsState()
                                     StudioTheme {
                                         PhotographerEventFormScreen(
                                             viewModel = vm,
+                                            regions = regions,
                                             eventId = eventId,
                                             onBack = { navController.popBackStack() },
                                             onSaved = { navController.popBackStack() },
@@ -1247,6 +1256,12 @@ private fun studioSettingsViewModel(
     navController: NavHostController,
     entry: NavBackStackEntry,
 ): StudioSettingsViewModel = viewModel(studioGraphEntry(navController, entry))
+
+@Composable
+private fun studioTermsViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+): TermsAcceptanceViewModel = viewModel(studioGraphEntry(navController, entry))
 
 @Composable
 private fun studioEarningsViewModel(

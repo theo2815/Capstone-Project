@@ -91,7 +91,7 @@ class PhotoErasureLegacyFaceIntegrationTest : PostgresIntegrationTest() {
             AiApiProperties(enabled = true), fence, json, tx, Clock.systemUTC())
         eraser = PhotoErasureService(photos, jobs, intents, items, orderItems, grants, coverage, events, metadata,
             storage, faceEraser, removalProperties, storageProperties, tx, json, Clock.systemUTC(),
-            io.micrometer.core.instrument.simple.SimpleMeterRegistry())
+            io.micrometer.core.instrument.simple.SimpleMeterRegistry(), Mockito.mock(com.quickpitik.repository.BatchRelevanceRepository::class.java))
     }
 
     private fun privacy(): PhotoErasureCommand {

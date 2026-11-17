@@ -1,0 +1,43 @@
+# English words refused in a photographer's brand name, handle or bio (WordList.BAD_WORDS).
+# One entry per line; matched as whole words, any case, accents ignored. A multi-word
+# entry matches those words in a row. Leave out words with an innocent common meaning
+# (e.g. "animal", "cock", "cum", "prick") or that are also names ("dick").
+fuck
+fucking
+fucked
+fucker
+motherfucker
+fck
+shit
+bullshit
+bitch
+bitches
+bastard
+asshole
+dickhead
+cunt
+pussy
+slut
+whore
+porn
+porno
+pornhub
+xxx
+nigger
+nigga
+faggot
+fag
+retard
+rape
+rapist
+wank
+wanker
+twat
+bollocks
+jizz
+dildo
+blowjob
+handjob
+tits
+boobs
+nudes

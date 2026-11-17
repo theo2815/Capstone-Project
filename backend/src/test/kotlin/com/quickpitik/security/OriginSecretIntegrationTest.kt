@@ -32,6 +32,7 @@ import kotlin.test.assertEquals
         "app.storage.secret-key=test-secret-key",
         "app.cors.allowed-origins=https://quickpitik.com",
         "app.security.origin-secret=test-origin-secret-0123456789abcdef",
+        "app.identity.id-number-hmac-secret=test-id-number-hmac-secret-0123456789abcdef",
     ],
 )
 @ActiveProfiles(profiles = ["prod"], inheritProfiles = false)

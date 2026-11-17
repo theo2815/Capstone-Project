@@ -141,6 +141,13 @@ const PAGE_SEEDS: ReadonlyArray<PageSeed> = [
     keywords: ["inbox", "approve", "hold", "pay"],
   },
   {
+    id: "page:relevance",
+    title: "Photo Relevance",
+    subtitle: "Batch checks · junk, wrong event, copied photos",
+    route: ROUTES.ADMIN_RELEVANCE,
+    keywords: ["relevance", "junk", "blurry", "copied", "wrong event", "alerts"],
+  },
+  {
     id: "page:photographers",
     title: "Photographers",
     subtitle: "Directory · all profiles by status",

@@ -28,7 +28,8 @@ class EventPhotoAlertService(
 ) {
     @Transactional
     fun register(userId: UUID, slug: String, selfieIdRaw: String?): PhotoAlertStatusDto {
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+        // A DRAFT event is not public (same lookup as its page), so 404 rather than 422.
+        val event = eventRepository.findPublicBySlug(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
 
         val today = LocalDate.now(PH_ZONE)
@@ -56,6 +57,7 @@ class EventPhotoAlertService(
 
     @Transactional
     fun optOut(userId: UUID, slug: String): Boolean {
+        // Not findPublicBySlug: withdrawing must work even if the event went back to draft.
         val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         return alertRepository.deleteByEventIdAndUserId(event.id, userId) > 0
@@ -63,7 +65,7 @@ class EventPhotoAlertService(
 
     @Transactional(readOnly = true)
     fun status(userId: UUID, slug: String): PhotoAlertStatusDto {
-        val event = eventRepository.findBySlugAndDeletedAtIsNull(slug)
+        val event = eventRepository.findPublicBySlug(slug)
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
         val alert = alertRepository.findByEventIdAndUserId(event.id, userId)
         return PhotoAlertStatusDto(registered = alert != null, selfieId = alert?.selfieId)

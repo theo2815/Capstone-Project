@@ -1,6 +1,7 @@
 package com.quickpitik.support
 
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.LegalProperties
 import com.quickpitik.dto.auth.GoogleLoginRequest
 import com.quickpitik.dto.auth.LoginRequest
 import com.quickpitik.dto.auth.RegisterRequest
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.test.context.TestPropertySource
@@ -35,6 +37,8 @@ class GoogleAccountIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var users: UserRepository
     @Autowired private lateinit var passwords: PasswordResetService
     @Autowired private lateinit var profile: ProfileService
+    @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var legal: LegalProperties
     @MockitoBean private lateinit var googleJwtDecoder: JwtDecoder
     @MockitoBean private lateinit var emailService: EmailService
 
@@ -76,5 +80,27 @@ class GoogleAccountIntegrationTest : PostgresIntegrationTest() {
         assertFailsWith<UnauthorizedException> {
             profile.changePassword(account.id, PasswordChangeRequest(null, "session-only-replacement-2026"))
         }
+    }
+
+    // Proves V91's columns and the entity mapping against real Postgres.
+    @Test
+    fun `new Google account with termsAccepted stores the configured terms version`() {
+        val email = "terms-${UUID.randomUUID()}@test.local"
+        Mockito.`when`(googleJwtDecoder.decode("terms-token")).thenReturn(
+            Jwt.withTokenValue("terms-token")
+                .header("alg", "RS256")
+                .subject(UUID.randomUUID().toString())
+                .claim("email", email)
+                .claim("email_verified", true)
+                .issuedAt(Instant.now())
+                .expiresAt(Instant.now().plusSeconds(300))
+                .build(),
+        )
+
+        val id = googleAuth.login(GoogleLoginRequest("terms-token", Role.RUNNER, termsAccepted = true)).user.id
+
+        val row = jdbc.queryForMap("SELECT terms_version, terms_accepted_at FROM users WHERE id = ?", id)
+        assertEquals(legal.currentVersion, row["terms_version"])
+        assertNotNull(row["terms_accepted_at"])
     }
 }

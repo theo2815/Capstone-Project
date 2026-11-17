@@ -5,6 +5,7 @@ import com.quickpitik.dto.auth.UserDto
 import com.quickpitik.dto.profile.EmailChangeRequest
 import com.quickpitik.dto.profile.PasswordChangeRequest
 import com.quickpitik.dto.profile.ProfileUpdateRequest
+import com.quickpitik.dto.profile.TermsAcceptanceRequest
 import com.quickpitik.security.AuthPrincipal
 import com.quickpitik.service.profile.EmailChangeService
 import com.quickpitik.service.profile.ProfileService
@@ -13,6 +14,7 @@ import com.quickpitik.service.ratelimit.RateLimiter
 import com.quickpitik.service.ratelimit.acquireOrThrow
 import jakarta.validation.Valid
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -30,6 +32,13 @@ class MeProfileController(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @Valid @RequestBody body: ProfileUpdateRequest,
     ): UserDto = profileService.updateName(principal.userId, body)
+
+    // RV-L4 (plan 5.14): any signed-in user accepts the current Terms; 409 CONSENT_VERSION_MISMATCH on another version.
+    @PostMapping("/terms-acceptance")
+    fun acceptTerms(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody body: TermsAcceptanceRequest,
+    ): UserDto = profileService.acceptTerms(principal.userId, body.version!!)
 
     @PutMapping("/password")
     fun changePassword(

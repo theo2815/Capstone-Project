@@ -2,6 +2,7 @@ package com.quickpitik.mobile.ui.photographer
 
 import android.app.Application
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithText
@@ -41,6 +42,7 @@ class PhotographerEarningsScreenTest {
     private lateinit var purchases: PhotographerPurchasesViewModel
     private var ledgerData = """{"items":[],"total":0,"offset":0,"limit":50,"monthTotals":{}}"""
     private var pagedHistory = false
+    private var balanceJson = """{"unpaidBalance":0.0,"clearing":0.0,"reserved":0.0,"accountCooldownUntil":null,"minimum":100.0,"hasOpenRequest":false,"openRequest":null,"primaryAccount":null}"""
     private val purchaseCalls = AtomicInteger()
 
     @Before fun setUp() {
@@ -50,7 +52,7 @@ class PhotographerEarningsScreenTest {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
                 request.path.orEmpty().contains("earnings/per-event") -> ok("""{"items":[{"eventId":"event-zero","eventName":"Free Run","eventDate":"2026-10-01","deletedAt":null,"photoCount":1,"salesCount":0,"purchaseCount":1,"revenueKept":0.0}],"total":1,"offset":0,"limit":10}""")
                 request.path.orEmpty().endsWith("/earnings") -> ok("""{"lifetimeKept":0.0,"thisWeek":0.0,"thisMonth":0.0,"payoutPending":0.0,"payoutScheduledFor":null,"weeklySeries":[],"thisWeekSold":0,"thisMonthSold":0}""")
-                request.path.orEmpty().contains("payouts/balance") -> ok("""{"unpaidBalance":0.0,"clearing":0.0,"reserved":0.0,"accountCooldownUntil":null,"minimum":100.0,"hasOpenRequest":false,"openRequest":null,"primaryAccount":null}""")
+                request.path.orEmpty().contains("payouts/balance") -> ok(balanceJson)
                 request.path.orEmpty().contains("billing/transactions") -> ok(ledgerData)
                 request.path.orEmpty().contains("/photos/photo-a/purchases") -> {
                     purchaseCalls.incrementAndGet()
@@ -105,6 +107,21 @@ class PhotographerEarningsScreenTest {
                 }
                 if (!offline) onNodeWithText("Buyer 1 · ORDER-1").performSemanticsAction(SemanticsActions.OnClick)
             }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun `a hold shows the on-hold banner and disables the request button`() {
+        // Own fixture: an account with a QR and a balance above the minimum, so only the hold can disable Request.
+        balanceJson = """{"unpaidBalance":500.0,"clearing":0.0,"reserved":0.0,"accountCooldownUntil":null,"minimum":100.0,"hasOpenRequest":false,"openRequest":null,"primaryAccount":{"method":"gcash","accountNumber":"09170000000","accountName":"Test","hasQr":true},"payoutHoldReason":"UPLOAD_REVIEW"}"""
+        earnings.fetchEarningsAndTransactions()
+        earnings.earningsUiState.awaitFirst { it is EarningsUiState.Success }
+        runComposeUiTest {
+            setContent { PhotographerEarningsScreen(dashboard, earnings, purchases, onOpenEvent = {}) }
+            onNode(hasScrollAction()).performScrollToNode(hasText("PAYOUTS ON HOLD"))
+            onNodeWithText("PAYOUTS ON HOLD").assertExists()
+            onNodeWithText("On hold while we review some of your uploads.").assertExists()
+            onNodeWithText("Request payout to GCash").assertIsNotEnabled()
         }
     }
 

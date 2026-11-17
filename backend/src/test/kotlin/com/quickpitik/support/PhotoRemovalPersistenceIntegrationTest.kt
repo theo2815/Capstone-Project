@@ -40,6 +40,8 @@ class PhotoRemovalPersistenceIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var jdbc: JdbcTemplate
     @Autowired lateinit var tx: TransactionTemplate
     @Autowired lateinit var dataSource: DataSource
+    @Autowired lateinit var removals: PhotoRemovalService
+    @Autowired lateinit var evidence: PhotoRemovalEvidenceService
     @MockitoBean lateinit var storage: StorageService
     @MockitoBean lateinit var provider: AiApiClient
     private val now = Instant.parse("2026-10-05T00:00:00Z")
@@ -313,5 +315,54 @@ class PhotoRemovalPersistenceIntegrationTest : PostgresIntegrationTest() {
                 assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM $schema.photo_removal_$table", Int::class.java))
             }
         } finally { jdbc.execute("DROP SCHEMA IF EXISTS $schema CASCADE") }
+    }
+
+    // RD-4: a runner submit stores its evidence key before the upload, so a crash at any step leaves no untracked image.
+    private fun runner() = users.saveAndFlush(User(email = "runner-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+        name = "Runner", role = Role.RUNNER, emailVerifiedAt = java.time.OffsetDateTime.now()))
+
+    @Test fun `a failure after the upload leaves the key tracked and the sweep deletes it`() {
+        val draft = removals.openRunner(runner(), event)
+        assertEquals(listOf(draft.evidenceKey), requests.findById(draft.requestId).orElseThrow().outstandingEvidenceKeys)
+        jdbc.update("UPDATE photo_removal_requests SET evidence_cleanup_next_attempt_at = now() - interval '1 minute' WHERE id = ?", draft.requestId)
+        evidence.retryEvidenceCleanup()
+        org.mockito.Mockito.verify(storage).delete(draft.evidenceKey)
+        val case = requests.findById(draft.requestId).orElseThrow()
+        assertEquals(emptyList<String>(), case.outstandingEvidenceKeys)
+        assertEquals(RemovalRequestStatus.DRAFT, case.status)
+    }
+
+    @Test fun `a key the sweep already deleted is never installed`() {
+        val draft = removals.openRunner(runner(), event)
+        evidence.purgeResolvedEvidence(draft.requestId)
+        assertEquals(emptyList<String>(), requests.findById(draft.requestId).orElseThrow().outstandingEvidenceKeys)
+        removals.completeRunnerCase(draft.requestId, matched(photo to 0.95))
+        val case = requests.findById(draft.requestId).orElseThrow()
+        assertNull(case.evidenceKey)
+        assertEquals(listOf(draft.evidenceKey), case.outstandingEvidenceKeys)
+        assertEquals(RemovalEvidenceCleanupState.PENDING, case.evidenceCleanupState)
+    }
+
+    @Test fun `a second open request for the same event answers REMOVAL_REQUEST_OPEN`() {
+        val person = runner()
+        removals.openRunner(person, event)
+        val error = assertFailsWith<ApiException> { removals.openRunner(person, event) }
+        assertEquals("REMOVAL_REQUEST_OPEN", error.code)
+    }
+
+    @Test fun `a withdraw or admin cancel before matching finishes hides nothing and purges the image`() {
+        val admin = users.saveAndFlush(User(email = "admin-${UUID.randomUUID()}@test.local", passwordHash = "unused",
+            name = "Admin", role = Role.ADMIN))
+        val draft = removals.openRunner(runner(), event)
+        val version = requests.findById(draft.requestId).orElseThrow().version
+        removals.cancel(admin.id, draft.requestId, com.quickpitik.dto.removal.CancelRemovalCommand(UUID.randomUUID(), version, "Duplicate"))
+        val result = removals.completeRunnerCase(draft.requestId, matched(photo to 0.999))
+        assertEquals(0 to 0, result.hiddenCount to result.suggestedCount)
+        assertEquals(emptyList(), items.findByRequestIdOrderByIdAsc(draft.requestId))
+        assertEquals(RemovalState.NONE, photos.findById(photo.id).orElseThrow().removalState)
+        val case = requests.findById(draft.requestId).orElseThrow()
+        assertNull(case.evidenceKey)
+        assertEquals(emptyList<String>(), case.outstandingEvidenceKeys)
+        org.mockito.Mockito.verify(storage, org.mockito.Mockito.atLeastOnce()).delete(draft.evidenceKey)
     }
 }

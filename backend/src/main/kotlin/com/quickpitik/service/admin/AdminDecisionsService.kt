@@ -27,7 +27,7 @@ class AdminDecisionsService(
             .associate { it.id to it.name.ifBlank { it.email } }
         val items = rows.map {
             val (type, id) = target(it)
-            it.toDto(type, id, it.targetUserId?.let(names::get), names[it.adminId])
+            it.toDto(type, id, it.targetUserId?.let(names::get), it.adminId?.let(names::get))
         }
         return PaginatedResponse(items, total, 0, size)
     }

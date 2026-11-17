@@ -34,6 +34,7 @@ import com.quickpitik.service.earnings.TransactionMintingService
 import com.quickpitik.service.runner.RunnerMessagesService
 import org.slf4j.LoggerFactory
 import org.springframework.context.ApplicationEventPublisher
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.PageRequest
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -142,21 +143,55 @@ class PaymongoRefundService(
     }
 
     // PayMongo's dashboard shows the parked payment as Refunded: finish it like an API refund that succeeded.
-    // A second click finds it already completed and changes nothing. The log row names the admin who clicked.
-    fun markRefunded(adminId: UUID, disputeId: UUID) {
-        transactionTemplate.executeWithoutResult {
-            val dispute = disputeRepository.findByIdForUpdate(disputeId)
-                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
-            if (isCompletedRefund(dispute)) return@executeWithoutResult
-            if (dispute.refundStatus != MANUAL_REVIEW) {
-                throw checkoutConflict("This dispute is not waiting for a manual refund.")
+    // The admin pastes the dashboard's refund reference; it is stored as provider_refund_id (unique) so one PayMongo
+    // refund cannot close two disputes. A second click with the same reference finds it completed and changes nothing.
+    // The log row names the admin who clicked.
+    fun markRefunded(adminId: UUID, disputeId: UUID, refundReference: String?) {
+        val reference = validRefundReference(refundReference)
+        try {
+            transactionTemplate.executeWithoutResult {
+                val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                    ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+                val stored = dispute.providerRefundId
+                if (stored != null && stored != reference) {
+                    throw checkoutConflict("This refund already has PayMongo reference $stored.")
+                }
+                if (isCompletedRefund(dispute)) return@executeWithoutResult
+                if (dispute.refundStatus != MANUAL_REVIEW) {
+                    throw checkoutConflict("This dispute is not waiting for a manual refund.")
+                }
+                if (dispute.resolution == null || dispute.refundAmountPhp == null) {
+                    throw checkoutConflict("This dispute has no approved refund amount.")
+                }
+                if (disputeRepository.findByProviderRefundId(reference) != null) throw referenceTaken()
+                dispute.providerRefundId = reference
+                completeSucceededRefund(dispute, adminId)
             }
-            if (dispute.resolution == null || dispute.refundAmountPhp == null) {
-                throw checkoutConflict("This dispute has no approved refund amount.")
-            }
-            completeSucceededRefund(dispute, adminId)
+        } catch (_: DataIntegrityViolationException) {
+            // Two admins pasted one reference at once: the unique index refused the second commit.
+            throw referenceTaken()
         }
     }
+
+    private fun validRefundReference(raw: String?): String {
+        val reference = raw?.trim().orEmpty()
+        if (PAYMENT_ID_PREFIXES.any { reference.startsWith(it) }) {
+            throw ValidationException(
+                message = "That is the payment ID. Paste the refund's reference.",
+                field = "refundReference",
+            )
+        }
+        if (!REFUND_REFERENCE.matches(reference)) {
+            throw ValidationException(
+                message = "Paste the refund reference from the PayMongo dashboard.",
+                field = "refundReference",
+            )
+        }
+        return reference
+    }
+
+    private fun referenceTaken(): ConflictException =
+        checkoutConflict("That PayMongo refund reference is already recorded on another refund request.")
 
     fun handleWebhook(providerRefundId: String, status: String): Boolean =
         transactionTemplate.execute {
@@ -176,18 +211,22 @@ class PaymongoRefundService(
             IN_FLIGHT_STATUSES,
             PageRequest.of(0, BATCH_SIZE),
         ).forEach { dispute ->
-            val prepared = transactionTemplate.execute { snapshot(dispute.id) } ?: return@forEach
-            process(prepared, reportFailure = false)
+            try {
+                val prepared = transactionTemplate.execute { snapshot(dispute.id) } ?: return@forEach
+                process(prepared, reportFailure = false)
+            } catch (ex: Exception) {
+                log.warn("Reconcile of refund {} failed: {}", dispute.id, ex.message)
+            }
         }
     }
 
-    // Hourly: an approved QR Ph refund nobody finished is cancelled once PayMongo's window and the link's life are both over.
+    // Hourly: an approved QR Ph refund nobody sent a link for is cancelled once PayMongo's window is over.
+    // Once a link was sent the runner may have claimed it, so only an admin who checked PayMongo cancels it.
     @Scheduled(fixedDelayString = "\${app.payments.paymongo.refund-auto-cancel-interval-ms:3600000}")
     fun autoCancelExpiredRefunds() {
         val now = OffsetDateTime.now(clock)
         disputeRepository.findDueForAutoCancel(
             now.minus(paymongoProperties.qrphRefundWindow),
-            now.minus(paymongoProperties.refundLinkValidity),
             PageRequest.of(0, BATCH_SIZE),
         ).forEach { due ->
             try {
@@ -198,18 +237,66 @@ class PaymongoRefundService(
         }
     }
 
-    // Re-checks everything under the lock: the admin may have finished the refund since the query ran.
+    // The admin checked PayMongo and the sent link was never claimed: cancel the parked refund, but only once
+    // auto-cancel's time (window closed and link expired) has passed. A claimed link is finished with markRefunded.
+    fun cancelUnclaimedRefund(adminId: UUID, disputeId: UUID, reason: String?) {
+        val note = reason?.trim()?.takeIf { it.isNotEmpty() } ?: throw ValidationException(
+            message = "Say why the refund is cancelled.",
+            code = ErrorCodes.VALIDATION_ERROR,
+            field = "reason",
+        )
+        transactionTemplate.executeWithoutResult {
+            val dispute = disputeRepository.findByIdForUpdate(disputeId)
+                ?: throw NotFoundException("Dispute not found", ErrorCodes.DISPUTE_NOT_FOUND)
+            val amount = dispute.refundAmountPhp
+            val order = orderRepository.findById(dispute.orderId).orElse(null)
+            val now = OffsetDateTime.now(clock)
+            if (amount == null || order == null || dispute.refundStatus != MANUAL_REVIEW ||
+                order.paymentMethod != PaymentMethod.QRPH || dispute.refundLinkSentAt == null ||
+                now.isBefore(paymongoProperties.refundCancelsAt(order, dispute))
+            ) {
+                throw ConflictException(
+                    message = "This refund can be cancelled only after its link expired and PayMongo's window closed.",
+                    code = ErrorCodes.INVALID_STATE_TRANSITION,
+                )
+            }
+            cancelParked(
+                dispute, amount, now, adminId, note, auto = false,
+                runnerBody = "Your approved refund of PHP ${amount.toPlainString()} was cancelled because its " +
+                    "PayMongo link was not claimed. Reason: $note",
+            )
+        }
+    }
+
+    // Re-checks everything under the lock: the admin may have finished the refund or sent a link since the query ran.
     private fun cancelIfStillDue(disputeId: UUID) {
         val dispute = disputeRepository.findByIdForUpdate(disputeId) ?: return
-        val adminId = dispute.refundRequestedBy ?: return
         val amount = dispute.refundAmountPhp ?: return
         val order = orderRepository.findById(dispute.orderId).orElse(null) ?: return
         val now = OffsetDateTime.now(clock)
         if (dispute.refundStatus != MANUAL_REVIEW || order.paymentMethod != PaymentMethod.QRPH ||
-            now.isBefore(paymongoProperties.refundCancelsAt(order, dispute))
+            dispute.refundLinkSentAt != null || now.isBefore(paymongoProperties.refundCancelsAt(order, dispute))
         ) {
             return
         }
+        cancelParked(
+            dispute, amount, now, dispute.refundRequestedBy,
+            reason = "PayMongo's ${paymongoProperties.qrphRefundWindow.toDays()}-day refund window closed before the refund was completed.",
+            auto = true,
+            runnerBody = "Your approved refund of PHP ${amount.toPlainString()} could not be completed because " +
+                "PayMongo's refund window closed. Please contact QuickPitik support.",
+        )
+    }
+
+    private fun cancelParked(
+        dispute: Dispute,
+        amount: BigDecimal,
+        now: OffsetDateTime,
+        adminId: UUID?,
+        reason: String,
+        auto: Boolean,
+        runnerBody: String,
+    ) {
         dispute.status = DisputeStatus.DENIED
         dispute.resolution = DisputeResolution.DENY
         dispute.refundAmountPhp = null
@@ -217,30 +304,32 @@ class PaymongoRefundService(
         dispute.refundStatus = CANCELLED
         disputeRepository.save(dispute)
 
-        val decision = adminDecisionLogService.logDisputeDecision(
-            adminId = adminId,
-            targetDisputeId = dispute.id,
-            decision = REFUND_CANCELLED,
-            reason = "PayMongo's ${paymongoProperties.qrphRefundWindow.toDays()}-day refund window closed before the refund was completed.",
-            meta = mapOf("auto" to true, "refundAmount" to amount.toPlainString()),
-        )
+        // admin_decision_log.admin_id is NOT NULL: with no admin to name (deleted since), skip only the log row.
+        val decisionId = adminId?.let {
+            adminDecisionLogService.logDisputeDecision(
+                adminId = it,
+                targetDisputeId = dispute.id,
+                decision = REFUND_CANCELLED,
+                reason = reason,
+                meta = mapOf("auto" to auto, "refundAmount" to amount.toPlainString()),
+            ).id
+        }
         photoRepository.findById(dispute.photoId).map { it.photographerId }.orElse(null)?.let {
             adminDecisionLogService.pushMessage(
                 photographerId = it,
                 kind = PhotographerMessageKind.DISPUTE_DENIED,
                 body = "The refund on photo ${dispute.photoId} was cancelled.",
                 sourceAdminId = adminId,
-                sourceDecisionId = decision.id,
+                sourceDecisionId = decisionId,
             )
         }
         dispute.runnerId?.let { runnerId ->
             runnerMessagesService.pushMessage(
                 runnerId = runnerId,
                 kind = RunnerMessageKind.DISPUTE_DENIED,
-                body = "Your approved refund of PHP ${amount.toPlainString()} could not be completed because " +
-                    "PayMongo's refund window closed. Please contact QuickPitik support.",
+                body = runnerBody,
                 sourceAdminId = adminId,
-                sourceDecisionId = decision.id,
+                sourceDecisionId = decisionId,
                 orderId = dispute.orderId,
             )
         }
@@ -281,31 +370,20 @@ class PaymongoRefundService(
             DisputeResolution.REFUND_PARTIAL -> validatePartialAmount(requestedAmount, charged)
             DisputeResolution.DENY -> error("DENY is not a provider refund")
         }
-        val payment = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo()
-            ?: throw checkoutConflict("The order has no settled PayMongo payment to refund.")
-        val providerRef = payment.providerRef
-            ?: throw checkoutConflict("The settled payment has no PayMongo reference.")
+        val found = paymentRepository.findByOrderId(dispute.orderId).settledPaymongo()
+        val order = orderRepository.findById(dispute.orderId).orElse(null)
+        // QR Ph payments cannot be refunded through the API: they are parked for PayMongo's dashboard.
+        val qrph = order?.paymentMethod == PaymentMethod.QRPH
+        val checkoutTotal = found?.providerRef?.takeIf { qrph }?.let { ref ->
+            paymentRepository.findAllByProviderAndProviderRef(PAYMONGO, ref).fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp }
+        }
+        paymongoProperties.refundBlocker(order, found, checkoutTotal, amount, OffsetDateTime.now(clock))
+            ?.let { throw checkoutConflict(it.message) }
+        val payment = checkNotNull(found) { "refundBlocker lets no missing payment through" }
+        val providerRef = checkNotNull(payment.providerRef) { "refundBlocker lets no missing reference through" }
 
         // TIMESTAMPTZ keeps microseconds; store what the database will give back (INC-12).
         val now = OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS)
-        // QR Ph payments cannot be refunded through the API. PayMongo's dashboard refunds a whole payment
-        // only, and one payment covers the whole checkout, so approval needs the refund to equal that total.
-        val qrphOrder = orderRepository.findById(dispute.orderId).orElse(null)
-            ?.takeIf { it.paymentMethod == PaymentMethod.QRPH }
-        val qrph = qrphOrder != null
-        if (qrphOrder != null) {
-            // PayMongo's dashboard cannot refund a payment older than its window, so approving would strand the runner.
-            if (!OffsetDateTime.now(clock).isBefore(paymongoProperties.refundWindowClosesAt(qrphOrder))) {
-                throw checkoutConflict("PayMongo's refund window for this payment has closed. Deny this request with a reason instead.")
-            }
-            val checkoutTotal = paymentRepository.findAllByProviderAndProviderRef(PAYMONGO, providerRef)
-                .fold(BigDecimal.ZERO) { sum, it -> sum + it.amountPhp }
-            if (amount.compareTo(checkoutTotal) != 0) {
-                throw checkoutConflict(
-                    "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead.",
-                )
-            }
-        }
         dispute.resolution = resolution
         dispute.refundAmountPhp = amount
         dispute.refundStatus = if (qrph) MANUAL_REVIEW else REQUESTING
@@ -535,25 +613,27 @@ class PaymongoRefundService(
         photographerId: UUID?,
         adminId: UUID?,
     ) {
-        if (adminId == null) return
-        val decision = adminDecisionLogService.logDisputeDecision(
-            adminId = adminId,
-            targetDisputeId = dispute.id,
-            decision = "resolved",
-            reason = dispute.refundReason,
-            meta = mapOf(
-                "resolution" to resolution.wire,
-                "refundAmount" to refundAmount.toPlainString(),
-                "providerRefundId" to dispute.providerRefundId,
-            ),
-        )
+        // admin_decision_log.admin_id is NOT NULL: with no admin to name (deleted since), skip only the log row.
+        val decisionId = adminId?.let {
+            adminDecisionLogService.logDisputeDecision(
+                adminId = it,
+                targetDisputeId = dispute.id,
+                decision = "resolved",
+                reason = dispute.refundReason,
+                meta = mapOf(
+                    "resolution" to resolution.wire,
+                    "refundAmount" to refundAmount.toPlainString(),
+                    "providerRefundId" to dispute.providerRefundId,
+                ),
+            ).id
+        }
         photographerId?.let {
             adminDecisionLogService.pushMessage(
                 photographerId = it,
                 kind = PhotographerMessageKind.DISPUTE_RESOLVED,
                 body = "A dispute on photo ${dispute.photoId} was resolved as ${resolution.wire}.",
                 sourceAdminId = adminId,
-                sourceDecisionId = decision.id,
+                sourceDecisionId = decisionId,
             )
         }
         dispute.runnerId?.let { runnerId ->
@@ -562,7 +642,7 @@ class PaymongoRefundService(
                 kind = RunnerMessageKind.DISPUTE_RESOLVED,
                 body = "Your refund of PHP ${refundAmount.toPlainString()} is complete.",
                 sourceAdminId = adminId,
-                sourceDecisionId = decision.id,
+                sourceDecisionId = decisionId,
                 orderId = dispute.orderId,
             )
         }
@@ -622,6 +702,9 @@ class PaymongoRefundService(
         const val FAILED = "failed"
         const val MANUAL_REVIEW = "manual_review"
         const val CANCELLED = "cancelled"
+        val PAYMENT_ID_PREFIXES = listOf("pay_", "cs_", "pi_")
+        // PayMongo refund IDs start with ref_; the rest is 1-100 safe characters in total.
+        val REFUND_REFERENCE = Regex("ref_[A-Za-z0-9_-]{1,96}")
         val IN_FLIGHT_STATUSES = listOf(REQUESTING, "pending", "processing")
         val PROVIDER_RETRY_WINDOW: Duration = Duration.ofHours(23)
         const val BATCH_SIZE = 100
@@ -642,6 +725,33 @@ internal fun PaymongoProperties.refundCancelsAt(order: Order, dispute: Dispute):
     val windowCloses = refundWindowClosesAt(order)
     val linkExpires = refundLinkExpiresAt(dispute)
     return if (linkExpires != null && linkExpires.isAfter(windowCloses)) linkExpires else windowCloses
+}
+
+// Why a full or partial refund of `amount` cannot be approved now, or null if it can (plan DW-3, 5.3).
+// `prepare` throws the message as a 409; the admin list shows it before the admin clicks.
+internal enum class RefundBlocker(val wire: String, val message: String) {
+    NO_SETTLED_PAYMENT("no_payment", "The order has no settled PayMongo payment to refund."),
+    NO_PAYMENT_REF("no_payment", "The settled payment has no PayMongo reference."),
+    WINDOW_CLOSED("window_closed", "PayMongo's refund window for this payment has closed. Deny this request with a reason instead."),
+    BOUGHT_TOGETHER("bought_together", "PayMongo's dashboard can only refund the whole payment. Deny this request with a reason instead."),
+}
+
+// `checkoutTotal`: the sum of every payment sharing the settled payment's reference (one QR Ph checkout can span orders).
+internal fun PaymongoProperties.refundBlocker(
+    order: Order?,
+    payment: Payment?,
+    checkoutTotal: BigDecimal?,
+    amount: BigDecimal,
+    now: OffsetDateTime,
+): RefundBlocker? {
+    if (payment == null) return RefundBlocker.NO_SETTLED_PAYMENT
+    if (payment.providerRef == null) return RefundBlocker.NO_PAYMENT_REF
+    if (order?.paymentMethod != PaymentMethod.QRPH) return null
+    // PayMongo's dashboard cannot refund a payment older than its window, so approving would strand the runner.
+    if (!now.isBefore(refundWindowClosesAt(order))) return RefundBlocker.WINDOW_CLOSED
+    // The dashboard refunds a whole payment only, so the refund must equal the whole checkout.
+    if (amount.compareTo(checkoutTotal ?: BigDecimal.ZERO) != 0) return RefundBlocker.BOUGHT_TOGETHER
+    return null
 }
 
 // The order's settled PayMongo payment: the one a refund targets.

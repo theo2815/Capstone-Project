@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import { useAdminUserActions } from "@/hooks/use-admin-users";
+import { useEffect, useId, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { adminUserKeys, useAdminUserActions } from "@/hooks/use-admin-users";
 import { useToast } from "@/hooks/use-toast";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
+import { CONSENT_WITHDRAWAL_TEXT } from "@/lib/admin-relevance";
+import { ApiError } from "@/lib/api";
+import { clearRelevanceConsentWithdrawal, recordRelevanceConsentWithdrawal, type AdminUserDetail } from "@/lib/api-admin";
+import { formatLongDate } from "@/lib/format";
+import { useAuthStore } from "@/store/auth-store";
+import { AdminConfirmModal } from "./admin-form-modal";
 import { AdminRejectModal } from "./admin-reject-modal";
 import { AdminResetVerificationModal } from "./admin-reset-verification-modal";
 import { AdminSuspendModal } from "./admin-suspend-modal";
@@ -12,7 +19,6 @@ import { Kicker } from "@/components/ui/kicker";
 import {
   BTN_DANGER,
   BTN_GHOST,
-  BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
@@ -22,18 +28,21 @@ interface AdminActionAsideProps {
 }
 
 // Sticky-on-lg / inline-on-md action cluster for the photographer detail
-// page. Carries Approve, Reject, Suspend, Unsuspend, Reset verification,
-// Send message. Modal state is local so the detail page stays a thin shell.
+// page. Carries Reject, Suspend, Unsuspend, Reset verification, Send
+// message; profiles approve themselves once identity passes (Q7). Modal
+// state is local so the detail page stays a thin shell.
 //
-// One-fresh-per-viewport: only Approve is bg-fresh in its rest state.
 // Destructive actions (Reject, Suspend) carry the shared BTN_DANGER recipe
 // (error text on bone-deep) so they read as consequential before the modal
 // opens; restorative/neutral actions stay secondary/ghost.
 export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { showToast } = useToast();
-  const { approve, reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
+  const { reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
   const submitting = actionPending([row.userId]);
   const activeLabel = pendingAction(row.userId);
+  // The withdrawal call (RV-L7) locks the other actions too, as theirs lock it.
+  const [withdrawalBusy, setWithdrawalBusy] = useState(false);
+  const locked = submitting || withdrawalBusy;
 
   const [rejectOpen, setRejectOpen] = useState(false);
   const [suspendOpen, setSuspendOpen] = useState(false);
@@ -45,13 +54,6 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const isSuspended = row.suspendedAt !== null;
   const isIncomplete = row.verificationStatus === "incomplete";
   const displayName = row.brandName ?? row.name;
-
-  async function handleApprove() {
-    const ok = await approve(row.userId, row.verificationRevision);
-    if (ok) {
-      showToast({ kind: "success", message: `Approved · ${displayName}` });
-    }
-  }
 
   async function handleReject(reason: string) {
     const ok = await reject(row.userId, reason, reviewRevision);
@@ -110,30 +112,20 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       </Kicker>
       <div className="mt-5 space-y-3">
         {isPending && (
-          <>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={handleApprove}
-              className={primaryFreshBtn}
-            >
-              {activeLabel === "Approving…" ? activeLabel : "Approve"}
-            </button>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
-              className={dangerBtn}
-            >
-              Reject…
-            </button>
-          </>
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
+            className={dangerBtn}
+          >
+            Reject…
+          </button>
         )}
 
         {!isSuspended ? (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={() => setSuspendOpen(true)}
             className={dangerBtn}
           >
@@ -142,7 +134,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         ) : (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={handleUnsuspend}
             className={secondaryBtn}
           >
@@ -153,7 +145,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         {!isIncomplete && (
           <button
             type="button"
-            disabled={submitting}
+            disabled={locked}
             onClick={() => { setReviewRevision(row.verificationRevision); setResetOpen(true); }}
             className={secondaryBtn}
           >
@@ -163,7 +155,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
         <button
           type="button"
-          disabled={submitting}
+          disabled={locked}
           onClick={() => setMessageOpen(true)}
           className={tertiaryBtn}
         >
@@ -181,6 +173,8 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
           </p>
         </div>
       )}
+
+      {row.role === "PHOTOGRAPHER" && <ConsentWithdrawal row={row} locked={locked} busy={withdrawalBusy} setBusy={setWithdrawalBusy} />}
 
       <AdminRejectModal
 
@@ -216,7 +210,73 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   );
 }
 
-const primaryFreshBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
+// RV-L7 part c: record or clear the photographer's e-mailed withdrawal of the consent to automatic hides and
+// holds. The state shown is always the server's: the answer is written into the detail cache, then refetched.
+function ConsentWithdrawal({ row, locked, busy, setBusy }: { row: AdminUserRow; locked: boolean; busy: boolean; setBusy: (busy: boolean) => void }) {
+  const T = CONSENT_WITHDRAWAL_TEXT;
+  const qc = useQueryClient();
+  const { showToast } = useToast();
+  const headingId = useId();
+  const [open, setOpen] = useState(false);
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  const withdrawnAt = row.relevanceConsentWithdrawnAt ?? null;
+  const withdrawn = withdrawnAt !== null;
+
+  // The shared Modal does not return focus; the one action button keeps its element across both states.
+  useEffect(() => {
+    if (wasOpen.current && !open) actionRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
+
+  async function handleConfirm() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const answer = await (withdrawn ? clearRelevanceConsentWithdrawal : recordRelevanceConsentWithdrawal)(row.userId);
+      const key = adminUserKeys.detail(useAuthStore.getState().user?.id ?? null, row.userId);
+      qc.setQueryData<AdminUserDetail | null>(key, (detail) =>
+        detail ? { ...detail, relevanceConsentWithdrawnAt: answer.consentWithdrawnAt } : detail);
+      void qc.invalidateQueries({ queryKey: key }); // the decision log gained an entry
+      setOpen(false);
+      showToast({ kind: "success", message: withdrawn ? T.cleared : T.recorded });
+    } catch (error) {
+      showToast({ kind: "error", message: error instanceof ApiError
+        ? error.errors[0]?.message ?? error.message
+        : withdrawn ? T.clearFailed : T.recordFailed });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby={headingId} className="mt-6 pt-5 border-t border-line">
+      <p id={headingId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+        {T.title}
+      </p>
+      <p className="font-sans text-sm text-ink-soft mt-2">
+        {withdrawn
+          ? <>{T.withdrawnOn} <span className="tnum whitespace-nowrap">{formatLongDate(withdrawnAt)}</span>. {T.withdrawnAfter}</>
+          : T.notWithdrawn}
+      </p>
+      <button ref={actionRef} type="button" disabled={locked} onClick={() => setOpen(true)} className={`${secondaryBtn} mt-4`}>
+        {withdrawn ? T.clear : T.record}
+      </button>
+      <AdminConfirmModal
+        open={open}
+        submitting={busy}
+        pendingLabel={withdrawn ? T.clearing : T.recording}
+        onClose={() => setOpen(false)}
+        onConfirm={handleConfirm}
+        title={withdrawn ? T.clearTitle : T.recordTitle}
+        confirmLabel={withdrawn ? T.clearConfirmButton : T.recordConfirmButton}
+      >
+        <p className="font-sans text-sm text-ink-soft">{withdrawn ? T.clearConfirm : T.recordConfirm}</p>
+      </AdminConfirmModal>
+    </section>
+  );
+}
+
 const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

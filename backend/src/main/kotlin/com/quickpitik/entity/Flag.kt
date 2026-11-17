@@ -29,6 +29,20 @@ enum class FlagTargetKind(val wire: String) {
     }
 }
 
+// Reasons the backend itself (or a signed-in user's report) writes through
+// SystemFlagService; stored lowercase in flags.reason (VARCHAR(40), no CHECK).
+enum class SystemFlagReason {
+    PROFILE_IMAGE_FLAGGED, PROFILE_IMAGE_UNCHECKED, PAYOUT_NAME_CHANGED, REPEAT_ACCOUNT_MATCH,
+    RACE_CHECK_MISS, RACE_EDIT_HELD, POSSIBLE_DUPLICATE, SAME_BIB_DUPLICATE,
+    NO_PROOF_HIDDEN, NO_PROOF_UNINDEXED, REPORT_THRESHOLD_HIDDEN, USER_REPORT,
+    RUNNER_REMOVAL_HELD, // RD-6: a runner request whose auto-hide was held by a cap
+    // PE-2.1: one USER flag per photographer whose upload batch scored Low (relevance flag mode, retired in
+    // RV-1.10: no new ones are raised; open ones stay in the queue until closed).
+    BATCH_RELEVANCE_LOW;
+
+    val wire: String get() = name.lowercase()
+}
+
 // Minimal flagging surface. Phase G ships the env-gated read + state-transition
 // endpoints so the queue exists; richer triage workflow (assignee, severity,
 // auto-cull thresholds) lands when v1 actually starts ingesting flags
@@ -71,6 +85,13 @@ class Flag(
 
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: OffsetDateTime = OffsetDateTime.now(),
+
+    // PE-2.2: an admin's payout hold on a relevance flag; it ends when the flag closes.
+    @Column(name = "payout_hold_at")
+    var payoutHoldAt: OffsetDateTime? = null,
+
+    @Column(name = "payout_hold_by")
+    var payoutHoldBy: UUID? = null,
 ) {
     var status: FlagStatus
         get() = FlagStatus.fromWire(statusWire)

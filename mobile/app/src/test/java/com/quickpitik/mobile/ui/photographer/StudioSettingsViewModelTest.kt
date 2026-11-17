@@ -297,6 +297,56 @@ class StudioSettingsViewModelTest {
         vm.isSavingSettings.awaitFirst { !it }
     }
 
+    @Test fun `a 400 TEXT_NOT_ALLOWED envelope shows the server message`() {
+        route("PUT /api/v1/me/photographer/brand") {
+            MockResponse().setResponseCode(400).setBody(
+                """{"success":false,"errors":[{"code":"TEXT_NOT_ALLOWED","field":"brandName","message":"Your brand name has a word we don't allow. Please change it."}]}"""
+            )
+        }
+        val vm = model()
+        vm.brandSettings.awaitFirst { it != null }
+        var saved = false
+        vm.saveSettings(
+            brandName = "Refused name", bio = "", gcashName = "", gcashNumber = "", handle = "juan",
+            regionCode = "", provinceCode = "", socialUrl = "", avatarUri = null, coverUri = null,
+            watermarkUri = null, onSaved = { saved = true },
+        )
+
+        assertEquals(
+            ActionState.Failed("Your brand name has a word we don't allow. Please change it."),
+            vm.actionState.awaitFirst { it is ActionState.Failed },
+        )
+        vm.isSavingSettings.awaitFirst { !it }
+        assertEquals(false, saved)
+        assertEquals(0, count("PUT", "/api/v1/me/photographer/handle"))
+    }
+
+    @Test fun `a 400 IMAGE_NOT_ALLOWED on cover upload shows the server message`() {
+        route("PUT /api/v1/me/photographer/brand") { ok("{}") }
+        route("POST /api/v1/me/photographer/cover") {
+            MockResponse().setResponseCode(400).setBody(
+                """{"success":false,"errors":[{"code":"IMAGE_NOT_ALLOWED","field":"file","message":"This image can't be used. Please choose another."}]}"""
+            )
+        }
+        val vm = model()
+        vm.brandSettings.awaitFirst { it != null }
+        var saved = false
+        vm.saveSettings(
+            brandName = "Saved name", bio = "", gcashName = "", gcashNumber = "", handle = "",
+            regionCode = "", provinceCode = "", socialUrl = "", avatarUri = null,
+            coverUri = picked("cover.jpg", 16), watermarkUri = null, onSaved = { saved = true },
+        )
+
+        assertEquals(
+            ActionState.Failed("This image can't be used. Please choose another."),
+            vm.actionState.awaitFirst { it is ActionState.Failed },
+        )
+        vm.isSavingSettings.awaitFirst { !it }
+        assertEquals(false, saved)
+        assertEquals(1, count("POST", "/api/v1/me/photographer/cover"))
+        assertTrue(bodies("PUT", "/api/v1/me/photographer/brand").single().contains("Saved name"))
+    }
+
     private companion object {
         const val PAYOUTS = "/api/v1/me/photographer/payouts"
         const val BRAND = """{"brandName":"Juan Photos","brandColor":"amber","bio":"","handle":"juan","regionCode":"07","provinceCode":"0722","coverUrl":null,"watermarkUrl":null,"avatarUrl":null,"watermarkSettings":{"opacity":0.7,"scale":0.15,"landscapeX":1.0,"landscapeY":1.0,"portraitX":1.0,"portraitY":1.0}}"""

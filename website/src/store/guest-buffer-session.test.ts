@@ -49,7 +49,7 @@ it("ignores stale bookmark success and cart add failure after logout", async () 
   cart.reject(new Error("Late failure")); saved.resolve(event);
   await Promise.allSettled([cart.promise, saved.promise]);
   await act(async () => {});
-  expect(useCartStore.getState().items).toEqual([item]);
+  expect(useCartStore.getState().items).toEqual([{ ...item, priceAtAdd: item.price }]);
   expect(useSavedEventsStore.getState().summaries).toEqual([]);
 });
 

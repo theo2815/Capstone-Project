@@ -19,7 +19,8 @@ enum class RunnerMessageKind(val wire: String) {
     ADMIN_MESSAGE("admin_message"),
     ACCOUNT_SUSPENDED("account_suspended"),
     ACCOUNT_UNSUSPENDED("account_unsuspended"),
-    PHOTO_REMOVED("photo_removed");
+    PHOTO_REMOVED("photo_removed"),
+    PHOTO_REMOVAL_UPDATE("photo_removal_update");
 }
 
 // DB-backed runner inbox — parallel to PhotographerMessage. Admin actions

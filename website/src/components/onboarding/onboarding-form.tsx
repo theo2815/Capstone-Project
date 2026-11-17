@@ -5,15 +5,19 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api";
 import { ROUTES } from "@/lib/constants";
+import { LEGAL_COPY } from "@/lib/legal/copy";
 import { roleHome } from "@/lib/redirect";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types/user";
+import { TermsTick } from "@/components/legal/terms-tick";
 
 export function OnboardingForm() {
   const router = useRouter();
   const { pendingOAuth, completeOnboarding, cancelOnboarding } = useAuth();
   const [role, setRole] = useState<Role | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [termsError, setTermsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,6 +31,10 @@ export function OnboardingForm() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!role || isSubmitting) return;
+    if (!agreed) {
+      setTermsError(LEGAL_COPY.signupTickError);
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
     try {
@@ -128,6 +136,15 @@ export function OnboardingForm() {
             onSelect={() => setRole("PHOTOGRAPHER")}
           />
         </div>
+
+        <TermsTick
+          checked={agreed}
+          onChange={(checked) => {
+            setAgreed(checked);
+            setTermsError(null);
+          }}
+          error={termsError}
+        />
 
         {error && (
           <p role="alert" className="font-sans text-sm text-error">

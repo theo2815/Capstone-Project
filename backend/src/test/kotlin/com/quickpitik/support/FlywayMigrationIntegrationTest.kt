@@ -3,7 +3,13 @@ package com.quickpitik.support
 import jakarta.persistence.EntityManager
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.dto.photographer.HandlePatchRequest
+import com.quickpitik.entity.Event
+import com.quickpitik.entity.EventReviewStatus
+import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.RaceType
 import com.quickpitik.exception.ApiException
+import com.quickpitik.repository.EventRepository
+import com.quickpitik.service.events.RaceEventService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Test
@@ -11,12 +17,15 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.ClassPathResource
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.init.ScriptUtils
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 import javax.sql.DataSource
@@ -50,6 +59,9 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var dataSource: DataSource
+
+    @Autowired
+    private lateinit var events: EventRepository
 
     @Value("\${app.admin.bootstrap-email}")
     private lateinit var bootstrapEmail: String
@@ -308,6 +320,351 @@ class FlywayMigrationIntegrationTest : PostgresIntegrationTest() {
                 ),
                 columns,
             )
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
+    // Upgrade rehearsal: staging was on V91 and production on V90 when V92 was written.
+    @Test
+    fun `V92 upgrades V91 with events and leaves every row unstamped`() {
+        val schema = "face_expiry_v92_${UUID.randomUUID().toString().replace("-", "")}"
+        val ids = mutableListOf<UUID>()
+        try {
+            flywayFor(schema, "91").migrate()
+            val v91Columns = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'events' " +
+                    "ORDER BY ordinal_position",
+                String::class.java, schema,
+            )
+            assertFalse("faces_deleted_at" in v91Columns, "faces_deleted_at must not exist at V91")
+            assertEquals("91", latestVersion(schema))
+
+            // One old event and one deleted event, copied in from rows the V92 entity wrote.
+            val old = events.save(Event(slug = "v92-old-${UUID.randomUUID().toString().take(8)}", name = "Old run",
+                date = LocalDate.of(2025, 11, 1), location = "Cebu City", status = EventStatus.COMPLETED))
+            val gone = events.save(Event(slug = "v92-del-${UUID.randomUUID().toString().take(8)}", name = "Deleted run",
+                date = LocalDate.of(2026, 10, 30), location = "Cebu City", status = EventStatus.ACTIVE)
+                .apply { deletedAt = OffsetDateTime.now() })
+            ids += listOf(old.id, gone.id)
+            val cols = v91Columns.joinToString(", ") { "\"$it\"" }
+            assertEquals(2, jdbcTemplate.update(
+                "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", old.id, gone.id,
+            ))
+
+            flywayFor(schema, "92").migrate()
+
+            assertEquals("92", latestVersion(schema))
+            val column = jdbcTemplate.queryForMap(
+                "SELECT data_type, is_nullable, column_default FROM information_schema.columns " +
+                    "WHERE table_schema = ? AND table_name = 'events' AND column_name = 'faces_deleted_at'",
+                schema,
+            )
+            assertEquals("timestamp with time zone", column["data_type"])
+            assertEquals("YES", column["is_nullable"])
+            assertNull(column["column_default"])
+            assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.events WHERE id IN (?, ?) AND faces_deleted_at IS NULL",
+                Int::class.java, old.id, gone.id,
+            ))
+            // Nothing else moved: every V91 column of the copied rows is unchanged.
+            assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM (SELECT $cols FROM public.events WHERE id IN (?, ?) " +
+                    "EXCEPT SELECT $cols FROM $schema.events) d",
+                Int::class.java, old.id, gone.id,
+            ))
+            assertEquals(true, jdbcTemplate.queryForObject(
+                "SELECT bool_and(success) FROM $schema.flyway_schema_history WHERE version = '92'", Boolean::class.java,
+            ))
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+            ids.forEach { jdbcTemplate.update("DELETE FROM public.events WHERE id = ?", it) }
+        }
+    }
+
+    // Upgrade rehearsal: V93 seller details may already hold rows (staging, and production after the
+    // release that carries V93) when V94 arrives.
+    @Test
+    fun `V94 upgrades V93 turning submitted seller details into manual review`() {
+        val schema = "seller_v94_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "93").migrate()
+            fun seller(status: String): UUID {
+                val id = jdbcTemplate.queryForObject(
+                    "INSERT INTO $schema.users (email, password_hash, name, role) VALUES (?, 'x', 'V94 seller', 'PHOTOGRAPHER') RETURNING id",
+                    UUID::class.java, "v94-${UUID.randomUUID()}@test.local",
+                )!!
+                jdbcTemplate.update(
+                    "INSERT INTO $schema.photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, " +
+                        "address, phone, status, rejection_reason, revision, submitted_at) " +
+                        "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', 'k/front', 'k/selfie', 'Cebu', '+63 917 123 4567', ?, ?, 1, now())",
+                    id, status, if (status == "REJECTED") "Blurry ID" else null,
+                )
+                return id
+            }
+            val submitted = seller("SUBMITTED")
+            val approved = seller("APPROVED")
+            val rejected = seller("REJECTED")
+
+            flywayFor(schema, "94").migrate()
+
+            assertEquals("94", latestVersion(schema))
+            fun row(id: UUID) = jdbcTemplate.queryForMap(
+                "SELECT status, reason_codes::text AS reasons, repeat_matches::text AS matches, phone_key " +
+                    "FROM $schema.photographer_seller_details WHERE user_id = ?", id,
+            )
+            assertEquals("MANUAL_REVIEW", row(submitted)["status"])
+            assertEquals("APPROVED", row(approved)["status"])
+            assertEquals("REJECTED", row(rejected)["status"])
+            for (id in listOf(submitted, approved, rejected)) {
+                assertEquals("[]", row(id)["reasons"])
+                assertEquals("[]", row(id)["matches"])
+                assertEquals("9171234567", row(id)["phone_key"])
+            }
+            // The old value is refused now; the new ones are accepted.
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.photographer_seller_details SET status = 'SUBMITTED' WHERE user_id = ?", submitted)
+            }
+            jdbcTemplate.update("UPDATE $schema.photographer_seller_details SET status = 'AUTO_APPROVED' WHERE user_id = ?", submitted)
+
+            // The liveness table is shared with the runner photo-removal plan (RD-0.1).
+            val liveness = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'liveness_sessions'",
+                String::class.java, schema,
+            ).toSet()
+            assertEquals(
+                setOf("session_id", "user_id", "purpose", "event_id", "consent_version", "created_at", "consumed_at"),
+                liveness,
+            )
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
+    // Upgrade rehearsal: staging is on V94 with events when V96 (AA-R1; V95 stays unused) arrives.
+    @Test
+    fun `V96 keeps existing events untyped and refuses race columns on untyped rows`() {
+        val schema = "race_v96_${UUID.randomUUID().toString().replace("-", "")}"
+        val ids = mutableListOf<UUID>()
+        try {
+            flywayFor(schema, "94").migrate()
+            val v94Columns = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = 'events' " +
+                    "ORDER BY ordinal_position",
+                String::class.java, schema,
+            )
+            assertFalse("event_type" in v94Columns, "event_type must not exist at V94")
+            val owner = jdbcTemplate.queryForObject(
+                "INSERT INTO $schema.users (email, password_hash, name, role) VALUES (?, 'x', 'V96 owner', 'PHOTOGRAPHER') RETURNING id",
+                UUID::class.java, "v96-${UUID.randomUUID()}@test.local",
+            )!!
+            // An admin event and a photographer-owned event, copied in from rows the V96 entity wrote.
+            val admin = events.save(Event(slug = "v96-admin-${UUID.randomUUID().toString().take(8)}", name = "Cebu Marathon",
+                date = LocalDate.of(2026, 1, 11), location = "Cebu City", status = EventStatus.COMPLETED))
+            val owned = events.save(Event(slug = "v96-own-${UUID.randomUUID().toString().take(8)}", name = "Wedding shoot",
+                date = LocalDate.of(2026, 10, 30), location = "Cebu City", status = EventStatus.ACTIVE))
+            ids += listOf(admin.id, owned.id)
+            val cols = v94Columns.joinToString(", ") { "\"$it\"" }
+            assertEquals(2, jdbcTemplate.update(
+                "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", admin.id, owned.id,
+            ))
+            jdbcTemplate.update("UPDATE $schema.events SET created_by = ? WHERE id = ?", owner, owned.id)
+
+            flywayFor(schema, "96").migrate()
+
+            assertEquals("96", latestVersion(schema))
+            assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.events WHERE id IN (?, ?) AND event_type IS NULL AND submitted_by IS NULL " +
+                    "AND name_key IS NULL AND possible_duplicate_of IS NULL AND admin_approved_at IS NULL " +
+                    "AND hidden_at IS NULL AND proof_checked_at IS NULL AND check_reasons IS NULL",
+                Int::class.java, admin.id, owned.id,
+            ))
+            // ck_events_race_only: an untyped row takes no race column.
+            for (set in listOf("hidden_at = now()", "submitted_by = '$owner'", "name_key = 'cebu marathon'",
+                "admin_approved_at = now()", "proof_checked_at = now()", "check_reasons = '[]'",
+                "possible_duplicate_of = '${owned.id}'")) {
+                assertFailsWith<DataIntegrityViolationException>(set) {
+                    jdbcTemplate.update("UPDATE $schema.events SET $set WHERE id = ?", admin.id)
+                }
+            }
+            // ck_events_race_shared: a photographer-owned event cannot become a race; an admin event can.
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.events SET event_type = 'ROAD_RACE' WHERE id = ?", owned.id)
+            }
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.events SET event_type = 'TRIATHLON' WHERE id = ?", admin.id)
+            }
+            assertEquals(1, jdbcTemplate.update(
+                "UPDATE $schema.events SET event_type = 'ROAD_RACE', hidden_at = now(), check_reasons = '[\"DAILY_CAP\"]' WHERE id = ?",
+                admin.id,
+            ))
+            jdbcTemplate.update("INSERT INTO $schema.event_name_aliases (event_id, name_key, added_by) VALUES (?, 'cebu marathon', ?)",
+                admin.id, owner)
+            jdbcTemplate.update("DELETE FROM $schema.events WHERE id = ?", admin.id)
+            assertEquals(0, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.event_name_aliases", Int::class.java,
+            ), "aliases go with their event")
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+            ids.forEach { jdbcTemplate.update("DELETE FROM public.events WHERE id = ?", it) }
+        }
+    }
+
+    // Upgrade rehearsal: staging holds support-made removal cases when V99 (RD-1) arrives. Starts at V97
+    // (AA-R10's index took V102, not V98).
+    @Test
+    fun `V99 upgrades earlier versions with existing removal cases defaulting to SUPPORT`() {
+        val schema = "removal_v99_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "97").migrate()
+            val case = UUID.randomUUID()
+            jdbcTemplate.update(
+                "INSERT INTO $schema.photo_removal_requests (id, event_id_snapshot, event_name_snapshot, requester_contact, " +
+                    "support_reference, requester_reason, public_to_owner_reason, status, created_at, updated_at, creator_id, " +
+                    "creation_command_id) VALUES (?, ?, 'Cebu Marathon', 'support@example.test', 'SUP-1', 'Privacy', " +
+                    "'Privacy removal request', 'OPEN', now(), now(), ?, ?)",
+                case, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+            )
+
+            flywayFor(schema, "99").migrate()
+
+            assertEquals("99", latestVersion(schema))
+            assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM $schema.photo_removal_requests WHERE id = ? AND source = 'SUPPORT' " +
+                    "AND risk_flags = '[]'::jsonb AND reason_code IS NULL AND consent_version IS NULL AND consent_at IS NULL " +
+                    "AND liveness_session_id IS NULL AND liveness_band IS NULL AND liveness_confidence IS NULL AND close_reason IS NULL",
+                Int::class.java, case,
+            ))
+            assertEquals(listOf("YES"), jdbcTemplate.queryForList(
+                "SELECT is_nullable FROM information_schema.columns WHERE table_schema = ? AND table_name = 'photos' " +
+                    "AND column_name = 'face_count' AND column_default IS NULL",
+                String::class.java, schema,
+            ))
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.photo_removal_requests SET source = 'EMAIL' WHERE id = ?", case)
+            }
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update("UPDATE $schema.photo_removal_requests SET risk_flags = '{}'::jsonb WHERE id = ?", case)
+            }
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
+    // AA-R10: one live self-serve race per date and name key, the race lock's last line of defence.
+    @Test
+    fun `two self-serve races on one date and key are refused`() {
+        val key = raceKey()
+        race(key, photographer())
+        val error = assertFailsWith<DataIntegrityViolationException> { race(key, photographer()) }
+        assertTrue(RaceEventService.RACE_UNIQUE_INDEX in error.mostSpecificCause.message.orEmpty())
+    }
+
+    @Test
+    fun `an admin race with the same key is allowed`() {
+        val key = raceKey()
+        race(key, photographer())
+        race(key, submittedBy = null)
+        race(key, submittedBy = null)
+    }
+
+    @Test
+    fun `a different-race decision with the same key is allowed`() {
+        val key = raceKey()
+        val first = race(key, photographer())
+        race(key, photographer(), duplicateOf = first.id)
+    }
+
+    @Test
+    fun `a rejected race does not block a new race with the same name and date`() {
+        val key = raceKey()
+        race(key, photographer(), review = EventReviewStatus.REJECTED)
+        race(key, photographer())
+    }
+
+    // Upgrade rehearsal: staging is on V100 with race rows when V102 arrives (V98 was passed by V99 and V100;
+    // V101 is IX-W3c's and runs in between once it merges).
+    @Test
+    fun `V102 upgrades V100 with existing races and indexes only self-serve ones`() {
+        val schema = "race_v102_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "100").migrate()
+            val key = raceKey()
+            val selfServe = race(key, photographer())
+            val admin = race(key, submittedBy = null)
+            fun columns(table: String) = jdbcTemplate.queryForList(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+                String::class.java, schema, table,
+            ).joinToString(", ") { "\"$it\"" }
+            val cols = columns("events")
+            // submitted_by points at public.users, so the copy drops it into the schema's own users first;
+            // only the V100 columns, as later migrations add more to public.users (V104).
+            val userCols = columns("users")
+            jdbcTemplate.update("INSERT INTO $schema.users ($userCols) SELECT $userCols FROM public.users WHERE id = ?", selfServe.submittedBy)
+            assertEquals(2, jdbcTemplate.update(
+                "INSERT INTO $schema.events ($cols) SELECT $cols FROM public.events WHERE id IN (?, ?)", selfServe.id, admin.id,
+            ))
+
+            flywayFor(schema, "102").migrate()
+
+            assertEquals("102", latestVersion(schema))
+            assertTrue("WHERE" in indexDefinition(schema, RaceEventService.RACE_UNIQUE_INDEX))
+        } finally {
+            jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
+        }
+    }
+
+    private fun raceKey() = "unique run ${UUID.randomUUID()}"
+
+    private fun photographer(): UUID = jdbcTemplate.queryForObject(
+        "INSERT INTO users (email, password_hash, name, role) VALUES (?, 'x', 'Race owner', 'PHOTOGRAPHER') RETURNING id",
+        UUID::class.java, "r10-${UUID.randomUUID()}@test.local",
+    )!!
+
+    private fun race(
+        key: String,
+        submittedBy: UUID?,
+        review: EventReviewStatus = EventReviewStatus.APPROVED,
+        duplicateOf: UUID? = null,
+    ): Event = events.saveAndFlush(
+        Event(slug = "r10-${UUID.randomUUID()}", name = key, date = LocalDate.of(1905, 6, 4), location = "Cebu City",
+            status = EventStatus.ACTIVE, eventType = RaceType.ROAD_RACE, reviewStatus = review)
+            .apply { this.submittedBy = submittedBy; nameKey = key; possibleDuplicateOf = duplicateOf },
+    )
+
+    private fun latestVersion(schema: String): String = jdbcTemplate.queryForObject(
+        "SELECT version FROM $schema.flyway_schema_history WHERE success AND version IS NOT NULL " +
+            "ORDER BY installed_rank DESC LIMIT 1",
+        String::class.java,
+    )!!
+
+    @Test
+    fun `cleanup completion migration upgrades V100 while unknown old writers stay held`() {
+        val schema = "index_cleanup_${UUID.randomUUID().toString().replace("-", "")}"
+        try {
+            flywayFor(schema, "100").migrate()
+            fun output(provider: String = "rekognition", persons: String = "[]", kind: String = "INDEXING",
+                finished: Boolean = false, batch: Boolean = false): UUID {
+                val token = UUID.randomUUID()
+                jdbcTemplate.update("INSERT INTO $schema.photo_work_outputs " +
+                    "(token, photo_id, event_id, generation, kind, provider, expires_at, person_ids, finished_at, batch_id) " +
+                    "VALUES (?, ?, ?, 0, ?, ?, now() - interval '1 hour', cast(? AS jsonb), ?, ?)",
+                    token, UUID.randomUUID(), UUID.randomUUID(), kind, provider, persons,
+                    if (finished) OffsetDateTime.now() else null, if (batch) UUID.randomUUID() else null)
+                return token
+            }
+            val confirmed = output(persons = "[\"known-face\"]")
+            output()
+            output(provider = "ai_api", persons = "[\"other-face\"]")
+            output(kind = "WATERMARK", provider = "storage", persons = "[\"not-indexing\"]")
+            output(persons = "[\"batch-face\"]", batch = true)
+            output(persons = "[\"settled-face\"]", finished = true)
+
+            flywayFor(schema, "101").migrate()
+
+            assertEquals("101", latestVersion(schema))
+            assertEquals(setOf(confirmed), jdbcTemplate.queryForList(
+                "SELECT token FROM $schema.photo_work_outputs WHERE prior_cleanup_finished_at IS NOT NULL", UUID::class.java).toSet())
         } finally {
             jdbcTemplate.execute("DROP SCHEMA IF EXISTS $schema CASCADE")
         }

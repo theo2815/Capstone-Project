@@ -45,7 +45,7 @@ Each module rulebook is an `AGENTS.md` (canonical) with a `CLAUDE.md` beside it 
 3. **Each backend owns its own domain data.** `ai-api` is stateless about events/users — it stores only API keys, blur jobs and webhook subscriptions (its old face tables remain, but no served code writes them).
 4. **Confidence thresholds are a backend concern.** `ai-api` returns raw scores; each backend applies its own per-event threshold.
 5. **Event isolation must always be enforced.** Every face enroll or search MUST be scoped to one event (Rekognition: one collection per event) — this prevents cross-event leakage.
-6. **Blur detection is desktop-only.** Web + mobile upload paths MUST NOT call any blur endpoint (no `/blur/detect`, no `BLUR_REJECTED` gate, no `blurScore` writes). The backend's `AiApiClient` intentionally has no `blurDetect()` — do not re-add it. Rationale: vault `backend/decisions.md` (2026-05-18), `website/decisions.md` (2026-05-06).
+6. **No blur check during upload; blur culling is desktop-only.** Web + mobile upload paths MUST NOT call any blur endpoint (no `/blur/detect`, no `BLUR_REJECTED` gate, no `blurScore` writes). The backend's `AiApiClient` intentionally has no `blurDetect()`; do not re-add it. One exception, after upload only: the backend's Photo Relevance batch check may measure sharpness through AWS Rekognition (never `ai-api`) once a photographer has stopped uploading. It stores the result in `relevance_photo_checks`, never in a `blurScore` field. Rationale: vault `backend/decisions.md` (2026-05-18), `website/decisions.md` (2026-05-06), `_project/decisions.md` (2026-11-13, Photo Relevance v2).
 7. **`AI_API_ENABLED=false` is the dev default** (env `AI_API_ENABLED`, `application.yml`). When off: photo/selfie upload still works (no embeddings/OCR, `aiDetectionStatus="none"`), face-search short-circuits to 503. It is the single point of control — don't paper over it with mocks or new flags.
 
 Full contracts: `ai-api/docs/integration-architecture.md`, `ai-api/docs/integration-contracts.md`.
@@ -71,6 +71,7 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 - Create NEW commits; never amend published commits without explicit instruction.
 - Never use `--no-verify` or bypass signing unless the user asks. Never force-push `main`.
 - Stage specific files; avoid `git add -A`.
+- **`dev-main` is protected (2026-11-11): changes land only by pull request, once its `unit` and `integration` checks pass.** Push your branch, open a PR into `dev-main`, wait for green (`gh pr checks <n> --watch`), then `gh pr merge <n> --merge`. The branch need not be up to date, so a red `dev-main` run after your merge is yours to check first. This replaces any older "`--no-ff` merge, then `git push origin HEAD:dev-main`" step, which GitHub now refuses. Never merge past a red check.
 - **No agent/tool identity in commits** (no `Co-Authored-By`, no session trailer) — this is the maintainer's house style. Who did what belongs on the vault board + journal, not in git trailers.
 - **Commit messages: plain English a teammate who wasn't there can follow.** A subject line (≤72 chars, optional `module:` prefix) saying what changed, a blank line, then a 2–5 line body: what changed, why, and what it means for users or other code. Describe behaviour in everyday words, not just file or function names; explain any task code you mention. No essays — test output and full rationale go in the vault journal. Only a truly trivial change (typo, one-line config) may be subject-only. Pass the body with a second `-m`. Example:
   ```
@@ -84,6 +85,11 @@ Module-specific conventions (Python layering, Spring packages, React structure) 
 **Cloud testing & deploys**
 - **Read `docs/testing-cloud-services.md` in full before** running backend `integrationTest`, any test that calls AWS / R2 / PayMongo, any Railway or Vercel command, or pushing `dev-main`. Two traps it covers: a plain `integrationTest` in a checkout with `application-local.yml` makes real, billed AWS calls (and that file's bucket is the **production** one — never point a test at it), and a `dev-main` push that changes `backend/**` deploys to staging and runs its migrations.
 - **Cloudflare (R2) from the command line: use the `cf` CLI, not Wrangler**, and run `cf auth whoami` first to confirm the QuickPitik account. Setup and account ID: `docs/testing-cloud-services.md` § Looking at R2 by hand.
+
+**Browser checks**
+- **Use Playwright CLI** — skill `.claude/skills/playwright-cli/SKILL.md` (same copy for Codex in `.agents/skills/`); never run `install --skills`, it is committed. Claude-in-Chrome only when a page needs the user's own logged-in browser.
+- **Check before installing, never reinstall** — first that works wins: `playwright-cli --version` → `npx --no-install playwright cli --version` (then prefix every command with `npx playwright cli`) → else **ask the user**, then `npm i -g @playwright/cli@0.1.24`.
+- **Browser:** open with `--browser=msedge` (Windows) or `--browser=chrome` so nothing downloads; run `install-browser` only after asking.
 
 **Cross-module changes**
 - Changes spanning `ai-api` ↔ backend ↔ client require coordination — update the integration docs in the same commit.
@@ -129,7 +135,8 @@ Project guides live in the vault under `Agent Skills/`. **Read the matching guid
 - **UI work on `website/` or `desktop/`** → `Agent Skills/Frontend Design.md`.
 - **UI work on `mobile/`** → `Agent Skills/Mobile Design.md`.
 - **Apple-style motion/feel on any surface (`website/`, `desktop/`, `mobile/`)** → `Agent Skills/Apple Design.md`. **Opt-in only** — read it when the user explicitly asks for it; it does not replace the two defaults above.
-- **Capstone paper (SRS this semester, SDD next)** — phrase-triggered ("the SRS", "draft §X.Y", "review my section", "my paper"): read `Agent Skills/Document Skill.md` in full, then run its pre-draft ritual (workspace `README.md` → `facts/*.md` → `open-questions.md` → `adviser-log.md` → draft). Final SRS is promoted to `Papers-For-Capstone\SRS-QuickPitik.md`.
+- **Capstone papers (SRS, SDD, SPMP, STD; live Google Docs)** — phrase-triggered ("the SRS", "the STD", "my paper", "review my section"): the work lives in the vault module `capstone-papers/` (index, tasks, decisions, registry) and follows `Agent Skills/Document Skill.md` in full (lanes: audit, plan, edit, verify, close; small-fix; run-logging; release). No paper source lives in this repo (the old `Papers-For-Capstone/SRS-QuickPitik.md`, v1.0 of May 2026, was removed on 2026-11-03; Document Skill hard rule 9).
+- **Unattended plan runs (a conductor session drives a worker session in an Orca tab)** — phrase-triggered ("you are the conductor", "conductor prompt", "run the plan through worker-1", "drive the worker") → `Agent Skills/Conductor.md`.
 
 (For Claude these auto-load via `.claude/rules/*`; other agents open the file by path. Same guide, either way.)
 
@@ -157,7 +164,7 @@ Session memory, tasks, decisions, the live work board, and working notes that do
 
 **Session start (MANDATORY):**
 1. Read the vault `AGENTS.md` + `VAULT-INDEX.md` (current state) **and `ACTIVE.md`** (what's in flight right now, by whom).
-2. Ask which module(s) to work on: `ai-api` · `backend` · `website` · `mobile` · `desktop`.
+2. Ask which module(s) to work on: `ai-api` · `backend` · `website` · `mobile` · `desktop` · `capstone-papers` (the vault module; Document Skill).
 3. Read that module's `tasks.md` from the vault and show its tasks. Begin implementation only after the user confirms a task.
 4. Before non-trivial feature work, **claim it on `ACTIVE.md`** (add your block: agent label, branch, status). This is how agents avoid colliding.
 

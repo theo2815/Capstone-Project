@@ -36,8 +36,8 @@ back to a different member's directory.
 
 - **Git identity:** `dillan@quickpitik.com` · `dillan.dillam@gmail.com` · `dillanycoy@Adubus-MacBook-Air.local`
 - **Second Brain (vault):** `/Users/dillanycoy/Capstone-Obsidian-Vault`
-- **BatchMyPhotos:** `TBD — ask Dillan, then record it here`
-- **Monorepo:** `TBD — ask Dillan, then record it here`
+- **BatchMyPhotos:** `/Users/dillanycoy/BatchMyPhotos` (cloned 2026-11-07)
+- **Monorepo:** `/Users/dillanycoy/Capstone-Project`
 
 **Windows machine** (identity `dillan.dillam@gmail.com`)
 
@@ -62,7 +62,7 @@ back to a different member's directory.
   relative path between the monorepo and the vault — use the absolutes above.
 - **One entry per member assumes one machine each.** If someone starts working
   from a second machine, add its identity line and its own path block.
-- **Kristine Purez and Brye Sy** (Documents leads) have no entry — they work in
-  the vault's `Documentation for capstone paper/` workspace and need neither the
+- **Kristine Pureza and Brye Sy** (Documents leads) have no entry — they work in
+  the vault's `capstone-papers/` module (the papers are Google Docs) and need neither the
   monorepo nor BatchMyPhotos. Add them if that changes.
 - Roster, roles, and name-format conventions: vault `_project/team.md`.

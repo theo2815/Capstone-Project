@@ -26,6 +26,17 @@ interface AdminResolveDisputeModalProps {
   disputeId: string;
   orderTotal: number;
   itemChargeAmount?: number | null;
+  /** QR Ph can only refund the whole payment, so it offers a full refund and nothing else. */
+  paymentMethod?: string;
+  /** DW-3: false means a full refund cannot be approved now; Approve is then disabled. */
+  refundable?: boolean | null;
+  refundBlockedReason?: "bought_together" | "window_closed" | "no_payment" | null;
+  refundBlockedMessage?: string | null;
+  paymentPhotoCount?: number | null;
+  /** The runner's reason, used to start the note ("Approved: <reason>."). */
+  reasonLabel?: string;
+  /** Swap to the Deny modal with this reason picked (bought_together / window_closed only). */
+  onDenyWithReason?: (code: "bought_together" | "window_closed") => void;
 }
 
 // Resolve modal for /admin/disputes/[id]. Carries the resolution radio +
@@ -42,19 +53,29 @@ export function AdminResolveDisputeModal({
   disputeId,
   orderTotal,
   itemChargeAmount,
+  paymentMethod,
+  refundable = null,
+  refundBlockedReason = null,
+  refundBlockedMessage = null,
+  paymentPhotoCount = null,
+  reasonLabel,
+  onDenyWithReason,
 }: AdminResolveDisputeModalProps) {
   const [resolution, setResolution] = useState<DisputeResolution>("refund_full");
   const [partialAmount, setPartialAmount] = useState<string>("");
   const [note, setNote] = useState("");
 
-  // Reset whenever the modal closes so the next open starts fresh.
+  const prefill = reasonLabel ? `Approved: ${reasonLabel}.` : "";
+  // Start filled in on open; reset whenever the modal closes so the next open starts fresh.
   useEffect(() => {
-    if (!open) {
-      setResolution("refund_full");
-      setPartialAmount("");
-      setNote("");
-    }
-  }, [open]);
+    setResolution("refund_full");
+    setPartialAmount("");
+    setNote(open ? prefill : "");
+  }, [open, prefill]);
+
+  const fullOnly = paymentMethod === "qrph";
+  const blocked = refundable === false;
+  const denyCode = refundBlockedReason === "bought_together" || refundBlockedReason === "window_closed" ? refundBlockedReason : null;
 
   const parsedPartial = Number(partialAmount);
   const chargeAvailable = itemChargeAmount != null && Number.isFinite(itemChargeAmount) && itemChargeAmount > 0;
@@ -66,8 +87,9 @@ export function AdminResolveDisputeModal({
     parsedPartial < itemChargeAmount;
 
   const continueDisabled =
+    blocked ||
     note.trim().length === 0 ||
-    (resolution !== "deny" && !chargeAvailable) ||
+    !chargeAvailable ||
     (resolution === "refund_partial" && !partialValid);
 
   const partialHint =
@@ -101,18 +123,41 @@ export function AdminResolveDisputeModal({
       escDisabled={escDisabled}
       intro={
         <>
-          Order total{" "}
-          <span className="text-ink tnum">{formatPrice(orderTotal)}</span>.
+          {chargeAvailable && (
+            <>
+              This photo&apos;s charge <span className="text-ink tnum">{formatPrice(itemChargeAmount)}</span>
+              {" "}(order total <span className="tnum">{formatPrice(orderTotal)}</span>).
+            </>
+          )}
           {chargeAvailable
             ? " Choose how to settle this dispute."
             : itemChargeAmount === 0
-              ? " This item has no refundable charge."
-              : " Item charge unavailable; retry when order details load."}
+              ? <>Order total <span className="tnum">{formatPrice(orderTotal)}</span>. This item has no refundable charge.</>
+              : <>Order total <span className="tnum">{formatPrice(orderTotal)}</span>. Item charge unavailable; retry when order details load.</>}
         </>
       }
-      submitLabel={resolution === "deny" ? "Deny" : "Continue"}
+      submitLabel="Continue"
       submitDisabled={continueDisabled}
     >
+      {blocked && (
+        <div role="alert" className="space-y-2 rounded-lg border border-line p-3 font-sans text-sm text-ink-soft">
+          <p>
+            {refundBlockedMessage ?? "A refund can't be approved for this dispute."}
+            {refundBlockedReason === "bought_together" && paymentPhotoCount != null && (
+              <> The payment covers <span className="tnum">{paymentPhotoCount}</span> photos.</>
+            )}
+          </p>
+          {denyCode && onDenyWithReason && (
+            <button
+              type="button"
+              onClick={() => onDenyWithReason(denyCode)}
+              className="font-mono uppercase tracking-[0.14em] text-[13px] text-ink underline"
+            >
+              Deny with this reason
+            </button>
+          )}
+        </div>
+      )}
       <AdminFormSection label="Resolution">
         <AdminRadioGroup
           name="resolution"
@@ -130,14 +175,9 @@ export function AdminResolveDisputeModal({
                 </>
               ),
             },
-            {
-              value: "refund_partial",
-              label: <>Partial refund — enter amount below.</>,
-            },
-            {
-              value: "deny",
-              label: <>Deny — no refund, dispute closes.</>,
-            },
+            ...(fullOnly
+              ? []
+              : [{ value: "refund_partial", label: <>Partial refund — enter amount below.</> }]),
           ]}
         />
       </AdminFormSection>

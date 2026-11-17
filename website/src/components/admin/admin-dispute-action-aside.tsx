@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
-import type { Dispute, DisputeResolution } from "@/lib/admin-disputes";
+import { DISPUTE_REASON_LABEL, type Dispute, type DisputeResolution } from "@/lib/admin-disputes";
 import { formatPrice } from "@/lib/utils";
 import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
@@ -21,6 +21,10 @@ import {
 interface AdminDisputeActionAsideProps {
   dispute: Dispute;
   runnerHandle: string;
+  // Reports whether any of the aside's dialogs is open, so a host drawer can stand its Esc down.
+  onDialogOpenChange?: (open: boolean) => void;
+  // Replaces the page-column layout (sticky on lg); the card look stays.
+  className?: string;
 }
 
 interface PendingResolve {
@@ -30,7 +34,7 @@ interface PendingResolve {
 }
 
 // Sticky-on-lg / inline-on-md action cluster for the dispute detail
-// page. Carries Resolve / Deny / Escalate. Resolve uses a stacked-modal
+// page. Carries Approve refund / Deny / Escalate. Approve uses a stacked-modal
 // pattern: open <AdminResolveDisputeModal>, capture form values into
 // `pendingResolve`, then mount <AdminRefundConfirmModal> on top with the
 // parent in escDisabled mode. Cancel on the child returns to the parent
@@ -42,38 +46,50 @@ interface PendingResolve {
 export function AdminDisputeActionAside({
   dispute,
   runnerHandle,
+  onDialogOpenChange,
+  className = "lg:sticky lg:top-24 mt-12 lg:mt-0",
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
-  const { resolve, deny, escalate, isPending, pendingAction } = useDisputeActions();
+  const { resolve, denyWithCode, escalate, isPending, pendingAction } = useDisputeActions();
 
   const submitting = isPending(dispute.id);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [denyOpen, setDenyOpen] = useState(false);
+  // The reason the Deny modal opens with, set by "Deny with this reason" in the Approve modal.
+  const [denyCode, setDenyCode] = useState<string | null>(null);
   const [escalateOpen, setEscalateOpen] = useState(false);
 
   // Lifted state for the stacked refund-confirm flow.
   const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
     null,
   );
+  // The refund panel's own confirm and cancel dialogs.
+  const [panelDialogOpen, setPanelDialogOpen] = useState(false);
+  const dialogOpen = resolveOpen || denyOpen || escalateOpen || pendingResolve !== null || panelDialogOpen;
+  // One writer, so a late "closed" from one modal can never clear another's "open".
+  // The cleanup also clears the host flag if the aside unmounts with a dialog open.
+  // Layout effect: the host hears it in the same commit, so no Esc lands in between.
+  useLayoutEffect(() => {
+    onDialogOpenChange?.(dialogOpen);
+    return () => onDialogOpenChange?.(false);
+  }, [dialogOpen, onDialogOpenChange]);
 
-  // Every action needs an open dispute: the server escalates open ones only.
-  const isOpen = dispute.status === "open";
+  // An escalated dispute is still the admin's to decide; only Escalate is for open ones.
+  // (An approved refund that is still parked also has status "escalated", but its attention differs.)
+  const isEscalated = dispute.attention === "escalated";
+  const isOpen = dispute.status === "open" || isEscalated;
 
-  async function handleContinueResolve(args: PendingResolve) {
+  function handleContinueResolve(args: PendingResolve) {
     if (submitting) return;
-    if (args.resolution === "deny") {
-      // Deny path inside Resolve modal — no stacked confirm.
-      const ok = await resolve(dispute.id, {
-        resolution: "deny",
-        refundAmount: null,
-        reason: args.note,
-      });
-      if (!ok) return;
-      setResolveOpen(false);
-      showToast({ kind: "info", message: `Closed without refund · ${dispute.id}` });
-      return;
-    }
     setPendingResolve(args);
+  }
+
+  // A swap, not a stack: one state commit closes Approve and opens Deny, so the host never sees "no dialog".
+  function handleSwapToDeny(code: string) {
+    setPendingResolve(null);
+    setResolveOpen(false);
+    setDenyCode(code);
+    setDenyOpen(true);
   }
 
   async function handleConfirmRefund() {
@@ -100,9 +116,9 @@ export function AdminDisputeActionAside({
     setPendingResolve(null);
   }
 
-  async function handleDeny(reason: string) {
+  async function handleDeny(reasonCode: string, note: string | null) {
     if (submitting) return;
-    const ok = await deny(dispute.id, reason);
+    const ok = await denyWithCode(dispute.id, reasonCode, note);
     if (!ok) return;
     setDenyOpen(false);
     showToast({ kind: "info", message: `Denied · ${dispute.id}` });
@@ -119,7 +135,7 @@ export function AdminDisputeActionAside({
   return (
     <aside
       aria-label="Admin actions"
-      className="lg:sticky lg:top-24 mt-12 lg:mt-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
+      className={`${className} rounded-2xl border border-line bg-bone p-5 md:p-6`}
     >
       <Kicker as="p" tone="soft">
         Admin actions
@@ -134,11 +150,14 @@ export function AdminDisputeActionAside({
               disabled={submitting}
               className={primaryFreshBtn}
             >
-              Resolve…
+              Approve refund…
             </button>
             <button
               type="button"
-              onClick={() => setDenyOpen(true)}
+              onClick={() => {
+                setDenyCode(null);
+                setDenyOpen(true);
+              }}
               disabled={submitting}
               className={dangerBtn}
             >
@@ -146,7 +165,13 @@ export function AdminDisputeActionAside({
             </button>
           </>
         )}
-        {isOpen && (
+        {isOpen && dispute.refundable === false && dispute.refundBlockedMessage && (
+          <p className="font-sans text-sm text-slate-soft">{dispute.refundBlockedMessage}</p>
+        )}
+        {isOpen && dispute.refundable === true && (
+          <p className="font-sans text-sm text-slate-soft">A full refund can be approved now.</p>
+        )}
+        {isOpen && !isEscalated && (
           <button
             type="button"
             onClick={() => setEscalateOpen(true)}
@@ -156,7 +181,7 @@ export function AdminDisputeActionAside({
             Escalate…
           </button>
         )}
-        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} />}
+        {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={setPanelDialogOpen} />}
         {!isOpen && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
             This dispute is closed. No further actions are available.
@@ -176,6 +201,13 @@ export function AdminDisputeActionAside({
         disputeId={dispute.id}
         orderTotal={dispute.orderSnapshot.total}
         itemChargeAmount={dispute.itemChargeAmount}
+        paymentMethod={dispute.orderSnapshot.paymentMethod}
+        refundable={dispute.refundable}
+        refundBlockedReason={dispute.refundBlockedReason}
+        refundBlockedMessage={dispute.refundBlockedMessage}
+        paymentPhotoCount={dispute.paymentPhotoCount}
+        reasonLabel={DISPUTE_REASON_LABEL[dispute.reason]}
+        onDenyWithReason={handleSwapToDeny}
       />
       {pendingResolve &&
         pendingResolve.resolution !== "deny" &&
@@ -197,6 +229,7 @@ export function AdminDisputeActionAside({
         onClose={() => setDenyOpen(false)}
         onSubmit={handleDeny}
         disputeId={dispute.id}
+        defaultCode={denyCode}
       />
       <AdminEscalateModal
         submitting={submitting}
@@ -204,7 +237,7 @@ export function AdminDisputeActionAside({
         onClose={() => setEscalateOpen(false)}
         onSubmit={handleEscalate}
         targetLabel={`Escalate ${dispute.id}`}
-        body="Push this dispute to the next review tier. The runner sees the dispute remains open while higher-level review takes place."
+        body="Push this dispute to the next review tier when you can't decide yet. You can still approve or deny it afterwards."
       />
     </aside>
   );

@@ -21,6 +21,7 @@ import com.quickpitik.repository.OrderItemRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.isEditableRaceOf
 import com.quickpitik.service.storage.StorageService
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -40,6 +41,8 @@ class PhotographerEventService(
     private val storageProperties: StorageProperties,
     private val eventDtoMapper: EventDtoMapper,
     private val photographerSettingsRepository: PhotographerSettingsRepository,
+    private val racePriceService: com.quickpitik.service.events.RacePriceService,
+    private val raceProperties: com.quickpitik.config.RaceProperties,
 ) {
     // The caller's public handle is the same for every event they cover, so
     // resolve it once per request. null until they set one — the client then
@@ -76,12 +79,16 @@ class PhotographerEventService(
     fun getEventDetail(photographerId: UUID, eventId: UUID, includeRemoved: Boolean = false): PhotographerEventDetailDto {
         val event = eventRepository.findById(eventId).orElse(null)?.takeIf { includeRemoved || it.deletedAt == null }
             ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
-        val ep = loadOrEmpty(eventId, photographerId)
+        val coverageId = com.quickpitik.entity.EventPhotographerId(eventId, photographerId)
+        val row = eventPhotographerRepository.findById(coverageId).orElse(null)
+        val ep = row ?: EventPhotographer(id = coverageId)
         // Hide events the photographer has never touched — anti-leak per Q-014.
         // An event they created (V46) is theirs before the first upload.
         val owned = event.createdBy != null && event.createdBy == photographerId
+        // A shared race (AA-R3) is theirs once they submitted or joined it, before the first upload.
+        val raceCovered = event.eventType != null && (event.submittedBy == photographerId || row != null)
         val historicalRevenue = includeRemoved && ep.revenueKeptPhp.signum() > 0
-        if (!owned && ep.photoCount == 0 && ep.firstUploadAt == null && !historicalRevenue &&
+        if (!owned && !raceCovered && ep.photoCount == 0 && ep.firstUploadAt == null && !historicalRevenue &&
             !orderItemRepository.existsSettledPurchaseForEvent(photographerId, eventId)) {
             throw NotFoundException(
                 code = ErrorCodes.EVENT_NOT_FOUND,
@@ -94,6 +101,10 @@ class PhotographerEventService(
             eventDtoMapper.resolveBannerUrl(event),
             viewerId = photographerId,
             handle = resolveHandle(photographerId),
+        ).copy(
+            racePrice = racePriceService.toDto(event, row),
+            canEditRace = raceProperties.selfServeEnabled && event.isEditableRaceOf(photographerId) &&
+                !eventPhotographerRepository.existsOtherUploader(eventId, photographerId),
         )
     }
 
@@ -162,13 +173,4 @@ class PhotographerEventService(
             expiresAt = OffsetDateTime.now().plus(ttl),
         )
     }
-
-    private fun loadOrEmpty(eventId: UUID, photographerId: UUID): EventPhotographer =
-        eventPhotographerRepository.findById(
-            com.quickpitik.entity.EventPhotographerId(eventId, photographerId),
-        ).orElseGet {
-            EventPhotographer(
-                id = com.quickpitik.entity.EventPhotographerId(eventId, photographerId),
-            )
-        }
 }

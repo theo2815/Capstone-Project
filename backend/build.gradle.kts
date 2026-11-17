@@ -51,6 +51,8 @@ dependencies {
 	// app.ai.provider=rekognition (the AWS-managed alternative to self-hosted
 	// ai-api for web/mobile face + bib). Same SDK version as s3 above.
 	implementation("software.amazon.awssdk:rekognition:2.30.21")
+	// AA-I2: 15-minute browser keys for the live selfie (AssumeRole, AA-0.2).
+	implementation("software.amazon.awssdk:sts:2.30.21")
 
 	// Pooled HTTP client for the ai-api RestClient (RestClientConfig). Async
 	// photo indexing fans out concurrent face + bib calls; the default
@@ -139,5 +141,14 @@ val integrationTest by tasks.registering(Test::class) {
 	classpath = sourceSets.test.get().runtimeClasspath
 	shouldRunAfter(tasks.test)
 	maxHeapSize = "2g"
-	forkEvery = 1
+	// One JVM runs many classes, so classes with the same setup share one started Spring app.
+	// At most 4 apps stay in memory (Spring's default of 32 ran the heap out on 2026-10-07).
+	systemProperty("spring.test.context.cache.maxSize", "4")
+	// CI runners have 4 CPUs and 16 GB; a laptop keeps one worker (it has run out of memory before).
+	if (System.getenv("CI") != null) maxParallelForks = 2
+	// -PitShards=4 -PitShard=0..3 runs one quarter of the classes (CI splits the suite over 4 machines).
+	// A nested class goes with its outer class, so a class's fixtures never land on another shard.
+	val shards = (project.findProperty("itShards") as String?)?.toInt() ?: 1
+	val shard = (project.findProperty("itShard") as String?)?.toInt() ?: 0
+	if (shards > 1) exclude { !it.isDirectory && Math.floorMod(it.path.removeSuffix(".class").substringBefore('$').hashCode(), shards) != shard }
 }

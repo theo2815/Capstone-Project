@@ -4,8 +4,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearTokens, setTokens } from "@/lib/auth";
 import type { EventPhotosResult } from "@/lib/api-photos";
 import { shrinkSelfie } from "@/lib/image-utils";
+import { BIB_NOTICE_VERSION, FACE_NOTICE_VERSION } from "@/lib/legal/copy";
 import { useAuthStore } from "@/store/auth-store";
-import { SelfieSearchPanel } from "./bib-search-panels";
+import { useBibConsentStore, useFaceConsentStore } from "@/store/face-consent-store";
+import { BibPanel, SelfieSearchPanel } from "./bib-search-panels";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/events/race" }));
 vi.mock("@/lib/image-utils", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/image-utils")>()), shrinkSelfie: vi.fn() }));
@@ -25,6 +27,7 @@ const found = () => new Response(JSON.stringify({ success: true, data: searchRes
 let client: QueryClient;
 beforeEach(() => {
   library.selfies = [];
+  useFaceConsentStore.getState().accept();
   vi.mocked(shrinkSelfie).mockReset().mockImplementation(async (picked) => picked);
   useAuthStore.getState().startSession(runner);
   setTokens("access-a", "refresh-a");
@@ -158,4 +161,70 @@ it("tells the runner how long to wait when the search is refused with a 429", as
   vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => refused()));
   mountAndPick(vi.fn());
   expect(await screen.findByText("Too many searches. Try again in about 19 seconds.")).toBeInTheDocument();
+});
+
+const mountPanel = (onSearchSuccess = vi.fn()) =>
+  render(<QueryClientProvider client={client}><SelfieSearchPanel eventSlug="race" onSwitchToBib={() => {}} onSearchSuccess={onSearchSuccess} /></QueryClientProvider>);
+
+it("keeps every selfie action off until the face-matching box is ticked", async () => {
+  useFaceConsentStore.setState({ acceptedVersion: null });
+  library.selfies = [selfie];
+  const fetch = vi.fn().mockImplementation(async () => found());
+  vi.stubGlobal("fetch", fetch);
+  const onSearchSuccess = vi.fn();
+  mountPanel(onSearchSuccess);
+  expect(screen.getByLabelText(/Take a selfie/)).toBeDisabled();
+  expect(screen.getByLabelText(/Upload a selfie/)).toBeDisabled();
+  expect(screen.getByRole("button", { name: /Use saved selfie/ })).toBeDisabled();
+  expect(screen.getByRole("link", { name: /How face matching works/ })).toHaveAttribute("href", "/privacy#face-matching");
+  // A change event that slips past the disabled input still sends nothing.
+  fireEvent.change(screen.getByLabelText(/Upload a selfie/), { target: { files: [file] } });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(fetch).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByLabelText(/I agree to face matching/));
+  expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Upload a selfie/), { target: { files: [file] } });
+  await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
+});
+
+it("remembers the tick on this device after a remount", () => {
+  useFaceConsentStore.setState({ acceptedVersion: null });
+  const { unmount } = mountPanel();
+  fireEvent.click(screen.getByLabelText(/I agree to face matching/));
+  unmount();
+  mountPanel();
+  expect(screen.queryByLabelText(/I agree to face matching/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
+  expect(JSON.parse(localStorage.getItem("quickpitik-face-consent")!).state.acceptedVersion).toBe(FACE_NOTICE_VERSION);
+});
+
+// Review S10 (task BT-1): a bib search looks for a person's photos too.
+const mountBib = (onSubmit = vi.fn()) =>
+  render(<BibPanel bibInput="1234" onBibChange={() => {}} onSubmit={onSubmit} onSwitchToSelfie={() => {}} />);
+
+it("sends no bib search until the bib box is ticked", () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  const onSubmit = vi.fn();
+  mountBib(onSubmit);
+  expect(screen.getByRole("link", { name: /How search works/ })).toHaveAttribute("href", "/privacy#face-matching");
+  expect(screen.getByRole("button", { name: /Search by bib/ })).toBeDisabled();
+  // Enter in the field submits the form even with the button off.
+  fireEvent.submit(screen.getByRole("button", { name: /Search by bib/ }).closest("form")!);
+  expect(onSubmit).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByLabelText(/This is my bib number/));
+  fireEvent.click(screen.getByRole("button", { name: /Search by bib/ }));
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+});
+
+it("remembers the bib tick on this device after a remount", () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  const { unmount } = mountBib();
+  fireEvent.click(screen.getByLabelText(/This is my bib number/));
+  unmount();
+  mountBib();
+  expect(screen.queryByLabelText(/This is my bib number/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Search by bib/ })).not.toBeDisabled();
+  expect(JSON.parse(localStorage.getItem("quickpitik-bib-consent")!).state.acceptedVersion).toBe(BIB_NOTICE_VERSION);
 });

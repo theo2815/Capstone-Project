@@ -1,0 +1,57 @@
+name: website-tests
+
+on:
+  push:
+    branches: [dev-main, main]
+    paths: ['website/**', '.github/workflows/website-tests.yml']
+  # Every PR runs this workflow so `website` can be a required check: a check that never
+  # starts would block a backend-only PR. The changes job skips the job instead.
+  pull_request:
+  merge_group:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      website: ${{ steps.diff.outputs.website }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: origin/${{ github.base_ref }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            merge_group) base="$QUEUE_BASE" ;;
+            *) base="" ;;
+          esac
+          if [ -z "$base" ] || git diff --name-only "$base...HEAD" | grep -qE '^(website/|\.github/workflows/website-tests\.yml$)'; then
+            echo website=true >> "$GITHUB_OUTPUT"
+          else
+            echo website=false >> "$GITHUB_OUTPUT"
+          fi
+
+  # No secrets and no build: the legal-copy guard (src/lib/legal/publishable.ts) still runs
+  # in the Vercel production build.
+  website:
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: npm run test

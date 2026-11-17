@@ -105,7 +105,9 @@ export function useAdminUserActions() {
       qc.setQueryData<AdminUserRow[]>(adminUserKeys.list(owner), (rows) =>
         rows?.map((existing) => existing.userId === id ? row : existing));
       qc.setQueryData<AdminUserDetail | null>(adminUserKeys.detail(owner, id), (detail) =>
-        detail ? { ...row, decisionLog: detail.decisionLog } : detail);
+        detail ? { ...row, decisionLog: detail.decisionLog,
+          // A list row never carries the withdrawal (RV-L7); only an explicit null from the server clears it.
+          relevanceConsentWithdrawnAt: row.relevanceConsentWithdrawnAt === undefined ? detail.relevanceConsentWithdrawnAt : row.relevanceConsentWithdrawnAt } : detail);
       // The mutation returns a row, not history or settings. Refetch those
       // resources; never manufacture a decision or timestamp in the browser.
       if (!batch) refresh(owner);
@@ -150,16 +152,18 @@ export function useAdminUserActions() {
       },
       isPending: (ids: string[]) => mutation.isPending(ids.map((id) => ({ kind: "user", id }))),
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "user", id }]),
-      approve: (id: string, revision?: number) => run(id, "Approving…", () => approveUser(id, revision), "approve"),
       reject: (id: string, reason: string, revision?: number) => run(id, "Sending back…", () => rejectUser(id, reason, revision), "reject"),
+      // Only for a profile held after a reset or reject; the server answers 409 otherwise.
+      approveHeld: (id: string, revision?: number) => run(id, "Approving…", () => approveUser(id, revision), "approve"),
       suspend: (id: string, reason: string) => run(id, "suspend", () => suspendUser(id, reason)),
       unsuspend: (id: string) => run(id, "Unsuspending…", () => unsuspendUser(id), "unsuspend"),
       resetVerification: (id: string, reason: string, revision?: number) => run(id, "Resetting verification…", () => resetUserVerification(id, reason, revision), "reset verification"),
-      verifyBatch: async (rows: { userId: string; verificationRevision: number }[], action: "approve" | "reject", reason = ""): Promise<boolean[] | null> => {
-        const result = await mutation.run({ targets: rows.map((row) => ({ kind: "user", id: row.userId })), action: action === "approve" ? "Approving…" : "Sending back…", execute: async () => {
+      // Bulk send back only: profiles approve themselves once identity passes (Q7).
+      verifyBatch: async (rows: { userId: string; verificationRevision: number }[], reason: string): Promise<boolean[] | null> => {
+        const result = await mutation.run({ targets: rows.map((row) => ({ kind: "user", id: row.userId })), action: "Sending back…", execute: async () => {
           const session = useAuthStore.getState();
-          const outcomes = await Promise.all(rows.map((row) => settle(row.userId, action,
-            () => action === "approve" ? approveUser(row.userId, row.verificationRevision) : rejectUser(row.userId, reason, row.verificationRevision), true)));
+          const outcomes = await Promise.all(rows.map((row) => settle(row.userId, "reject",
+            () => rejectUser(row.userId, reason, row.verificationRevision), true)));
           if (useAuthStore.getState().sessionVersion === session.sessionVersion) refresh(session.user!.id);
           return outcomes;
         } });

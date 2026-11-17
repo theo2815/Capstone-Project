@@ -1,6 +1,7 @@
 package com.quickpitik.mobile.ui.photographer
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -12,6 +13,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.RadioButton
@@ -25,11 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerEventDetailDto
+import com.quickpitik.mobile.data.remote.RegionDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.ui.theme.*
 
@@ -39,24 +46,51 @@ import com.quickpitik.mobile.ui.theme.*
 // event becomes a change the admin approves (the form says so). Diff-only PATCH:
 // blank/unchanged = not sent.
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun PhotographerEventFormScreen(
     viewModel: PhotographerDashboardViewModel,
     eventId: String?, // null = create
     onBack: () -> Unit,
     onSaved: () -> Unit,
+    regions: List<RegionDto> = emptyList(),
 ) {
     val formState by viewModel.eventFormState.collectAsState()
+    val raceState by viewModel.raceFormState.collectAsState()
+    val raceTypes by viewModel.raceTypes.collectAsState()
+    val context = LocalContext.current
     val editTarget by viewModel.eventEditTarget.collectAsState()
     val eventsState by viewModel.eventsState.collectAsState()
     val summary = (eventsState as? EventsState.Success)?.events?.firstOrNull { it.id == eventId }
     val isEdit = eventId != null
 
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.resetEventForm() }
+    }
+
     LaunchedEffect(eventId) {
         viewModel.resetEventForm()
         if (eventId != null) viewModel.loadEventDetail(eventId)
+        else viewModel.loadRaceTypes()
     }
     LaunchedEffect(formState) {
         if (formState is EventFormState.Success) onSaved()
+    }
+    LaunchedEffect(raceState) {
+        val result = when (val state = raceState) {
+            is RaceFormState.Created -> state.result
+            is RaceFormState.PendingReview -> state.result
+            else -> null
+        }
+        if (result != null) {
+            val message = when {
+                result.outcome == "pending_review" -> "Sent for review. Uploads open once an admin approves it."
+                result.event?.reviewStatus == "pending" -> RACE_PENDING_JOIN_LINE
+                result.outcome == "joined" -> "You joined ${result.event?.name ?: "the race"}."
+                else -> "Your race is live on /events."
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            onSaved()
+        }
     }
 
     // Prefill: detail (has description/organizer/price) when it lands, else the
@@ -83,14 +117,26 @@ fun PhotographerEventFormScreen(
         mutableStateOf(if ((reqWm ?: seed?.watermarkPolicy) == "none") "none" else "own")
     }
     var coverUri by remember { mutableStateOf<Uri?>(null) }
+    var raceType by remember { mutableStateOf<String?>(null) }
+    var typeMenuExpanded by remember { mutableStateOf(false) }
+    var regionCode by remember { mutableStateOf("") }
+    var provinceCode by remember { mutableStateOf("") }
+    val types = raceTypes?.types.orEmpty().filter { !it.code.isNullOrBlank() }
+    val typePicker = !isEdit && raceTypes?.selfServeEnabled == true && types.isNotEmpty()
+    val isRace = typePicker && types.any { it.code == raceType && it.shared == true }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) coverUri = uri
     }
 
     val dateValid = isValidEventDate(date)
-    val priceValid = isValidEventPrice(pricingMode, price)
-    val submitting = formState is EventFormState.Submitting
-    val canSubmit = title.isNotBlank() && location.isNotBlank() && dateValid && priceValid && !submitting
+    val priceValid = isRace || isValidEventPrice(pricingMode, price)
+    val submitting = formState is EventFormState.Submitting || raceState is RaceFormState.Submitting
+    val input = ownedEventFormInput(seed, isEdit, title, date, location, organizer, description, visibility,
+        pricingTrio(pricingMode, price, watermark), coverUri?.toString()).copy(
+        eventType = raceType.takeIf { isRace }, regionCode = regionCode, provinceCode = provinceCode,
+    )
+    val canSubmit = title.isNotBlank() && location.isNotBlank() && dateValid && priceValid && !submitting &&
+        (!typePicker || raceType != null) && raceFormErrors(input).isEmpty()
 
     // Trio the form would send, and whether it differs from what it prefilled from.
     val trio = pricingTrio(pricingMode, price, watermark)
@@ -98,15 +144,50 @@ fun PhotographerEventFormScreen(
 
     val submitLabel = when {
         submitting -> "Saving…"
+        isRace -> "Create race"
         !isEdit -> "Submit for review"
         isLive && trioChanged -> "Save · request pricing change"
         else -> "Save changes"
     }
 
-    fun submit() = viewModel.submitEvent(
-        eventId,
-        ownedEventFormInput(seed, isEdit, title, date, location, organizer, description, visibility, trio, coverUri?.toString()),
-    )
+    fun submit() {
+        if (isRace) viewModel.submitRace(input)
+        else viewModel.submitEvent(eventId, input.copy(eventType = null, regionCode = null, provinceCode = null))
+    }
+
+    val duplicate = (raceState as? RaceFormState.Duplicate) ?: (raceState as? RaceFormState.Submitting)?.duplicate
+    if (duplicate != null) {
+        ModalBottomSheet(
+            onDismissRequest = { if (!submitting) viewModel.dismissRaceDuplicate() },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { !submitting }),
+            containerColor = Bone,
+        ) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(if (duplicate.outcome == "match") "This race is already listed." else "Is it one of these races?",
+                    style = Typography.titleMedium, color = Ink)
+                Text("Join the race so your photos land beside everyone else's. If yours is a different race, say so and an admin checks it.",
+                    style = Typography.bodyMedium, color = Slate)
+                duplicate.candidates.forEach { candidate ->
+                    QpCard {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(candidate.name.orEmpty(), style = Typography.titleMedium, color = Ink)
+                            Text("${candidate.date.orEmpty()} · ${candidate.location.orEmpty()}", style = Typography.bodyMedium, color = Slate)
+                            if (candidate.reviewStatus == "pending") Text(RACE_PENDING_JOIN_LINE, style = Typography.bodySmall, color = Slate)
+                            val join = { viewModel.joinRace(candidate.id!!, title.trim()) }
+                            if (duplicate.candidates.size == 1) PrimaryCta("Join ${candidate.name.orEmpty()}", join, enabled = !submitting)
+                            else GhostCta("Join ${candidate.name.orEmpty()}", join, enabled = !submitting)
+                        }
+                    }
+                }
+                duplicate.error?.let { Text(it, style = Typography.bodyMedium, color = ErrorRed) }
+                GhostCta("Mine is different", { viewModel.submitRace(input, duplicate.candidates.first().id) },
+                    enabled = !submitting, modifier = Modifier.fillMaxWidth())
+                GhostCta("Back to form", { viewModel.dismissRaceDuplicate() }, enabled = !submitting, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -141,6 +222,27 @@ fun PhotographerEventFormScreen(
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 24.dp),
         ) {
+            if (typePicker) {
+                DropdownField(
+                    label = "Event type",
+                    valueLabel = types.firstOrNull { it.code == raceType }?.label.orEmpty(),
+                    placeholder = "Pick a race type, or Other",
+                    expanded = typeMenuExpanded,
+                    onExpand = { typeMenuExpanded = true },
+                    onCollapse = { typeMenuExpanded = false },
+                    enabled = !submitting,
+                ) {
+                    types.forEach { type ->
+                        DropdownMenuItem(text = {
+                            Column {
+                                Text(type.label.orEmpty(), color = Ink, style = Typography.bodyMedium)
+                                Text(type.hint.orEmpty(), color = Slate, style = Typography.bodySmall)
+                            }
+                        }, onClick = { raceType = type.code; typeMenuExpanded = false })
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
             FormField("Title", title, { title = it }, "Paksit Sunrise Run", enabled = !submitting)
             Spacer(Modifier.height(16.dp))
             FormField("Location · Venue, City", location, { location = it }, "SRP Boulevard, Cebu City", enabled = !submitting)
@@ -153,6 +255,12 @@ fun PhotographerEventFormScreen(
             FormField("Organizer · optional", organizer, { organizer = it }, "Your studio or the race organizer", enabled = !submitting)
             Spacer(Modifier.height(16.dp))
             FormField("Race day notes · optional", description, { description = it }, "Where you'll shoot, what to look for.", enabled = !submitting, singleLine = false)
+            if (isRace) {
+                Spacer(Modifier.height(16.dp))
+                RegionSlab(regions, regionCode, provinceCode,
+                    onRegionChange = { regionCode = it; provinceCode = "" },
+                    onProvinceChange = { provinceCode = it }, enabled = !submitting)
+            }
 
             Spacer(Modifier.height(20.dp))
             Kicker("Cover photo · optional")
@@ -175,57 +283,64 @@ fun PhotographerEventFormScreen(
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
-            Divider()
-            Spacer(Modifier.height(16.dp))
-            Kicker(if (isLive) "Pricing · change request" else "Pricing")
-            if (isLive) {
+            if (!isRace) {
+                Spacer(Modifier.height(24.dp))
+                Divider()
+                Spacer(Modifier.height(16.dp))
+                Kicker(if (isLive) "Pricing · change request" else "Pricing")
+                if (isLive) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Pricing on a live event changes only after an admin approves it.",
+                        style = Typography.bodySmall,
+                        color = SlateSoft,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                RadioOption("Paid — runners buy each photo; QuickPitik marks the previews", pricingMode == "paid", !submitting) { pricingMode = "paid" }
+                RadioOption("Free — anyone downloads the original; never marked", pricingMode == "free", !submitting) { pricingMode = "free" }
+
+                Spacer(Modifier.height(12.dp))
+                if (pricingMode == "paid") {
+                    FormField("Price per photo · ₱", price, { price = it.filter { c -> c.isDigit() || c == '.' } }, "150", enabled = !submitting)
+                    if (price.isNotBlank() && !priceValid) FieldHint("Enter a price above zero (e.g. 150).")
+                } else {
+                    Kicker("Watermark on previews")
+                    Spacer(Modifier.height(8.dp))
+                    RadioOption("My logo on the previews", watermark == "own", !submitting) { watermark = "own" }
+                    RadioOption("No watermark at all", watermark == "none", !submitting) { watermark = "none" }
+                }
+
+                Spacer(Modifier.height(24.dp))
+                Divider()
+                Spacer(Modifier.height(16.dp))
+                Kicker("Visibility")
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Pricing on a live event changes only after an admin approves it.",
+                    "Your events never appear on the general Events page — runners reach them from your profile or a link you share. This only sets whether it shows on your public profile.",
                     style = Typography.bodySmall,
                     color = SlateSoft,
                 )
+                Spacer(Modifier.height(10.dp))
+                RadioOption("Public — shown on your photographer profile", visibility == "public", !submitting) { visibility = "public" }
+                RadioOption("Private — hidden from your profile, reachable only by your link", visibility == "unlisted", !submitting) { visibility = "unlisted" }
             }
-            Spacer(Modifier.height(10.dp))
-            RadioOption("Paid — runners buy each photo; QuickPitik marks the previews", pricingMode == "paid", !submitting) { pricingMode = "paid" }
-            RadioOption("Free — anyone downloads the original; never marked", pricingMode == "free", !submitting) { pricingMode = "free" }
-
-            Spacer(Modifier.height(12.dp))
-            if (pricingMode == "paid") {
-                FormField("Price per photo · ₱", price, { price = it.filter { c -> c.isDigit() || c == '.' } }, "150", enabled = !submitting)
-                if (price.isNotBlank() && !priceValid) FieldHint("Enter a price above zero (e.g. 150).")
-            } else {
-                Kicker("Watermark on previews")
-                Spacer(Modifier.height(8.dp))
-                RadioOption("My logo on the previews", watermark == "own", !submitting) { watermark = "own" }
-                RadioOption("No watermark at all", watermark == "none", !submitting) { watermark = "none" }
-            }
-
-            Spacer(Modifier.height(24.dp))
-            Divider()
-            Spacer(Modifier.height(16.dp))
-            Kicker("Visibility")
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Your events never appear on the general Events page — runners reach them from your profile or a link you share. This only sets whether it shows on your public profile.",
-                style = Typography.bodySmall,
-                color = SlateSoft,
-            )
-            Spacer(Modifier.height(10.dp))
-            RadioOption("Public — shown on your photographer profile", visibility == "public", !submitting) { visibility = "public" }
-            RadioOption("Private — hidden from your profile, reachable only by your link", visibility == "unlisted", !submitting) { visibility = "unlisted" }
 
             if (!isEdit) {
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "An admin reviews the event and its price first. Uploads open the moment it is approved.",
+                    if (isRace) "A race is shared by every photographer who covers it: public, listed on Events, at the race price. It is checked automatically, and an admin looks at anything the checks are unsure about."
+                    else "An admin reviews the event and its price first. Uploads open the moment it is approved.",
                     style = Typography.bodySmall,
                     color = SlateSoft,
                 )
             }
 
             (formState as? EventFormState.Error)?.let {
+                Spacer(Modifier.height(16.dp))
+                Text(it.message, style = Typography.bodyMedium, color = ErrorRed)
+            }
+            (raceState as? RaceFormState.Error)?.let {
                 Spacer(Modifier.height(16.dp))
                 Text(it.message, style = Typography.bodyMedium, color = ErrorRed)
             }
@@ -239,6 +354,15 @@ fun PhotographerEventFormScreen(
                 loading = submitting,
             )
         }
+    }
+}
+
+internal const val RACE_PENDING_JOIN_LINE = "Waiting for an admin: you can join now, and uploads open once an admin approves it."
+
+internal fun raceFormErrors(input: OwnedEventFormInput): List<String> = buildList {
+    if (!input.eventType.isNullOrBlank() && input.eventType != "OTHER") {
+        if (input.regionCode.isNullOrBlank()) add("Pick a region.")
+        if (input.provinceCode.isNullOrBlank()) add("Pick a province.")
     }
 }
 

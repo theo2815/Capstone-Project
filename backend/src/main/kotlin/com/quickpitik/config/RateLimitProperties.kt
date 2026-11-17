@@ -52,6 +52,10 @@ data class RateLimitProperties(
     // Each refund-link send is an inbox message and an e-mail to one runner;
     // keyed by dispute so no admin can flood one runner.
     val refundLinkPerDispute: Policy = Policy(capacity = 3, refillPeriod = Duration.ofHours(1)),
+    // Event and photographer reports (AA-R9), per account.
+    val report: Policy = Policy(capacity = 10, refillPeriod = Duration.ofHours(1)),
+    // AF-8: billed image checks per user per day; over it the image is stored unchecked and flagged.
+    val imageModerationDaily: Policy = Policy(capacity = 30, refillPeriod = Duration.ofHours(24)),
 ) {
     data class Policy(
         val capacity: Long,

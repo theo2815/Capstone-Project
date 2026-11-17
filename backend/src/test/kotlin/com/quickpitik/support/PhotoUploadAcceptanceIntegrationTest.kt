@@ -21,6 +21,7 @@ import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.mock.web.MockMultipartFile
 import java.awt.image.BufferedImage
@@ -44,6 +45,7 @@ class PhotoUploadAcceptanceIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var photos: PhotoRepository
     @Autowired lateinit var metadata: PhotoMetadataRepository
     @Autowired lateinit var coverage: EventPhotographerRepository
+    @Autowired lateinit var jdbc: JdbcTemplate
     @MockitoBean lateinit var storage: StorageService
     @MockitoBean lateinit var watermark: PhotoWatermarkService
 
@@ -53,6 +55,14 @@ class PhotoUploadAcceptanceIntegrationTest : PostgresIntegrationTest() {
             passwordHash = "stub", name = "Photographer", role = Role.PHOTOGRAPHER))
         settings.saveAndFlush(PhotographerSettings(userId = owner.id,
             verificationStatus = VerificationStatus.APPROVED))
+        // Uploads need seller details (SC-1); own phone because the database is shared (AA-I5).
+        val phoneKey = "9${(100_000_000..999_999_999).random()}"
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', ?, ?, 'APPROVED', 1, now())",
+            owner.id, "seller-details/${owner.id}/${UUID.randomUUID()}.jpg", "seller-details/${owner.id}/${UUID.randomUUID()}.jpg",
+            "0$phoneKey", phoneKey,
+        )
         val event = newEvent(owner.id)
         Mockito.`when`(storage.presignedGetUrl(Mockito.anyString(), anyArg())).thenReturn("https://thumb")
         val bytes = ByteArrayOutputStream().use { out ->

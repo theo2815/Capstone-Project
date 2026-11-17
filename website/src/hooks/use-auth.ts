@@ -138,6 +138,8 @@ export function useAuth() {
       const data = await api.post<AuthResponse>("/auth/google", {
         idToken: pending.idToken,
         role,
+        // OnboardingForm only calls this once the terms box is ticked.
+        termsAccepted: true,
       });
       const outcome = completeFirstFactor(data);
       setPendingOAuth(null);

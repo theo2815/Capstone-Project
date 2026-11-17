@@ -43,6 +43,8 @@ data class AdminUserRowDto(
     val settingsSnapshot: PhotographerSettingsSnapshotDto?,
     @field:Schema(description = "Photographer review generation; zero before the first submission or decision")
     val verificationRevision: Long = 0,
+    @field:Schema(description = "R-10: an admin reset or rejected this profile; its next submit waits for POST /admin/users/{id}/approve")
+    val adminHold: Boolean = false,
 )
 
 // Mirrors website/src/store/admin-user-store.ts DecisionLogEntry.
@@ -55,6 +57,8 @@ data class DecisionLogEntryDto(
     val adminId: UUID? = null,
     @field:Schema(description = "Admin display name, else e-mail; null when the admin account no longer exists")
     val adminName: String? = null,
+    @field:Schema(description = "True when no admin acted: the system decided (Photo Relevance)")
+    val automatic: Boolean = false,
 )
 
 // Mirrors api-admin.ts AdminUserDetail = AdminUserRow + decisionLog[].
@@ -76,12 +80,10 @@ data class AdminUserDetailDto(
     val decisionLog: List<DecisionLogEntryDto>,
     @field:Schema(description = "Photographer review generation; zero before the first submission or decision")
     val verificationRevision: Long = 0,
-)
-
-data class ApproveUserRequest(
-    @field:PositiveOrZero
-    @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
-    val expectedRevision: Long? = null,
+    @field:Schema(description = "R-10: same as the row's adminHold, so the drawer works without a list row")
+    val adminHold: Boolean = false,
+    @field:Schema(description = "RV-L7 part a: when the photographer withdrew the consent to automatic Photo Relevance actions; null when not withdrawn")
+    val relevanceConsentWithdrawnAt: String? = null,
 )
 
 // POST /admin/users/{id}/reject — body { reason }.
@@ -89,6 +91,13 @@ data class RejectUserRequest(
     @field:NotBlank
     @field:Size(max = 500)
     val reason: String,
+    @field:PositiveOrZero
+    @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
+    val expectedRevision: Long? = null,
+)
+
+// POST /admin/users/{id}/approve — optional body { expectedRevision } (R-10, held profiles only).
+data class ApproveUserRequest(
     @field:PositiveOrZero
     @field:Schema(description = "Optional v1 precondition; a stale review generation returns 409")
     val expectedRevision: Long? = null,

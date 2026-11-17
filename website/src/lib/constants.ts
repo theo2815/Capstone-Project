@@ -29,6 +29,8 @@ export const ROUTES = {
   ORDERS_RETURN: "/orders/return",
   PROFILE: "/profile",
   ACCOUNT: "/account",
+  ACCOUNT_PHOTO_DELETION: "/account/photo-deletion",
+  ACCOUNT_PHOTO_DELETION_NEW: "/account/photo-deletion/new",
   DASHBOARD: "/dashboard",
   DASHBOARD_UPLOAD: "/dashboard/upload",
   DASHBOARD_EVENTS: "/dashboard/events",
@@ -37,6 +39,7 @@ export const ROUTES = {
   DASHBOARD_BILLING: "/dashboard/billing",
   DASHBOARD_SETTINGS: "/dashboard/settings",
   DASHBOARD_PHOTO_REMOVAL_REQUESTS: "/dashboard/photo-removal-requests",
+  DASHBOARD_RELEVANCE: "/dashboard/relevance",
   ADMIN: "/admin",
   ADMIN_INBOX: "/admin/inbox",
   ADMIN_OVERVIEW: "/admin/overview",
@@ -47,10 +50,15 @@ export const ROUTES = {
   ADMIN_PAYOUTS: "/admin/payouts",
   ADMIN_PHOTOGRAPHERS: "/admin/photographers",
   ADMIN_FLAGS: "/admin/flags",
+  ADMIN_RELEVANCE: "/admin/relevance",
   ADMIN_SALES: "/admin/sales",
   ADMIN_SECURITY: "/admin/security",
   ADMIN_PHOTO_REMOVAL_REQUESTS: "/admin/photo-removal-requests",
+  PRIVACY: "/privacy",
+  TERMS: "/terms",
 } as const;
+
+export const SUPPORT_EMAIL = "quickpitiksupport@gmail.com";
 
 export const ROLES = {
   ADMIN: "ADMIN",

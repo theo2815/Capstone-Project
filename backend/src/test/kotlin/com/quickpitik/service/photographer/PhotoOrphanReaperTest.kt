@@ -1,6 +1,8 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.AiProperties
+import com.quickpitik.config.AiProvider
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.ai.AiPersonRef
@@ -28,9 +30,16 @@ class PhotoOrphanReaperTest {
         aiApiClient = Mockito.mock(AiApiClient::class.java)
     }
 
-    private fun reaper(props: AiApiProperties) = PhotoOrphanReaper(photoRepo, aiApiClient, props,
+    private fun reaper(props: AiApiProperties, provider: AiProvider = AiProvider.AI_API) = PhotoOrphanReaper(photoRepo, aiApiClient, props,
         Mockito.mock(com.quickpitik.service.photos.PhotoFaceErasureService::class.java),
-        com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC())
+        com.quickpitik.config.PhotoRemovalProperties(), java.time.Clock.systemUTC(), AiProperties(provider))
+
+    @Test fun `under Rekognition the sweep cleans pending photos but never calls ai-api`() {
+        reaper(AiApiProperties(enabled = true), AiProvider.REKOGNITION).reap()
+        Mockito.verify(photoRepo).faceWorkPending(anyArg())
+        Mockito.verify(photoRepo, Mockito.never()).findEventsWithFacePersons(anyArg())
+        Mockito.verifyNoInteractions(aiApiClient)
+    }
 
     @Test fun `last photo cleanup discovers ledger targets without live indexed events`() {
         Mockito.`when`(photoRepo.findEventsWithFacePersons(anyArg())).thenReturn(emptyList())

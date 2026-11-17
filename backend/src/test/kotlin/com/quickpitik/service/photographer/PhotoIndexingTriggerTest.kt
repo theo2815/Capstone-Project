@@ -23,6 +23,7 @@ class PhotoIndexingTriggerTest {
     private lateinit var indexingService: PhotoIndexingService
     private lateinit var photoRepo: PhotoRepository
     private val registry = SimpleMeterRegistry()
+    private val fence = Mockito.mock(com.quickpitik.service.photos.PhotoWorkFence::class.java)
 
     // Mockito.any() returns null at runtime; declared as a (platform) T so Kotlin
     // inserts no null-assertion — usable as a matcher for non-null params.
@@ -36,9 +37,10 @@ class PhotoIndexingTriggerTest {
     fun setUp() {
         indexingService = Mockito.mock(PhotoIndexingService::class.java)
         photoRepo = Mockito.mock(PhotoRepository::class.java)
+        Mockito.`when`(fence.endedIndexingCutoff()).thenReturn(OffsetDateTime.now().minusMinutes(20))
     }
 
-    private fun trigger(props: AiApiProperties) = PhotoIndexingTrigger(indexingService, photoRepo, props, registry)
+    private fun trigger(props: AiApiProperties) = PhotoIndexingTrigger(indexingService, photoRepo, props, registry, fence)
 
     // FS-2 (R5-1): every photo the sweep picks up is one the hot path missed.
     @Test
@@ -50,6 +52,24 @@ class PhotoIndexingTriggerTest {
         trigger(AiApiProperties(enabled = true)).reconcile()
 
         kotlin.test.assertEquals(2.0, registry.counter("qp.indexing.reconciled").count())
+    }
+
+    @Test
+    fun `the sweep releases ended claims before reading the backlog`() {
+        val released = UUID.randomUUID()
+        val held = UUID.randomUUID()
+        Mockito.`when`(photoRepo.findEndedIndexingClaims(anyArg(), Mockito.anyInt(), anyArg()))
+            .thenReturn(listOf(released, held))
+        Mockito.`when`(fence.releaseEndedIndexing(released)).thenReturn(true)
+
+        trigger(AiApiProperties(enabled = true)).reconcile()
+
+        val order = Mockito.inOrder(photoRepo, fence)
+        order.verify(photoRepo).findEndedIndexingClaims(fence.endedIndexingCutoff(), 5, org.springframework.data.domain.PageRequest.of(0, 50))
+        order.verify(fence).releaseEndedIndexing(released)
+        order.verify(fence).releaseEndedIndexing(held)
+        order.verify(photoRepo).findIndexingBacklog(anyArg(), Mockito.anyInt(), anyArg(), anyArg())
+        kotlin.test.assertEquals(1.0, registry.counter("qp.indexing.released").count())
     }
 
     private fun photo() = Photo(eventId = UUID.randomUUID(), s3Key = "k", pricePhp = BigDecimal.TEN)

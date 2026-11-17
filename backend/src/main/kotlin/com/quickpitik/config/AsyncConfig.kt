@@ -59,6 +59,20 @@ class AsyncConfig {
         initialize()
     }
 
+    // RV-1.6: Photo Relevance v2 measures sampled photos here (read the original, shrink, one DetectLabels
+    // call), apart from the scheduler threads and the upload pools. The check tick waits for each batch's
+    // photos, so the queue never holds more than one tick's measures-per-tick.
+    @Bean(name = ["relevanceScan"])
+    fun relevanceScanExecutor(relevance: RelevanceProperties): ThreadPoolTaskExecutor = ThreadPoolTaskExecutor().apply {
+        corePoolSize = relevance.check.workers
+        maxPoolSize = corePoolSize
+        queueCapacity = relevance.check.measuresPerTick
+        setThreadNamePrefix("relevance-scan-")
+        setWaitForTasksToCompleteOnShutdown(true)
+        setAwaitTerminationSeconds(30)
+        initialize()
+    }
+
     // Email (Resend) gets its own pool for the same reason, one failure mode
     // further out: a Resend outage costs 3 attempts with sleeps per send, so on
     // the shared pool a race-finish burst of receipts could occupy every

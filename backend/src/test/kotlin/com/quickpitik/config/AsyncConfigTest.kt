@@ -56,6 +56,17 @@ class AsyncConfigTest {
     }
 
     @Test
+    fun `relevance measuring runs on its own pool sized from the settings`() {
+        val pool = AsyncConfig().relevanceScanExecutor(RelevanceProperties())
+        try {
+            assertEquals(listOf(2, 2, 60, "relevance-scan-"),
+                listOf(pool.corePoolSize, pool.maxPoolSize, pool.queueCapacity, pool.threadNamePrefix))
+        } finally {
+            pool.shutdown()
+        }
+    }
+
+    @Test
     fun `image indexing runs on six workers`() {
         val pool = AsyncConfig().imageProcessingExecutor() as ThreadPoolTaskExecutor
         try {

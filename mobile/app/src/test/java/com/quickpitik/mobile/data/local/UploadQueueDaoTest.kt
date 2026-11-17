@@ -54,6 +54,17 @@ class UploadQueueDaoTest {
     @After
     fun tearDown() = db.close()
 
+    @Test fun `observeBusyUntil reads only this owner's UPLOADING rows`() = runTest {
+        val busyUntil = dao.observeBusyUntil("shooter@example.com")
+        assertEquals(0L, busyUntil.first())
+        dao.insertRecord(record(status = "UPLOADING").copy(retryAfter = 17_000))
+        dao.insertRecord(record(status = "UPLOADING").copy(retryAfter = 14_000))
+        dao.insertRecord(record(status = "UPLOADING").copy(photographerId = "other@example.com", retryAfter = 99_000))
+        dao.insertRecord(record().copy(retryAfter = 88_000))
+        dao.insertRecord(record(status = "FAILED").copy(retryAfter = 77_000))
+        assertEquals(17_000L, busyUntil.first())
+    }
+
     @Test fun `cursor drains more than a thousand photos without retrying earlier rows`() = runTest {
         repeat(1005) { dao.insertRecord(record()) }
         dao.insertRecord(record().copy(photographerId = "other@example.com"))

@@ -8,6 +8,7 @@ import { AvatarDisc } from "@/components/account/avatar-disc";
 import {
   IdentityRail,
   Slab,
+  ProfileShellFooter,
   type JumpSection,
 } from "@/components/profile-shell";
 import { SelfieLibrary } from "@/components/profile/selfie-library";
@@ -134,6 +135,7 @@ function RunnerProfileBody({
           </div>
         </div>
       </div>
+      <ProfileShellFooter />
     </main>
   );
 }
@@ -536,7 +538,7 @@ function PhotographerProfileBody({ user }: { user: User }) {
           <PortfolioGrid handle={handle} events={events} />
         </div>
       </div>
-
+      <ProfileShellFooter />
     </main>
   );
 }

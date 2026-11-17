@@ -44,12 +44,13 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
     // group_id) down to one logical decision per Q-A4. Native SQL because
     // JPQL has no clean COALESCE/cast for the group_id-or-id case.
     // Refund hand-off rows are steps of one refund decision, so neither count includes them.
+    // Automatic rows (RV-2.1, G17) are the system's, not an admin's, so neither count includes them either.
     @Query(
         value = """
         SELECT COUNT(*) FROM (
             SELECT COALESCE(group_id::text, id::text) AS bucket
             FROM admin_decision_log
-            WHERE decided_at >= :from AND decided_at < :to
+            WHERE decided_at >= :from AND decided_at < :to AND NOT automatic
               AND decision NOT IN ('refund_sent_to_manual_review', 'refund_link_sent', 'refund_cancelled')
             GROUP BY bucket
         ) t
@@ -67,7 +68,7 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
         SELECT decided_at::date AS day,
                COUNT(DISTINCT COALESCE(group_id::text, id::text)) AS decision_count
         FROM admin_decision_log
-        WHERE decided_at >= :from AND decided_at < :to
+        WHERE decided_at >= :from AND decided_at < :to AND NOT automatic
           AND decision NOT IN ('refund_sent_to_manual_review', 'refund_link_sent', 'refund_cancelled')
         GROUP BY day
         ORDER BY day

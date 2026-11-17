@@ -63,6 +63,7 @@ class PhotoServiceAttributionTest {
     private lateinit var couponRepository: PhotographerCouponRepository
     private lateinit var eventRepository: EventRepository
     private lateinit var photoMetadataService: PhotoMetadataService
+    private val suspension: PhotographerSuspension = Mockito.mock(PhotographerSuspension::class.java)
 
     private val eventId: UUID = UUID.randomUUID()
     private val pagination = PaginationParams.of(0, 240)
@@ -118,6 +119,18 @@ class PhotoServiceAttributionTest {
 
         assertEquals(photo.s3Key, download.s3Key)
         assertEquals(PhotoFilenames.downloadFilenameOf(photo), download.filename)
+    }
+
+    @Test
+    fun `freeDownload refuses a suspended photographer's photo`() {
+        stubEvent(EventPricingMode.FREE)
+        val owner = UUID.randomUUID()
+        val photo = photo(owner, price = "0.00")
+        Mockito.`when`(photoRepository.findById(photo.id)).thenReturn(Optional.of(photo))
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(owner))
+
+        assertFailsWith<NotFoundException> { service().freeDownload(eventId, photo.id) }
+        Mockito.verify(storageService, Mockito.never()).open(anyArg())
     }
 
     @Test
@@ -400,11 +413,13 @@ class PhotoServiceAttributionTest {
             Mockito.mock(EventPhotographerRepository::class.java),
             Mockito.mock(OrderRepository::class.java),
             PhotographerAccessGuard(userRepository, photographerSettingsRepository),
+            suspension,
         ),
         eventRepository,
         // Trailing slash on purpose — the builder must not emit `//events`.
         PublicProperties(apiBaseUrl = "https://api.test/api/v1/"),
         photoMetadataService,
+        suspension,
     )
 
     private fun stubPage(photos: List<Photo>) {

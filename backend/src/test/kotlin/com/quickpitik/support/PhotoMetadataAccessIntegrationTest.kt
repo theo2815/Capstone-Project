@@ -136,6 +136,28 @@ class PhotoMetadataAccessIntegrationTest : PostgresIntegrationTest() {
         denied("/api/v1/public/photos/${ownerless.id}/metadata")
     }
 
+    // PE-1.4 guard: passes from the start, because toDto copies named fields only.
+    @Test
+    fun `the public metadata response never carries the marker`() {
+        val owner = user(Role.PHOTOGRAPHER)
+        val event = event()
+        val photo = photo(event, owner)
+        val marker = UUID.randomUUID()
+        metadata(photo, "marked camera")
+        jdbc.update("UPDATE photo_metadata SET xmp_photo_id = ? WHERE photo_id = ?", marker, photo.id)
+        approve(owner)
+        coverage(event, owner, true)
+
+        for ((path, caller) in listOf("/api/v1/public/photos/${photo.id}/metadata" to null,
+            "/api/v1/me/photographer/photos/${photo.id}/metadata" to owner)) {
+            val response = get(path, caller)
+            assertEquals(200, response.statusCode(), path)
+            assertEquals("marked camera", data(response).path("fields").path("cameraMake").asText(), path)
+            assertFalse(response.body().contains("xmpPhotoId"), path)
+            assertFalse(response.body().contains(marker.toString()), path)
+        }
+    }
+
     @Test
     fun `galleries expose only access hints and owner requires the actual requester`() {
         val owner = user(Role.PHOTOGRAPHER)

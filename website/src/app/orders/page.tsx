@@ -10,6 +10,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import {
   IdentityRail,
   Slab,
+  ProfileShellFooter,
   type JumpSection,
 } from "@/components/profile-shell";
 import { useAuth } from "@/hooks/use-auth";
@@ -142,6 +143,7 @@ function OrdersBody() {
           eventName={refundEventName}
         />
       )}
+      <ProfileShellFooter />
     </main>
   );
 }

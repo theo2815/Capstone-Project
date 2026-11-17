@@ -28,7 +28,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
 vi.mock("@/components/profile-shell", () => ({
-  IdentityRail: () => null, Slab: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
+  IdentityRail: () => null, ProfileShellFooter: () => null, Slab: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
 }));
 vi.mock("@/components/orders/refund-modal", () => ({ RefundModal: () => null }));
 

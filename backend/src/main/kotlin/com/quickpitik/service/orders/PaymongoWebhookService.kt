@@ -52,9 +52,11 @@ class PaymongoWebhookService(
                 type = type,
             )
             "payment.refunded", "payment.refund.updated", "refund.succeeded" -> {
-                val applied = if (resource.id.startsWith("ref_")) {
-                    refundService.handleWebhook(resource.id, resource.attributes.status ?: "succeeded")
+                val status = resource.attributes.status
+                val applied = if (resource.id.startsWith("ref_") && !status.isNullOrBlank()) {
+                    refundService.handleWebhook(resource.id, status)
                 } else {
+                    if (status.isNullOrBlank()) log.warn("PayMongo {} for {} has no status - nothing applied", type, resource.id)
                     false
                 }
                 mapOf("acknowledged" to true, "applied" to applied, "type" to type)

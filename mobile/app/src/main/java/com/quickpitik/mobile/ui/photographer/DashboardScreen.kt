@@ -118,6 +118,7 @@ import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
 import com.quickpitik.mobile.ui.theme.StatusTone
+import com.quickpitik.mobile.ui.common.fromPrice
 import com.quickpitik.mobile.ui.theme.SuccessGreen
 import com.quickpitik.mobile.ui.theme.TileShape
 import com.quickpitik.mobile.ui.theme.Typography
@@ -140,15 +141,22 @@ fun PhotographerCaptureScreen(
     tetherViewModel: TetherViewModel,
 ) {
     val activeEvent by tetherViewModel.activeEvent.collectAsState()
-    // No approval gate here: PublicEventPickerList already refuses to select an
-    // event unless verification is approved, so an active event implies approval.
-    if (activeEvent == null) {
-        PublicEventPickerList(
-            viewModel = viewModel,
-            onSelectEvent = { event -> tetherViewModel.selectEvent(event) }
-        )
-    } else {
-        TetherConsoleView(viewModel = tetherViewModel)
+    val sellerCard by viewModel.sellerDetailsState.collectAsState()
+    Column {
+        sellerCard?.let {
+            SellerDetailsCardView(it, onReturn = { viewModel.fetchSellerDetails() },
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp))
+        }
+        // No approval gate here: PublicEventPickerList already refuses to select an
+        // event unless verification is approved, so an active event implies approval.
+        if (activeEvent == null) {
+            PublicEventPickerList(
+                viewModel = viewModel,
+                onSelectEvent = { event -> tetherViewModel.selectEvent(event) }
+            )
+        } else {
+            TetherConsoleView(viewModel = tetherViewModel)
+        }
     }
 }
 
@@ -329,6 +337,7 @@ private fun TetherConsoleView(
                 productId = cam.productId,
                 watchState = watchState,
                 latestCaptureFile = recentForEvent.firstNotNullOfOrNull { File(it.filePath).takeIf(File::isFile) },
+                nextAttemptAt = queueStats.nextAttemptAt,
                 canStartWatch = activeEvent?.let { canUploadToEvent(it) } == true,
                 onStartWatch = {
                     ensureNotificationPermission()
@@ -669,6 +678,7 @@ private fun CameraConnectedCard(
     onSimulate: () -> Unit,
     onBrowseCard: () -> Unit,
     latestCaptureFile: File? = null,
+    nextAttemptAt: Long = 0,
 ) {
     val watchBusy = watchState is ShutterWatchState.Starting ||
         watchState is ShutterWatchState.Watching || watchState is ShutterWatchState.Stopping
@@ -709,6 +719,7 @@ private fun CameraConnectedCard(
                     state = state,
                     onStop = onStopWatch,
                     latestCaptureFile = latestCaptureFile,
+                    nextAttemptAt = nextAttemptAt,
                 )
                 else -> Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -788,7 +799,9 @@ private fun ShutterWatchLiveCard(
     state: ShutterWatchState.Watching,
     onStop: () -> Unit,
     latestCaptureFile: File? = null,
+    nextAttemptAt: Long = 0,
 ) {
+    val nextAttempt = nextAttemptLabel(nextAttemptAt, System.currentTimeMillis())
     QpCard(modifier = Modifier.fillMaxWidth()) {
         // A dropped cable is a pause, not a failure — the count keeps standing
         // and the controller is already reopening the session, so this reads as
@@ -848,11 +861,11 @@ private fun ShutterWatchLiveCard(
         }
         // Field-diagnostics tail — the controller's own log lines, so the first
         // on-device run reveals which detector fires without needing adb.
-        if (state.recentLog.isNotEmpty()) {
+        if (state.recentLog.isNotEmpty() || nextAttempt != null) {
             Spacer(modifier = Modifier.height(12.dp))
             Divider(color = Line)
             Spacer(modifier = Modifier.height(12.dp))
-            state.recentLog.forEach { line ->
+            (state.recentLog + listOfNotNull(nextAttempt)).forEach { line ->
                 Text(
                     text = line,
                     style = MaterialTheme.typography.bodySmall,
@@ -1165,8 +1178,7 @@ private fun PublicEventPickerList(
             is EventsState.Success -> {
                 val today = LocalDate.now(java.time.ZoneId.of("Asia/Manila"))
                 val allPickerEvents = remember(state.events, assignedEvents, today) {
-                    (state.events + assignedEvents)
-                        .distinctBy { it.id }
+                    uploadPickerEvents(state.events, assignedEvents)
                         .sortedWith(
                             compareByDescending<PhotographerEventSummaryDto> { canUploadToEvent(it, today) }
                                 .thenByDescending { it.date }
@@ -1285,7 +1297,7 @@ private fun EventPickerCard(
     val isClosed = !canUploadToEvent(event) && !isUpcoming
     val isLive = canUploadToEvent(event)
 
-    val stateLabel = when {
+    val stateLabel = raceUploadNotice(event) ?: when {
         event.ownedByMe && event.reviewStatus == "pending" -> "AWAITING APPROVAL"
         event.ownedByMe && event.reviewStatus == "rejected" -> "CHANGES REQUESTED"
         isUpcoming -> "OPENS ON ${eventDateLabel(event.date)}"
@@ -1349,6 +1361,10 @@ private fun EventPickerCard(
                     color = Slate,
                     style = Typography.bodyMedium
                 )
+                fromPrice(event.priceVaries, event.pricePerPhoto)?.let {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    StatusChip(text = it, tone = StatusTone.Neutral)
+                }
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1398,5 +1414,18 @@ private fun EventPickerCard(
             }
         }
     }
+}
+
+internal fun uploadPickerEvents(
+    publicEvents: List<PhotographerEventSummaryDto>,
+    assignedEvents: List<PhotographerEventSummaryDto>,
+): List<PhotographerEventSummaryDto> {
+    val publicById = publicEvents.associateBy { it.id }
+    val covered = assignedEvents.map { event ->
+        val public = publicById[event.id]
+        event.copy(pricePerPhoto = public?.pricePerPhoto ?: event.pricePerPhoto,
+            priceVaries = public?.priceVaries ?: event.priceVaries)
+    }
+    return (covered + publicEvents).distinctBy { it.id }
 }
 

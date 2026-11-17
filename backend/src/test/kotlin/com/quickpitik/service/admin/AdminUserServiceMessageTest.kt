@@ -5,7 +5,6 @@ import com.quickpitik.entity.*
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.*
 import com.quickpitik.service.auth.RefreshTokenService
-import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.profile.UserDtoMapper
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.runner.RunnerMessagesService
@@ -37,8 +36,9 @@ class AdminUserServiceMessageTest {
             Mockito.mock(SocialLinkRepository::class.java), Mockito.mock(PayoutAccountRepository::class.java),
             Mockito.mock(AdminDecisionLogRepository::class.java), Mockito.mock(RegionsService::class.java),
             adminDecisionLogService, Mockito.mock(StorageService::class.java), StorageProperties(),
-            Mockito.mock(UserDtoMapper::class.java), runnerMessagesService, Mockito.mock(PhotographerSettingsService::class.java),
-            Mockito.mock(RefreshTokenService::class.java), commands, photographerMessages, runnerMessages)
+            Mockito.mock(UserDtoMapper::class.java), runnerMessagesService,
+            Mockito.mock(RefreshTokenService::class.java), commands, photographerMessages, runnerMessages,
+            Mockito.mock(com.quickpitik.service.photographer.PhotographerSettingsService::class.java))
     }
 
     @Test

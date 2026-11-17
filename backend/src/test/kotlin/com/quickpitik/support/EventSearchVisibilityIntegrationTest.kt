@@ -3,6 +3,8 @@ package com.quickpitik.support
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.EventVisibility
+import com.quickpitik.entity.RaceCheckReason
+import com.quickpitik.entity.RaceType
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.EventRepository
@@ -113,6 +115,66 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
         assertEquals(setOf(adminPublic), search(marker, includeListed = false))
     }
 
+    // AA-I12a: suspension takes a photographer's listed events off /events; no row changes.
+    @Test
+    fun `a suspended photographer's listed event leaves events and returns on unsuspend`() {
+        val marker = "susp-${UUID.randomUUID()}"
+        val owner = photographer()
+        val listed = save(marker, createdBy = owner.id, visibility = EventVisibility.PUBLIC, listed = true)
+
+        setSuspended(owner, OffsetDateTime.now())
+        assertFalse(listed in search(marker, includeListed = true), "a suspended owner's listed event must leave /events")
+
+        setSuspended(owner, null)
+        assertTrue(listed in search(marker, includeListed = true), "unsuspend must restore the listed event")
+    }
+
+    // Admin events (and Plan 2 shared races) have createdBy NULL: a suspension never filters them.
+    @Test
+    fun `an admin event with a suspended uploader stays listed and pickers are unchanged`() {
+        val marker = "susp-admin-${UUID.randomUUID()}"
+        val owner = photographer()
+        val adminPublic = save(marker, createdBy = null, visibility = EventVisibility.PUBLIC)
+        save(marker, createdBy = owner.id, visibility = EventVisibility.PUBLIC, listed = true)
+        setSuspended(owner, OffsetDateTime.now())
+
+        assertEquals(setOf(adminPublic), search(marker, includeListed = true))
+        assertEquals(setOf(adminPublic), search(marker, includeListed = false))
+    }
+
+    // AA-R1: hidden_at takes a shared race off /events and every picker; its slug still opens.
+    @Test
+    fun `a hidden shared race leaves the list and the pickers`() {
+        val marker = "hidden-${UUID.randomUUID()}"
+        val adminPublic = save(marker, createdBy = null, visibility = EventVisibility.PUBLIC)
+        val race = save(marker, createdBy = null, visibility = EventVisibility.PUBLIC, eventType = RaceType.ROAD_RACE)
+        val hidden = save(
+            marker, createdBy = null, visibility = EventVisibility.PUBLIC, eventType = RaceType.FUN_RUN,
+            hiddenAt = OffsetDateTime.now(), checkReasons = listOf(RaceCheckReason.POSSIBLE_DUPLICATE),
+        )
+
+        assertEquals(setOf(adminPublic, race), search(marker, includeListed = true))
+        assertEquals(setOf(adminPublic, race), search(marker, includeListed = false))
+        assertEquals(hidden, eventRepository.findPublicBySlug(slugOf(hidden))?.id, "a hidden race's slug still resolves")
+        val stored = eventRepository.findById(hidden).orElseThrow()
+        assertEquals(RaceType.FUN_RUN, stored.eventType)
+        assertEquals(listOf(RaceCheckReason.POSSIBLE_DUPLICATE), stored.checkReasons)
+    }
+
+    private fun photographer(): User = userRepository.save(
+        User(
+            email = "owner-${UUID.randomUUID()}@test.local",
+            passwordHash = "stub",
+            name = "Owner",
+            role = Role.PHOTOGRAPHER,
+        ),
+    )
+
+    private fun setSuspended(user: User, at: OffsetDateTime?) {
+        user.suspendedAt = at
+        userRepository.save(user)
+    }
+
     private fun search(marker: String, includeListed: Boolean): Set<UUID> =
         eventRepository.search(
             statuses = listOf(EventStatus.ACTIVE, EventStatus.COMPLETED, EventStatus.ARCHIVED),
@@ -154,6 +216,9 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
         status: EventStatus = EventStatus.ACTIVE,
         listed: Boolean = false,
         deletedAt: OffsetDateTime? = null,
+        eventType: RaceType? = null,
+        hiddenAt: OffsetDateTime? = null,
+        checkReasons: List<RaceCheckReason>? = null,
     ): UUID =
         eventRepository.save(
             Event(
@@ -166,6 +231,9 @@ class EventSearchVisibilityIntegrationTest : PostgresIntegrationTest() {
                 visibility = visibility,
                 listedOnEvents = listed,
                 deletedAt = deletedAt,
+                eventType = eventType,
+                hiddenAt = hiddenAt,
+                checkReasons = checkReasons,
             ),
         ).id
 }

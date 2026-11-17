@@ -91,8 +91,11 @@ import com.quickpitik.mobile.data.remote.WsState
 import com.quickpitik.mobile.ui.common.EventState
 import com.quickpitik.mobile.ui.common.PhotoPreview
 import com.quickpitik.mobile.ui.common.PhotoPreviewMode
+import com.quickpitik.mobile.ui.common.ReportAction
+import com.quickpitik.mobile.ui.common.ReportTarget
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.deriveEventState
+import com.quickpitik.mobile.ui.common.faceNoticeAccepted
 import com.quickpitik.mobile.ui.common.gridTileUrl
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.common.toPreviewData
@@ -431,6 +434,8 @@ fun RunnerGalleryScreen(
                             backdropPhotos = (searchState as? PhotosSearchState.Success)?.photos.orEmpty(),
                             onBack = backToEvents,
                             topActions = {
+                                // Any signed-in account may report an event (website: beside Save).
+                                ReportAction(ReportTarget.Event(event.id))
                                 if (isTrueRunner) {
                                     val savedIds by savedEventsViewModel.savedIds.collectAsState()
                                     val saved = event.id in savedIds
@@ -664,10 +669,12 @@ fun RunnerGalleryScreen(
                     color = Slate,
                 )
                 Spacer(Modifier.height(16.dp))
+                val faceOk = faceNoticeAccepted()
                 PrimaryCta(
                     text = "Take a selfie",
                     onClick = { showAddSelfieSheet = false; selfieAddOnly = true; launchCamera() },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = faceOk,
                 )
                 Spacer(Modifier.height(8.dp))
                 GhostCta(
@@ -678,6 +685,7 @@ fun RunnerGalleryScreen(
                         selfieGalleryLauncher.launch("image/*")
                     },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = faceOk,
                 )
             }
         }

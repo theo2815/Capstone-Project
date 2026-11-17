@@ -28,6 +28,9 @@ import software.amazon.awssdk.services.rekognition.model.DeleteCollectionRequest
 import software.amazon.awssdk.services.rekognition.model.DeleteFacesRequest
 import software.amazon.awssdk.services.rekognition.model.ListFacesRequest
 import software.amazon.awssdk.services.rekognition.model.DetectFacesRequest
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsFeatureName
+import software.amazon.awssdk.services.rekognition.model.DetectLabelsRequest
+import software.amazon.awssdk.services.rekognition.model.DetectModerationLabelsRequest
 import software.amazon.awssdk.services.rekognition.model.DetectTextRequest
 import software.amazon.awssdk.services.rekognition.model.Image
 import software.amazon.awssdk.services.rekognition.model.ImageTooLargeException
@@ -76,7 +79,7 @@ class RekognitionAiClient(
 
     // UP-7: one bucket per AWS operation, capacity 1, so calls are spaced evenly
     // under the per-account quota. Per process: divide the rate by replicas later.
-    private val pace = listOf("indexFaces", "detectText", "searchFacesByImage").associateWith {
+    private val pace = listOf("indexFaces", "detectText", "searchFacesByImage", "detectModerationLabels", "detectLabels").associateWith {
         Bucket.builder().addLimit(
             Bandwidth.builder().capacity(1)
                 .refillGreedy(1, Duration.ofNanos((1_000_000_000 / props.maxCallsPerSecond).toLong()))
@@ -177,20 +180,52 @@ class RekognitionAiClient(
         val min = minChars ?: props.bibMinChars
         val request = DetectTextRequest.builder().image(imageOf(file)).build()
         val resp = throttleRetried("detectText") { rekognition.detectText(request) }
-        val detections = resp.textDetections()
-            // WORD granularity: a bib is a single token. LINE would merge a bib
-            // with neighbouring sponsor text.
-            .filter { it.type() == TextTypes.WORD }
-            .mapNotNull { td ->
-                val raw = td.detectedText()?.trim().orEmpty()
-                val digits = raw.count(Char::isDigit)
-                if (raw.isNotEmpty() && digits >= min && raw.all { it.isLetterOrDigit() || it == '-' }) {
-                    BibDetection(bib_number = raw.uppercase(), confidence = (td.confidence() ?: 0f).toDouble() / 100.0)
-                } else {
-                    null
-                }
+        val detections = mutableListOf<BibDetection>()
+        val words = mutableListOf<String>()
+        // WORD granularity: a bib is a single token. LINE would merge a bib
+        // with neighbouring sponsor text. Every other word is kept for RV-1.2.
+        resp.textDetections().filter { it.type() == TextTypes.WORD }.forEach { td ->
+            val raw = td.detectedText()?.trim().orEmpty()
+            val digits = raw.count(Char::isDigit)
+            if (raw.isNotEmpty() && digits >= min && raw.all { it.isLetterOrDigit() || it == '-' }) {
+                detections += BibDetection(bib_number = raw.uppercase(), confidence = (td.confidence() ?: 0f).toDouble() / 100.0)
+            } else if (raw.isNotEmpty()) {
+                words += raw
             }
-        BibsRecognizeResult(detections = detections)
+        }
+        BibsRecognizeResult(detections = detections, words = words)
+    }
+
+    // AA-I11: profile-image moderation. Not on FaceBibProvider: Rekognition-only.
+    // minConfidence is 0-1 like the other thresholds; AWS takes 0-100.
+    fun moderationLabels(file: ByteArray, minConfidence: Double): List<ModerationHit> = guarded("detectModerationLabels") {
+        val request = DetectModerationLabelsRequest.builder()
+            .image(imageOf(file))
+            .minConfidence((minConfidence * 100).toFloat())
+            .build()
+        throttleRetried("detectModerationLabels") { rekognition.detectModerationLabels(request) }
+            .moderationLabels()
+            .map { ModerationHit(it.name(), it.parentName()?.ifBlank { null }, (it.confidence() ?: 0f).toDouble() / 100.0) }
+    }
+
+    // RV-1.3: Photo Relevance v2 sharpness, brightness and labels. Rekognition-only, no
+    // gate here (the caller checks RelevanceSwitch.canMeasure). Always one fixed size,
+    // because the junk cut-offs are set on it.
+    fun imageCheck(file: ByteArray): ImageCheck = guarded("detectLabels") {
+        val request = DetectLabelsRequest.builder()
+            .image(Image.builder().bytes(SdkBytes.fromByteArray(toFixedBytes(file))).build())
+            .features(DetectLabelsFeatureName.GENERAL_LABELS, DetectLabelsFeatureName.IMAGE_PROPERTIES)
+            .build()
+        val resp = throttleRetried("detectLabels") { rekognition.detectLabels(request) }
+        val whole = resp.imageProperties()?.quality()
+        val fg = resp.imageProperties()?.foreground()?.quality()
+        ImageCheck(
+            fgSharpness = fg?.sharpness()?.toDouble(),
+            fgBrightness = fg?.brightness()?.toDouble(),
+            sharpness = whole?.sharpness()?.toDouble(),
+            brightness = whole?.brightness()?.toDouble(),
+            labels = resp.labels().map { LabelHit(it.name(), (it.confidence() ?: 0f).toDouble() / 100.0) },
+        )
     }
 
     override fun deleteFacesPerson(personId: String) {
@@ -241,17 +276,18 @@ class RekognitionAiClient(
         return ids.toList()
     }
 
-    override fun deleteFacesByEvent(eventId: UUID) {
+    // Throws on failure (EventFaceExpiry retries until it succeeds); a missing
+    // collection counts as deleted.
+    override fun deleteFacesByEvent(eventId: UUID) = guarded("deleteCollection") {
         val collectionId = collectionFor(eventId)
         try {
             rekognition.deleteCollection(DeleteCollectionRequest.builder().collectionId(collectionId).build())
-            knownCollections.remove(collectionId)
             log.info("Deleted Rekognition collection {}", collectionId)
         } catch (ex: ResourceNotFoundException) {
-            // Never created (no photos enrolled for this event) → nothing to do.
-        } catch (ex: RekognitionException) {
-            log.warn("Failed to delete Rekognition collection {}: {}", collectionId, ex.awsErrorDetails()?.errorMessage())
+            // Never created (no photos enrolled for this event), or already deleted → nothing to do.
         }
+        knownCollections.remove(collectionId)
+        Unit
     }
 
     override fun listPersonsForEvent(eventId: UUID): List<AiPersonRef> {
@@ -344,6 +380,11 @@ class RekognitionAiClient(
     // decoded, uprighted, downscaled to maxImageDimension, and re-encoded as JPEG.
     private fun toInlineBytes(file: ByteArray): ByteArray {
         if (file.size <= INLINE_SAFE_BYTES) return file
+        return toFixedBytes(file)
+    }
+
+    // Whatever the byte size: decode, upright, shrink to maxImageDimension on the long edge, re-encode.
+    private fun toFixedBytes(file: ByteArray): ByteArray {
         val source = SubsampledDecode.readForLongEdge(file, props.maxImageDimension) ?: return file
         val upright = ExifOrientation.apply(source, ExifOrientation.read(file))
         val longest = maxOf(upright.width, upright.height)
@@ -408,3 +449,21 @@ class RekognitionAiClient(
         val PACE_MAX_WAIT: Duration = Duration.ofSeconds(10)
     }
 }
+
+/** One DetectModerationLabels label; confidence on the 0-1 scale, parentName null for a top-level label. */
+data class ModerationHit(val name: String, val parentName: String?, val confidence: Double)
+
+/**
+ * RV-1.3: one photo's DetectLabels result. Quality scores are Rekognition's 0-100, stored as given;
+ * the foreground pair is null when Rekognition found no foreground.
+ */
+data class ImageCheck(
+    val fgSharpness: Double?,
+    val fgBrightness: Double?,
+    val sharpness: Double?,
+    val brightness: Double?,
+    val labels: List<LabelHit>,
+)
+
+/** One DetectLabels label; confidence on the 0-1 scale. */
+data class LabelHit(val name: String, val confidence: Double)

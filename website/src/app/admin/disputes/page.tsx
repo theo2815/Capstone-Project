@@ -1,9 +1,7 @@
 "use client";
 
-import {
-  useOpenDisputesCount,
-  useRefundedThisWeekTotal,
-} from "@/hooks/use-admin-disputes";
+import { useRefundedThisWeekTotal } from "@/hooks/use-admin-disputes";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import { DisputesQueue } from "@/components/admin/disputes-queue";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
@@ -13,28 +11,36 @@ import { formatPrice } from "@/lib/utils";
 // lifted <DisputesQueue> component. Header stays page-specific.
 
 export default function AdminDisputesPage() {
-  const openCount = useOpenDisputesCount();
+  const kpis = useAdminKpis();
+  const needCount = kpis?.disputesNeedingAdmin ?? kpis?.openDisputes ?? 0;
+  const overdueCount = kpis?.disputesOverdue ?? 0;
   const refundedThisWeek = useRefundedThisWeekTotal();
 
   return (
     <>
-      <Header openCount={openCount} refundedThisWeek={refundedThisWeek} />
+      <Header
+        needCount={needCount}
+        overdueCount={overdueCount}
+        refundedThisWeek={refundedThisWeek} />
       <DisputesQueue />
     </>
   );
 }
 
 function Header({
-  openCount,
+  needCount,
+  overdueCount,
   refundedThisWeek,
 }: {
-  openCount: number;
+  needCount: number;
+  overdueCount: number;
   refundedThisWeek: number;
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
-        Disputes · <span className="tnum">{openCount}</span> open ·{" "}
+        Disputes · <span className="tnum">{needCount}</span> need you ·{" "}
+        <span className="tnum">{overdueCount}</span> overdue ·{" "}
         <span className="tnum">{formatPrice(refundedThisWeek)}</span> refunded
         this week
       </Kicker>

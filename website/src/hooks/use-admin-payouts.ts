@@ -8,6 +8,7 @@ import {
   type AdminPayoutListArgs, type BulkPayoutResult,
 } from "@/lib/api-admin";
 import type { AdminPayoutCycle } from "@/lib/admin-payouts";
+import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useAdminMutation } from "./use-admin-mutation";
 import { claimAdminIntent, completeAdminIntent } from "@/lib/admin-action-intents";
@@ -57,8 +58,10 @@ export function usePayoutActions() {
       } catch (error) {
         if (isCurrent()) {
           console.error(`[admin/payouts] ${label} failed`, error);
+          // The server's own words for a hold refusal (PE-2.8); other failures keep the generic text.
+          const heldRefusal = error instanceof ApiError && error.errors[0]?.code === "PAYOUT_ON_HOLD";
           useToastStore.getState().showToast({
-            kind: "error", message: label === "Approve payouts" || label === "Hold payouts"
+            kind: "error", message: heldRefusal ? error.message : label === "Approve payouts" || label === "Hold payouts"
               ? `Couldn't ${label}. ${error instanceof Error ? error.message : "Please try again."}`
               : `Couldn't ${label} — please try again.`,
           });

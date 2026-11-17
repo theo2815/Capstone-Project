@@ -33,6 +33,11 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
   },
   { href: ROUTES.ADMIN_PAYOUTS, label: "Payouts" },
   {
+    href: ROUTES.ADMIN_RELEVANCE,
+    label: "Photo Relevance",
+    nestedPrefix: ROUTES.ADMIN_RELEVANCE,
+  },
+  {
     href: ROUTES.ADMIN_EVENTS,
     label: "Events",
     nestedPrefix: ROUTES.ADMIN_EVENTS,

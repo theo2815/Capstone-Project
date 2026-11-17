@@ -2,7 +2,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { AdminPayoutCycle } from "@/lib/admin-payouts";
 import { admin, payoutCycle, report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
@@ -163,4 +163,11 @@ it("does not read or mutate payout cycles without an admin session", async () =>
   await expect(result.current.actions.approve(payoutCycle.id)).resolves.toBe(false);
   await expect(result.current.actions.bulkHold([payoutCycle.id], "Note")).resolves.toBe(false);
   expect(get).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
+});
+
+it("a hold refusal shows the server's reason", async () => {
+  vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "PAYOUT_ON_HOLD", message: "Payouts are on hold while a flag is open." }], 409));
+  const { result } = renderHook(usePayoutActions, { wrapper });
+  await expect(result.current.approve(payoutCycle.id)).resolves.toBe(false);
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "error", message: "Payouts are on hold while a flag is open." });
 });

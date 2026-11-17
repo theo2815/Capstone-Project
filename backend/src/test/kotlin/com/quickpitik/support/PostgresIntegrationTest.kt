@@ -40,6 +40,8 @@ abstract class PostgresIntegrationTest {
                 withDatabaseName("quickpitik_test")
                 withUsername("quickpitik")
                 withPassword("quickpitik")
+                // CI only: keep the throwaway database in memory (fsync is already off by default).
+                if (System.getenv("CI") != null) withTmpFs(mapOf("/var/lib/postgresql/data" to "rw"))
                 // Reused across every class in the run; see the class docblock.
                 start()
             }

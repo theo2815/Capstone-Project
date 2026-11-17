@@ -150,8 +150,8 @@ export default function DashboardEventsPage() {
                 <EventGroupSlab
                   id="admin"
                   number={mine.length > 0 ? "02" : "01"}
-                  title="Admin events"
-                  caption="Races you're covering for QuickPitik"
+                  title="Race events"
+                  caption="Shared races you're covering or submitted"
                   items={adminCovered}
                 />
               )}
@@ -168,7 +168,7 @@ export default function DashboardEventsPage() {
   );
 }
 
-// One "My events" / "Admin events" section: a Slab with its own paginated grid.
+// One "My events" / "Race events" section: a Slab with its own paginated grid.
 // Each group owns its load-more so the two lists page independently.
 function EventGroupSlab({
   id,

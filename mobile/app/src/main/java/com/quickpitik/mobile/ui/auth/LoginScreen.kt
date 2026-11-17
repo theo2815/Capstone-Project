@@ -8,6 +8,10 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalContext
+import com.quickpitik.mobile.ui.common.PRIVACY_URL
+import com.quickpitik.mobile.ui.common.TERMS_URL
+import com.quickpitik.mobile.ui.common.openInCustomTab
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -311,6 +315,28 @@ fun LoginScreen(
                         }
                     }
                 )
+            }
+
+            // Legal pages open in a Custom Tab; each link keeps a 48dp touch target.
+            val context = LocalContext.current
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf("PRIVACY" to PRIVACY_URL, "TERMS" to TERMS_URL).forEachIndexed { i, (label, url) ->
+                    if (i > 0) Text(" · ", style = Typography.labelMedium, color = SlateSoft)
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clickable { openInCustomTab(context, url) }
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label, style = Typography.labelMedium, color = Slate)
+                    }
+                }
             }
 
             // Debug-only backend switcher. Renders nothing in a release build.

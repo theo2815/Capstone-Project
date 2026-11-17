@@ -109,7 +109,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         val principal = AuthPrincipal(actor, "fixture@test.local", users.findById(actor).orElseThrow().role)
         SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
-            val mvc = MockMvcBuilders.standaloneSetup(com.quickpitik.controller.AdminEventsController(eventAdmin))
+            val mvc = MockMvcBuilders.standaloneSetup(com.quickpitik.controller.AdminEventsController(eventAdmin, org.mockito.Mockito.mock(com.quickpitik.service.events.RacePriceService::class.java)))
                 .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
                 .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
             val request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(if (id == null) "/api/v1/admin/events" else "/api/v1/admin/events/$id")

@@ -26,7 +26,7 @@ android {
         applicationId = "com.quickpitik.mobile"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
+        versionCode = 4
         versionName = "1.0"
 
         vectorDrawables {
@@ -40,6 +40,12 @@ android {
             "String",
             "GOOGLE_SERVER_CLIENT_ID",
             "\"${project.findProperty("QP_GOOGLE_SERVER_CLIENT_ID") ?: ""}\"",
+        )
+        // The website the app's links open (Terms, the case page); see gradle.properties.
+        buildConfigField(
+            "String",
+            "WEBSITE_ORIGIN",
+            "\"${(project.findProperty("QP_WEBSITE_ORIGIN") ?: "https://quickpitik.com").toString().trimEnd('/')}\"",
         )
         buildConfigField("boolean", "FUJI_SDK", fujiSdk.toString())
         if (fujiSdk) {

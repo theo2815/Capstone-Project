@@ -18,6 +18,10 @@ export interface Event {
   // the event. Optional here because non-admin list endpoints historically
   // omitted it — keep the field opt-in so older mock data doesn't break.
   pricePerPhoto?: number;
+  // A race type code (AA-R14), null for legacy or Other events.
+  eventType?: string | null;
+  // True when some photographer in this race charges above pricePerPhoto (the floor).
+  priceVaries?: boolean;
   // Organizer name + race-day notes for the "About this race" strip. Optional
   // on base Event because only the detail + admin-list endpoints populate them
   // (the public /events list omits them). Admin can set both at create/edit.

@@ -128,33 +128,11 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         } finally { pool.shutdownNow() }
     }
 
-    @Test
-    fun `two concurrent approvals accept once with one audit and inbox row`() {
-        val id = pending()
-        val a = user(Role.ADMIN).id
-        val b = user(Role.ADMIN).id
-        val results = race({ admin.approve(a, id) }, { admin.approve(b, id) })
-        assertEquals(1, results.count { it.isSuccess })
-        conflict(results.single { it.isFailure })
-        assertEquals(VerificationStatus.APPROVED, settings.findById(id).get().verificationStatus)
-        effects(id, 1)
-    }
-
-    @Test
-    fun `approval competing with rejection accepts one decision and notification`() {
-        val id = pending()
-        val a = user(Role.ADMIN).id
-        val b = user(Role.ADMIN).id
-        val results = race({ admin.approve(a, id) }, { admin.reject(b, id, "Correct the profile") })
-        assertEquals(1, results.count { it.isSuccess })
-        conflict(results.single { it.isFailure })
-        val state = settings.findById(id).get().verificationStatus
-        assertEquals(if (results[0].isSuccess) VerificationStatus.APPROVED else VerificationStatus.INCOMPLETE, state)
-        effects(id, 1)
-    }
+    // AA-I7 (Q7): the admin profile approve is gone (approval is automatic once identity passes),
+    // so its races and generation cases left this file; reject and reset keep theirs.
 
     @ParameterizedTest
-    @ValueSource(strings = ["approve", "reject", "reset-verification"])
+    @ValueSource(strings = ["reject", "reset-verification"])
     fun `a stale supplied revision refuses every decision before side effects`(action: String) {
         val id = pending()
         val response = request(user(Role.ADMIN).id, id, action,
@@ -166,11 +144,10 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["approve", "reject", "reset-verification"])
+    @ValueSource(strings = ["reject", "reset-verification"])
     fun `an accepted decision returns the next revision and legacy input still works`(action: String) {
         val id = pending()
-        val body = if (action == "approve") null else """{"reason":"Correct the evidence"}"""
-        val response = request(user(Role.ADMIN).id, id, action, body)
+        val response = request(user(Role.ADMIN).id, id, action, """{"reason":"Correct the evidence"}""")
         assertEquals(200, response.status)
         assertEquals(1L, mapper.readTree(response.contentAsString)["data"].path("verificationRevision").asLong(-1))
         assertEquals(1L, revision(id))
@@ -178,7 +155,7 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["approve", "reject", "reset-verification"])
+    @ValueSource(strings = ["reject", "reset-verification"])
     fun `negative revision inputs are rejected without effects`(action: String) {
         val id = pending()
         assertEquals(400, request(user(Role.ADMIN).id, id, action,
@@ -193,41 +170,6 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         val row = admin.list("PHOTOGRAPHER", null, users.findById(id).get().email,
             com.quickpitik.common.PaginationParams.of(0, 10)).items.single()
         assertEquals(0L, mapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(row).path("verificationRevision").asLong(-1))
-    }
-
-    @Test
-    fun `withdraw resubmit rejects the delayed old approval and accepts the current generation`() {
-        val id = pending()
-        val actor = user(Role.ADMIN).id
-        photographer.withdrawVerification(id)
-        photographer.submitVerification(id)
-        val stale = request(actor, id, "approve", """{"expectedRevision":0}""")
-        assertEquals(409, stale.status)
-        assertEquals(VerificationStatus.PENDING, settings.findById(id).get().verificationStatus)
-        assertEquals(2L, revision(id))
-        effects(id, 0)
-        assertEquals(200, request(actor, id, "approve", """{"expectedRevision":2}""").status)
-        assertEquals(3L, revision(id))
-        effects(id, 1)
-        photographer.submitVerification(id)
-        assertEquals(VerificationStatus.PENDING, settings.findById(id).get().verificationStatus)
-        assertEquals(4L, revision(id))
-        effects(id, 1)
-        assertEquals(200, request(actor, id, "approve", """{"expectedRevision":4}""").status)
-        assertEquals(5L, revision(id))
-        effects(id, 2)
-    }
-
-    @Test
-    fun `withdrawal competing with approval leaves the profile incomplete with exact effects`() {
-        val id = pending()
-        val actor = user(Role.ADMIN).id
-        val results = race({ admin.approve(actor, id) }, { photographer.withdrawVerification(id) })
-        assertTrue(results[1].isSuccess)
-        if (results[0].isFailure) conflict(results[0])
-        assertEquals(VerificationStatus.INCOMPLETE, settings.findById(id).get().verificationStatus)
-        effects(id, if (results[0].isSuccess) 1 else 0)
-        assertEquals(if (results[0].isSuccess) 2L else 1L, revision(id))
     }
 
     @ParameterizedTest
@@ -290,7 +232,7 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         val actor = user(Role.ADMIN).id
         assertFailsWith<IllegalStateException> {
             TransactionTemplate(txManager).executeWithoutResult {
-                admin.approve(actor, id)
+                admin.reject(actor, id, "Correct the profile")
                 settings.flush()
                 throw IllegalStateException("Roll back the accepted command")
             }
@@ -347,9 +289,9 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
     }
 
     @Test
-    fun `missing settings cannot be approved and failed initialization is rolled back`() {
+    fun `missing settings cannot be rejected and failed initialization is rolled back`() {
         val id = user(Role.PHOTOGRAPHER).id
-        assertEquals(422, request(user(Role.ADMIN).id, id, "approve").status)
+        assertEquals(409, request(user(Role.ADMIN).id, id, "reject", """{"reason":"Correct the evidence"}""").status)
         assertFalse(settings.existsById(id))
         effects(id, 0)
     }

@@ -34,7 +34,9 @@ enum class PhotographerMessageKind(val wire: String) {
     EVENT_CHANGE_APPROVED("event_change_approved"),
     EVENT_CHANGE_REJECTED("event_change_rejected"),
     PHOTO_REMOVAL_REQUEST("photo_removal_request"),
-    PHOTO_REMOVAL_OUTCOME("photo_removal_outcome");
+    PHOTO_REMOVAL_OUTCOME("photo_removal_outcome"),
+    // Photo Relevance v2's note to the photographer (V106); RV-3.1 adds the writer.
+    RELEVANCE_NOTICE("relevance_notice");
 }
 
 // DB-backed photographer inbox per Q-A2. Admin actions write a row in the
@@ -85,6 +87,9 @@ class PhotographerMessage(
 
     @Column(name = "notice_key", length = 160, updatable = false)
     val noticeKey: String? = null,
+
+    @Column(name = "relevance_case_id", updatable = false)
+    val relevanceCaseId: UUID? = null,
 ) {
     val kind: PhotographerMessageKind
         get() = PhotographerMessageKind.entries.first { it.wire == kindWire }

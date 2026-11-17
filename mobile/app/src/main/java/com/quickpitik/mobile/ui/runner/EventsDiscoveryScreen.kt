@@ -54,6 +54,8 @@ import com.quickpitik.mobile.ui.theme.QpCardShape
 import com.quickpitik.mobile.ui.theme.Slate
 import com.quickpitik.mobile.ui.theme.SlateSoft
 import com.quickpitik.mobile.ui.theme.StatusChip
+import com.quickpitik.mobile.ui.theme.StatusTone
+import com.quickpitik.mobile.ui.common.fromPrice
 import com.quickpitik.mobile.ui.theme.Typography
 import kotlinx.coroutines.launch
 
@@ -608,6 +610,10 @@ private fun EventTile(
                     maxLines = 2
                 )
                 Text(event.location, style = Typography.bodySmall, color = SlateSoft, maxLines = 1)
+                fromPrice(event.priceVaries, event.pricePerPhoto)?.let {
+                    Spacer(Modifier.height(8.dp))
+                    StatusChip(text = it, tone = StatusTone.Neutral)
+                }
                 Spacer(Modifier.height(10.dp))
                 ArrowLabel(
                     if (interactive) "Open →" else "Opens on race day",

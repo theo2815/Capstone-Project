@@ -1,6 +1,13 @@
 package com.quickpitik.controller
 
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.IdentityProperties
+import com.quickpitik.config.LegalProperties
+import com.quickpitik.dto.photographer.LiveCheckRequest
+import com.quickpitik.dto.photographer.LivenessSessionDto
+import com.quickpitik.dto.photographer.LivenessStartRequest
+import com.quickpitik.entity.LivenessPurpose
+import com.quickpitik.service.liveness.LivenessSessionService
 import com.quickpitik.dto.orders.CouponDto
 import com.quickpitik.dto.orders.UpsertCouponRequest
 import com.quickpitik.dto.photographer.BrandPatchRequest
@@ -12,6 +19,8 @@ import com.quickpitik.dto.photographer.PatchPayoutRequest
 import com.quickpitik.dto.photographer.PatchSocialRequest
 import com.quickpitik.dto.photographer.PayoutAccountDto
 import com.quickpitik.dto.photographer.RegionPatchRequest
+import com.quickpitik.dto.photographer.SellerDetailsDto
+import com.quickpitik.dto.photographer.SellerDetailsForm
 import com.quickpitik.dto.photographer.SocialLinkDto
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
@@ -23,6 +32,7 @@ import com.quickpitik.service.orders.CouponService
 import com.quickpitik.service.photographer.PayoutAccountService
 import com.quickpitik.service.photographer.PhotographerSettingsService
 import com.quickpitik.service.photographer.PhotoMetadataSettingsService
+import com.quickpitik.service.photographer.SellerDetailsService
 import com.quickpitik.service.photographer.SocialLinkService
 import com.quickpitik.service.ratelimit.Bucket4jRateLimiter
 import com.quickpitik.service.ratelimit.RateLimiter
@@ -34,6 +44,7 @@ import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.ModelAttribute
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -70,6 +81,10 @@ class MePhotographerSettingsController(
     private val couponService: CouponService,
     private val stepUpService: StepUpService,
     private val photoMetadataSettingsService: PhotoMetadataSettingsService,
+    private val sellerDetailsService: SellerDetailsService,
+    private val livenessSessionService: LivenessSessionService,
+    private val identityProperties: IdentityProperties,
+    private val legalProperties: LegalProperties,
 ) {
     @GetMapping("/metadata-settings")
     fun getMetadataSettings(
@@ -310,6 +325,53 @@ class MePhotographerSettingsController(
     @PostMapping("/verification")
     fun submitVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =
         photographerSettingsService.submitVerification(principal.userId)
+
+    // ─── Seller details (SC-1): required before new uploads ──────────────
+    @GetMapping("/seller-details")
+    fun getSellerDetails(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        response: HttpServletResponse,
+    ): SellerDetailsDto {
+        response.setHeader("Cache-Control", "private, no-store")
+        return sellerDetailsService.get(principal.userId)
+    }
+
+    @PostMapping("/seller-details", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun submitSellerDetails(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
+        @ModelAttribute form: SellerDetailsForm,
+    ): SellerDetailsDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        rateLimiter.acquireOrThrow(Bucket4jRateLimiter.POLICY_MEDIA_UPLOAD, principal.userId.toString())
+        return sellerDetailsService.submit(principal.userId, form)
+    }
+
+    // C2b (AA-I3): a new live check for a manual-review record; no files. Each call uses up a
+    // C1 session, so C1's 3-a-Manila-day cap bounds it.
+    @PostMapping("/seller-details/live-check")
+    fun liveCheckSellerDetails(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @RequestHeader(name = "X-Step-Up", required = false) stepUp: String?,
+        @Valid @RequestBody request: LiveCheckRequest,
+    ): SellerDetailsDto {
+        stepUpService.enforce(principal.userId, stepUp)
+        return sellerDetailsService.liveCheck(principal.userId, request)
+    }
+
+    // C1 (AA-I2): one single-use live-selfie session. The durable 3-a-Manila-day cap is the rate limit.
+    @PostMapping("/seller-details/liveness-session")
+    fun startLivenessSession(
+        @AuthenticationPrincipal principal: AuthPrincipal,
+        @Valid @RequestBody request: LivenessStartRequest,
+        response: HttpServletResponse,
+    ): LivenessSessionDto {
+        response.setHeader("Cache-Control", "private, no-store") // carries live AWS keys
+        return livenessSessionService.start(
+            principal.userId, LivenessPurpose.PHOTOGRAPHER_IDENTITY, null,
+            identityProperties.livenessAttemptsPerDay, legalProperties.currentVersion,
+        )
+    }
 
     @PostMapping("/verification/withdraw")
     fun withdrawVerification(@AuthenticationPrincipal principal: AuthPrincipal): VerificationSubmitResponseDto =

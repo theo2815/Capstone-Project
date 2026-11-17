@@ -3,6 +3,7 @@ package com.quickpitik.service.cart
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.cart.CartItemDto
+import com.quickpitik.dto.cart.MergeCartItem
 import com.quickpitik.entity.CartItemEntity
 import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
@@ -14,9 +15,11 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.RoundingMode
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -29,12 +32,17 @@ class CartService(
     private val eventRepository: EventRepository,
     private val storageService: StorageService,
     private val storageProperties: StorageProperties,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
-    @Transactional(readOnly = true)
-    fun list(userId: UUID): List<CartItemDto> {
+    /**
+     * A suspended photographer's photo drops out of the list (its row is kept, so it comes back on
+     * unsuspend), or shows with `available = false` when the client asks (AA-I12b, C13).
+     * Not read-only: a live price below the stored one moves the stored one down (AF-18 F5, `hydrate`).
+     */
+    fun list(userId: UUID, includeUnavailable: Boolean = false): List<CartItemDto> {
         val rows = cartItemRepository.findByUserId(userId)
         if (rows.isEmpty()) return emptyList()
-        return hydrate(rows)
+        return hydrate(rows, includeUnavailable)
     }
 
     fun add(userId: UUID, photoId: UUID, eventId: UUID): CartItemDto {
@@ -44,7 +52,7 @@ class CartService(
         // PROCESSING / HIDDEN photos are not sellable. 404 rather than a
         // dedicated code — a hidden photo must not be distinguishable from a
         // missing one.
-        if (!photo.isSellable) {
+        if (!photo.isSellable || photographerSuspension.suspendedOwnerIds(listOf(photo)).isNotEmpty()) {
             throw NotFoundException(code = ErrorCodes.PHOTO_NOT_FOUND, message = "Photo not found")
         }
         // Free events (V46): a ₱0 photo is downloaded from the gallery, never
@@ -107,24 +115,26 @@ class CartService(
      * discards the whole merge (cart *and* saved-events), and price drift never
      * self-heals, so every later login would re-fail and strand the guest cart.
      *
-     * Same reason `pricePhpAtAdd` is refreshed rather than raising
-     * CART_ITEM_PRICE_CHANGED here: the snapshot is not what the runner sees
-     * or pays. [toDto] renders `photos.price_php` and `OrderService.create`
-     * charges it, so refreshing the column keeps the stored row honest
-     * instead of preserving a number nothing reads.
+     * Same reason price drift never raises CART_ITEM_PRICE_CHANGED here. The
+     * `pricePhpAtAdd` snapshot is now displayed (AA-R14: "went up from ₱X")
+     * and lives as long as the row, so merge never overwrites an existing
+     * row's snapshot. A new row takes the guest's `priceAtAdd` only when
+     * 0 < value ≤ the live price (a client cannot claim a higher one), else
+     * the live price. What the runner pays is still the live price.
      */
-    fun merge(userId: UUID, incoming: List<Pair<UUID, UUID>>): List<CartItemDto> {
+    fun merge(userId: UUID, incoming: List<MergeCartItem>): List<CartItemDto> {
         val existing = cartItemRepository.findByUserId(userId)
             .associateBy { it.id.photoId }
             .toMutableMap()
-        val incomingIds = incoming.map { it.first }.toSet()
+        val incomingIds = incoming.map { it.photoId }.toSet()
         val photoLookup = photoRepository.findAllById(incomingIds).associateBy { it.id }
-        val eventLookup = eventRepository.findAllById(incoming.map { it.second }.toSet())
+        val eventLookup = eventRepository.findAllById(incoming.map { it.eventId }.toSet())
             .associateBy { it.id }
-        for ((photoId, eventId) in incoming) {
+        val suspended = photographerSuspension.suspendedOwnerIds(photoLookup.values)
+        for ((photoId, eventId, guestPriceAtAdd) in incoming) {
             val photo = photoLookup[photoId] ?: continue
             if (photo.eventId != eventId) continue
-            if (!photo.isSellable) continue
+            if (!photo.isSellable || photo.photographerId in suspended) continue
             // A free photo (V46) would 409 every checkout after login — skip.
             if (photo.pricePhp.signum() <= 0) continue
             val event = eventLookup[eventId] ?: continue
@@ -132,16 +142,16 @@ class CartService(
             val key = CartItemId(userId, photoId)
             val row = existing[photoId]
             if (row == null) {
+                val guest = guestPriceAtAdd?.setScale(2, RoundingMode.HALF_UP)
                 val saved = cartItemRepository.save(
                     CartItemEntity(
                         id = key,
                         eventId = eventId,
-                        pricePhpAtAdd = photo.pricePhp,
+                        pricePhpAtAdd = guest?.takeIf { it.signum() > 0 && it <= photo.pricePhp } ?: photo.pricePhp,
                     ),
                 )
                 existing[photoId] = saved
             } else {
-                row.pricePhpAtAdd = photo.pricePhp
                 row.eventId = eventId
                 cartItemRepository.save(row)
             }
@@ -149,26 +159,34 @@ class CartService(
         return list(userId)
     }
 
-    private fun hydrate(rows: List<CartItemEntity>): List<CartItemDto> {
+    private fun hydrate(rows: List<CartItemEntity>, includeUnavailable: Boolean = false): List<CartItemDto> {
         if (rows.isEmpty()) return emptyList()
         val photoIds = rows.map { it.id.photoId }.toSet()
         val eventIds = rows.map { it.eventId }.toSet()
         val photos = photoRepository.findAllById(photoIds).associateBy { it.id }
         val events = eventRepository.findAllById(eventIds).associateBy { it.id }
+        val suspended = photographerSuspension.suspendedOwnerIds(photos.values.filter { it.isSellable })
         return rows.mapNotNull { row ->
             val photo = photos[row.id.photoId] ?: return@mapNotNull null
             if (!photo.isSellable) return@mapNotNull null
+            val available = photo.photographerId !in suspended
+            if (!available && !includeUnavailable) return@mapNotNull null
             val event = events[row.eventId]
-            row.toDto(photo, event)
+            // AF-18 F5: an old app (no expectedPricePhp) shows this lower live price, so it becomes the stored
+            // one; a rise back is then refused at checkout. The query never raises it, unlike a JPA save.
+            if (row.pricePhpAtAdd > photo.pricePhp) {
+                cartItemRepository.lowerPriceAtAdd(row.id.userId, row.id.photoId, photo.pricePhp)
+                row.toDto(photo, event, available).copy(priceAtAdd = photo.pricePhp)
+            } else {
+                row.toDto(photo, event, available)
+            }
         }
     }
 
-    // `price` is the LIVE `photos.price_php`, not the `pricePhpAtAdd` snapshot.
-    // Checkout has no snapshot to honour — `OrderService.create` totals and
-    // charges `photos.price_php` — so rendering the snapshot here meant an
-    // admin re-price (AdminEventService → PhotoRepository.updatePriceByEventId)
-    // left the runner looking at ₱125 and paying ₱150.
-    private fun CartItemEntity.toDto(photo: Photo, event: Event?): CartItemDto = CartItemDto(
+    // `price` is the LIVE `photos.price_php`: `OrderService.create` totals and
+    // charges it. `priceAtAdd` is the snapshot, shown only as "went up from
+    // ₱priceAtAdd" while `price` is higher (AA-R14), never as the price.
+    private fun CartItemEntity.toDto(photo: Photo, event: Event?, available: Boolean): CartItemDto = CartItemDto(
         photoId = id.photoId,
         eventId = eventId,
         thumbnailUrl = thumbnailUrlOf(photo),
@@ -181,6 +199,8 @@ class CartService(
             .atZoneSameInstant(DISPLAY_ZONE)
             .toLocalTime()
             .format(TIME_FORMATTER),
+        available = available,
+        priceAtAdd = pricePhpAtAdd,
     )
 
     private fun thumbnailUrlOf(photo: Photo): String {

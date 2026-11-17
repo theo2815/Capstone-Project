@@ -19,6 +19,7 @@ import {
   useAdminQueueCounts,
 } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
+import { useOpenRelevanceAppealsCount } from "@/hooks/use-admin-relevance";
 
 const RAIL_TIPS_STORAGE_KEY = "qp:admin:rail-tips-disabled";
 
@@ -74,6 +75,13 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     label: "Event requests",
     number: "05",
     group: "queues",
+  },
+  {
+    href: ROUTES.ADMIN_RELEVANCE,
+    label: "Photo Relevance",
+    number: "12",
+    group: "queues",
+    nestedPrefix: ROUTES.ADMIN_RELEVANCE,
   },
   {
     href: ROUTES.ADMIN_EVENTS,
@@ -170,7 +178,11 @@ export function AdminRail() {
 
   const attention = useAdminAttentionTarget();
   const counts = useAdminQueueCounts();
-  const allClear = counts.total === 0;
+  // RV-3.5: Photo Relevance counts its open appeals (the server's list total).
+  const openAppeals = useOpenRelevanceAppealsCount();
+  // The total adds up the items that show a count here, so the open appeals join it.
+  const queueTotal = counts.total + openAppeals;
+  const allClear = queueTotal === 0;
 
   function getCountForHref(href: string): number | null {
     switch (href) {
@@ -184,6 +196,8 @@ export function AdminRail() {
         return counts.payouts;
       case ROUTES.ADMIN_EVENT_REQUESTS:
         return counts.events;
+      case ROUTES.ADMIN_RELEVANCE:
+        return openAppeals;
       default:
         return null;
     }
@@ -207,7 +221,7 @@ export function AdminRail() {
             size="sm"
             tnum
           >
-            {allClear ? "Queues · all clear" : `Queues · ${counts.total} open`}
+            {allClear ? "Queues · all clear" : `Queues · ${queueTotal} open`}
           </Kicker>
           <ul className="mt-4 space-y-3">
             {queueRoutes.map((route) => (

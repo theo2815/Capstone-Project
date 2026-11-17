@@ -33,6 +33,7 @@ export function RequirePhotographerReady({
   }, [unsynced]);
 
   const gate = useCanUpload();
-  if (gate.kind === "ok") return <>{children}</>;
+  // Event creation stays on profile approval: identity gates uploads only (AA-I15).
+  if (gate.kind === "ok" || gate.kind === "identity") return <>{children}</>;
   return <PhotographerNotReadyNotice gate={gate} />;
 }

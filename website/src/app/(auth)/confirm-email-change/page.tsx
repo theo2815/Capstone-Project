@@ -9,7 +9,7 @@ import { ROUTES } from "@/lib/constants";
 // exact path backend EmailService builds into the confirmation mail. Renaming
 // the folder breaks every link already sitting in someone's inbox.
 export const metadata: Metadata = {
-  title: "Confirm your new email | QuickPitik",
+  title: "Confirm your new email",
 };
 
 export default function ConfirmEmailChangePage() {

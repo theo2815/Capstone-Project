@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BrandLogo } from "@/components/layout/brand-logo";
 import { ROUTES } from "@/lib/constants";
+import { LegalLinks } from "@/components/legal/legal-links";
 
 const INTRO_SEEN_KEY = "quickpitik-intro-seen";
 
@@ -94,10 +95,11 @@ export default function SplashPage() {
         </div>
       </section>
 
-      <footer className="px-5 md:px-10 py-7 max-w-6xl mx-auto w-full flex items-center justify-between border-t border-line">
+      <footer className="px-5 md:px-10 py-7 max-w-6xl mx-auto w-full flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-line">
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           QuickPitik · 2026
         </p>
+        <LegalLinks />
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           Cebu · PH
         </p>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import type { PaginatedResponse } from "@/types/api";
 import { buildWsUrl } from "@/lib/ws-url";
 import { getAccessToken } from "@/lib/auth";
 import type { Photo } from "@/lib/api-photos";
@@ -9,6 +10,11 @@ import type { Photo } from "@/lib/api-photos";
 interface PhotoPublishedMessage {
   type: "photo.published";
   photo: Photo;
+}
+
+interface PhotoHiddenMessage {
+  type: "photo.hidden";
+  photoId: string;
 }
 
 interface UseEventLivePhotosArgs {
@@ -55,6 +61,26 @@ export function useEventLivePhotos(
       }
     }
 
+    // A photo held for removal review leaves galleries that are already open.
+    // Edit the loaded pages in place (no refetch, so a burst of hides is free).
+    function dropHiddenPhoto(photoId: string) {
+      seenPhotoIdsRef.current.delete(photoId);
+      qc.setQueriesData<InfiniteData<PaginatedResponse<Photo>>>(
+        { queryKey: ["events", args.slug, "photos"] },
+        (data) => {
+          if (!data?.pages.some((p) => p.items.some((i) => i.id === photoId))) return data;
+          return {
+            ...data,
+            pages: data.pages.map((p) => ({
+              ...p,
+              items: p.items.filter((i) => i.id !== photoId),
+              total: Math.max(0, p.total - 1),
+            })),
+          };
+        },
+      );
+    }
+
     function connect() {
       if (cancelled) return;
       // Bearer JWT carried via Sec-WebSocket-Protocol per Q-002. Backend
@@ -86,7 +112,11 @@ export function useEventLivePhotos(
 
       ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data) as PhotoPublishedMessage;
+          const data = JSON.parse(event.data) as PhotoPublishedMessage | PhotoHiddenMessage;
+          if (data.type === "photo.hidden") {
+            dropHiddenPhoto(data.photoId);
+            return;
+          }
           if (data.type !== "photo.published") return;
           // Keep the current snapshot stable. The badge lets the visitor pull
           // a fresh, diversity-ranked first page without live arrivals jumping

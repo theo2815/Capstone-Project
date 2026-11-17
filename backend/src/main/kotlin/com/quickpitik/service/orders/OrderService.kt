@@ -66,6 +66,7 @@ import com.quickpitik.repository.PaymentRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -73,6 +74,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
@@ -105,6 +107,7 @@ class OrderService(
     private val paymongoWebhookService: PaymongoWebhookService,
     private val checkoutReconciler: PaymongoCheckoutReconciler,
     private val publicProperties: PublicProperties,
+    private val photographerSuspension: PhotographerSuspension,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -122,6 +125,16 @@ class OrderService(
             transactionTemplate.execute {
                 replayAfterConstraintRace(userId, recipientEmail, request, paymentMethod, idempotencyKey)
             } ?: throw ex
+        } catch (stale: StaleCartPrice) {
+            // The reservation transaction has rolled back, so this refresh is
+            // a transaction of its own: inside it, it would roll back too.
+            // A failed refresh must not turn the refusal into a 500; the buyer is refused again next try.
+            runCatching {
+                transactionTemplate.executeWithoutResult {
+                    stale.rows.forEach { (photoId, live) -> cartItemRepository.raisePriceAtAdd(userId!!, photoId, live) }
+                }
+            }.onFailure { log.warn("Could not refresh stored cart prices for user {}", userId, it) }
+            throw stale.conflict
         }
 
         val primary = pickPrimary(reservation.orders)
@@ -246,6 +259,10 @@ class OrderService(
             val items = validateReplay(existing, request, paymentMethod)
             return CheckoutReservation(existing, photos, events, items)
         }
+
+        // Fresh checkout only, like the coupons below: a replay charges the
+        // price already reserved on its order rows, not the live one.
+        requireExpectedPrices(userId, request.items, photos)
 
         // Fresh checkout only — the replay branches above never re-resolve
         // coupons, so a code that expired between attempts cannot strand a
@@ -734,8 +751,45 @@ class OrderService(
                 throw checkoutConflict("Paid checkout requires a positive photo price.")
             }
         }
+        // A suspended photographer's photos are off sale (AA-I12b); the rows are already locked above.
+        if (photographerSuspension.suspendedOwnerIds(photos.values).isNotEmpty()) {
+            throw checkoutConflict("Only live photos can be purchased.")
+        }
         return photos
     }
+
+    // AA-R14: never charge a price the runner was not shown. An omitted
+    // expectedPricePhp (old clients) is checked against the signed-in buyer's
+    // stored cart price instead (AF-12): a rise is refused once, and `create`
+    // then moves the stored price up; a cart read moves it down to a lower live
+    // price (AF-18 F5). No cart row (a guest) is charged live.
+    private fun requireExpectedPrices(userId: UUID?, items: List<CreateOrderItem>, photos: Map<UUID, Photo>) {
+        val stored = if (userId != null && items.any { it.expectedPricePhp == null }) {
+            cartItemRepository.findByUserId(userId).associate { it.id.photoId to it.pricePhpAtAdd }
+        } else {
+            emptyMap()
+        }
+        val stale = linkedMapOf<UUID, BigDecimal>()
+        var firstRefusal: ConflictException? = null
+        items.forEach { item ->
+            val live = photos.getValue(item.photoId).pricePhp
+            val sent = item.expectedPricePhp
+            val expected = sent ?: stored[item.photoId] ?: return@forEach
+            val refused = if (sent != null) expected.compareTo(live) != 0 else expected < live
+            if (!refused) return@forEach
+            val refusal = checkoutConflict(
+                "Photo price changed from ₱${expected.setScale(2, RoundingMode.HALF_UP)} to ₱$live. Refresh your cart and try again.",
+                code = ErrorCodes.CART_ITEM_PRICE_CHANGED,
+            )
+            if (sent != null) throw refusal
+            stale[item.photoId] = live
+            if (firstRefusal == null) firstRefusal = refusal
+        }
+        firstRefusal?.let { throw StaleCartPrice(it, stale) }
+    }
+
+    /** A no-price refusal that still owes the cart rows a refresh; `ConflictException` is final, so it is wrapped. */
+    private class StaleCartPrice(val conflict: ConflictException, val rows: Map<UUID, BigDecimal>) : RuntimeException()
 
     private fun loadAndValidateEvents(items: List<CreateOrderItem>): Map<UUID, Event> {
         val eventIds = items.map { it.eventId }.toSet()

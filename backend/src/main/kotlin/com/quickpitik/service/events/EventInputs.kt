@@ -2,6 +2,7 @@ package com.quickpitik.service.events
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ValidationException
+import com.quickpitik.service.reference.RegionsService
 import java.time.LocalDate
 import java.util.UUID
 
@@ -28,5 +29,15 @@ object EventInputs {
             .ifBlank { "event" }
         val suffix = UUID.randomUUID().toString().take(6)
         return "$base-$suffix"
+    }
+
+    // Lifted from AdminEventService (AA-R3): admin events may leave both blank; races must name both.
+    fun validateLocation(regionsService: RegionsService, region: String?, province: String?, required: Boolean) {
+        if (!required && region == null && province == null) return
+        if (region.isNullOrBlank() || province.isNullOrBlank() || region.length > 20 || province.length > 40 ||
+            !regionsService.isValidPair(region, province)) {
+            throw ValidationException(code = ErrorCodes.INVALID_REGION,
+                message = "Unknown regionCode/provinceCode pair", field = "regionCode")
+        }
     }
 }

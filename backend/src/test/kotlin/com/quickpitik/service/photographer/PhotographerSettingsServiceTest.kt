@@ -2,11 +2,23 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.photographer.BrandPatchRequest
 import com.quickpitik.dto.photographer.HandlePatchRequest
 import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
+import com.quickpitik.entity.PhotographerMessage
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
+import com.quickpitik.entity.SellerDetails
+import com.quickpitik.entity.SellerDetailsStatus
+import com.quickpitik.entity.SellerIdType
+import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.PhotographerMessageRepository
+import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.service.admin.AdminDecisionLogService
+import org.mockito.ArgumentCaptor
+import kotlin.test.assertNull
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.exception.ApiException
@@ -19,6 +31,14 @@ import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImagePixelGuardTest.Companion.overBudgetPngHeader
+import com.quickpitik.entity.FlagTargetKind
+import com.quickpitik.entity.SystemFlagReason
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationResult
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ImageModerationVerdict
+import com.quickpitik.service.moderation.WordListChecker
+import com.quickpitik.support.testTransactionTemplate
 import com.quickpitik.service.storage.StorageService
 import org.hibernate.exception.ConstraintViolationException
 import org.junit.jupiter.api.BeforeEach
@@ -56,6 +76,12 @@ class PhotographerSettingsServiceTest {
     private lateinit var eventPublisher: ApplicationEventPublisher
 
     private val userId = UUID.randomUUID()
+    private val moderation: ImageModerationService = Mockito.mock(ImageModerationService::class.java)
+    private val flags: SystemFlagService = Mockito.mock(SystemFlagService::class.java)
+    private val sellerDetailsRepository: SellerDetailsRepository = Mockito.mock(SellerDetailsRepository::class.java)
+    private val messageRepository: PhotographerMessageRepository = Mockito.mock(PhotographerMessageRepository::class.java).also {
+        Mockito.`when`(it.save(Mockito.any(PhotographerMessage::class.java))).thenAnswer { call -> call.getArgument(0) }
+    }
 
     private fun <T> anyArg(): T = Mockito.any()
 
@@ -81,7 +107,73 @@ class PhotographerSettingsServiceTest {
         socialLinkRepository,
         payoutAccountRepository,
         eventPublisher,
+        WordListChecker(),
+        moderation,
+        flags,
+        testTransactionTemplate(),
+        sellerDetailsRepository,
+        AdminDecisionLogService(
+            Mockito.mock(AdminDecisionLogRepository::class.java), messageRepository, Mockito.mock(ApplicationEventPublisher::class.java),
+        ),
     )
+
+    private fun stubExistingSettings() {
+        Mockito.`when`(photographerSettingsRepository.findById(userId))
+            .thenReturn(Optional.of(PhotographerSettings(userId = userId)))
+    }
+
+    @Test
+    fun `putBrand refuses a bad brand name with TEXT_NOT_ALLOWED on brandName and saves nothing`() {
+        stubExistingSettings()
+
+        val ex = assertFailsWith<ValidationException> {
+            service().putBrand(userId, BrandPatchRequest(brandName = "Gago Shots"))
+        }
+
+        assertEquals(ErrorCodes.TEXT_NOT_ALLOWED, ex.code)
+        assertEquals("brandName", ex.field)
+        assertTrue("gago" !in ex.message!!.lowercase(), "the message must not repeat the word")
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg<PhotographerSettings>())
+    }
+
+    @Test
+    fun `putBrand refuses a bad bio with TEXT_NOT_ALLOWED on bio and saves nothing`() {
+        stubExistingSettings()
+
+        val ex = assertFailsWith<ValidationException> {
+            service().putBrand(userId, BrandPatchRequest(bio = "Race photos, no bullshit."))
+        }
+
+        assertEquals(ErrorCodes.TEXT_NOT_ALLOWED, ex.code)
+        assertEquals("bio", ex.field)
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).save(anyArg<PhotographerSettings>())
+    }
+
+    @Test
+    fun `putHandle refuses a bad handle before the reserved check`() {
+        val ex = assertFailsWith<ValidationException> {
+            service().putHandle(userId, HandlePatchRequest(handle = "yawa-shots"))
+        }
+
+        assertEquals(ErrorCodes.TEXT_NOT_ALLOWED, ex.code)
+        assertEquals("handle", ex.field)
+        Mockito.verifyNoInteractions(reservedHandleRepository)
+        Mockito.verify(photographerSettingsRepository, Mockito.never()).saveAndFlush(anyArg<PhotographerSettings>())
+    }
+
+    @Test
+    fun `clean brand name, bio and handle save as before`() {
+        stubFreeHandle()
+        Mockito.`when`(photographerSettingsRepository.save(anyArg<PhotographerSettings>())).thenAnswer { it.arguments[0] }
+        Mockito.`when`(photographerSettingsRepository.saveAndFlush(anyArg<PhotographerSettings>())).thenAnswer { it.arguments[0] }
+
+        val brand = service().putBrand(userId, BrandPatchRequest(brandName = "Juan Shots", bio = "Cebu race photos"))
+        val handled = service().putHandle(userId, HandlePatchRequest(handle = "juan-shots"))
+
+        assertEquals("Juan Shots", brand.brandName)
+        assertEquals("Cebu race photos", brand.bio)
+        assertEquals("juan-shots", handled.handle)
+    }
 
     // A Spring DataIntegrityViolationException wrapping a Hibernate
     // ConstraintViolationException that names the given constraint — the shape a
@@ -398,5 +490,193 @@ class PhotographerSettingsServiceTest {
         assertEquals(user.suspendedAt.toString(), result.suspendedAt)
         assertEquals("Original suspension", result.suspensionReason)
         assertEquals(1L, settings.verificationRevision)
+    }
+
+    // ─── AA-I7: the profile is approved automatically once identity has passed ───
+
+    private fun identity(status: SellerDetailsStatus?) {
+        Mockito.`when`(sellerDetailsRepository.findById(userId)).thenReturn(Optional.ofNullable(status?.let {
+            SellerDetails(
+                userId = userId, legalName = "Aira Cruz", idType = SellerIdType.PHILSYS, idFrontKey = "f.jpg", idBackKey = null,
+                selfieKey = "s.jpg", birFormKey = null, address = "Cebu City", phone = "09170000000", phoneKey = "9170000000",
+                status = it, revision = 1, submittedAt = java.time.OffsetDateTime.now(),
+            )
+        }))
+    }
+
+    private fun pushedMessages(): List<PhotographerMessage> {
+        val captor = ArgumentCaptor.forClass(PhotographerMessage::class.java)
+        Mockito.verify(messageRepository, Mockito.atLeast(0)).save(captor.capture())
+        return captor.allValues
+    }
+
+    @Test
+    fun `a complete profile with auto approved identity is approved at once`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.INCOMPLETE }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        assertEquals("approved", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(2L, settings.verificationRevision) // the PENDING generation, then the approval
+    }
+
+    @Test
+    fun `a complete profile waits as pending while identity is in manual review`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.INCOMPLETE }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.MANUAL_REVIEW)
+
+        assertEquals("pending", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `a pending repeat submit approves once identity passed`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.APPROVED)
+
+        assertEquals("approved", service().submitVerification(userId).status)
+        assertEquals(1L, settings.verificationRevision)
+        Mockito.verifyNoInteractions(eventPublisher) // no second "submitted" push to the admin queue
+    }
+
+    @Test
+    fun `re-submitting an approved profile whose identity passed changes nothing and sends no message`() {
+        val settings = completeSettings() // APPROVED
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        assertEquals("approved", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.APPROVED, settings.verificationStatus)
+        assertEquals(0L, settings.verificationRevision)
+        Mockito.verifyNoInteractions(eventPublisher)
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `an incomplete profile is never approved`() {
+        val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING; watermarkS3Key = null }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.APPROVED)
+
+        assertEquals(false, service().approveIfReady(userId))
+        assertEquals("incomplete", service().submitVerification(userId).status)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `a profile an admin reset does not approve itself on resubmit`() {
+        val settings = completeSettings().apply {
+            verificationStatus = VerificationStatus.INCOMPLETE; verificationAdminHold = true
+        }
+        stubVerification(settings)
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        val answer = service().submitVerification(userId)
+
+        assertEquals("pending", answer.status)
+        assertEquals(true, answer.awaitingAdmin)
+        assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        assertEquals(false, service().approveIfReady(userId))
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    @Test
+    fun `auto approval pushes the approved message with no admin`() {
+        stubVerification(completeSettings().apply { verificationStatus = VerificationStatus.PENDING })
+        identity(SellerDetailsStatus.AUTO_APPROVED)
+
+        assertTrue(service().approveIfReady(userId))
+
+        val message = pushedMessages().single()
+        assertEquals(PhotographerMessageKind.VERIFICATION_APPROVED.wire, message.kindWire)
+        assertEquals("Your photographer profile is approved. You can now upload to events.", message.body)
+        assertNull(message.sourceAdminId)
+        assertNull(message.sourceDecisionId)
+    }
+
+    @Test
+    fun `gate off still needs identity passed for profile approval`() {
+        // The service never reads IDENTITY_GATE_ENABLED: profile approval always needs a passed identity (P1-N4).
+        for (status in listOf(null, SellerDetailsStatus.MANUAL_REVIEW, SellerDetailsStatus.REJECTED)) {
+            val settings = completeSettings().apply { verificationStatus = VerificationStatus.PENDING }
+            stubVerification(settings)
+            identity(status)
+            assertEquals(false, service().approveIfReady(userId), "identity $status")
+            assertEquals(VerificationStatus.PENDING, settings.verificationStatus)
+        }
+        assertTrue(pushedMessages().isEmpty())
+    }
+
+    // AA-I11: covers and watermarks are checked (on the processed bytes) before they are stored.
+    private fun imageBytes(format: String): ByteArray = java.io.ByteArrayOutputStream().also {
+        javax.imageio.ImageIO.write(java.awt.image.BufferedImage(8, 8, java.awt.image.BufferedImage.TYPE_INT_ARGB.takeIf { format == "png" } ?: java.awt.image.BufferedImage.TYPE_INT_RGB), format, it)
+    }.toByteArray()
+
+    private fun verdict(v: ImageModerationVerdict, vararg labels: String) =
+        Mockito.`when`(moderation.checkFor(anyArg(), anyArg())).thenReturn(ImageModerationResult(v, labels.toList()))
+
+    @Test
+    fun `a flagged cover is refused with IMAGE_NOT_ALLOWED, nothing stored, PROFILE_IMAGE_FLAGGED raised`() {
+        verdict(ImageModerationVerdict.FLAGGED, "Hate Symbols")
+        Mockito.`when`(flags.raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_FLAGGED, "cover: Hate Symbols"))
+            .thenReturn(true)
+
+        val ex = assertFailsWith<ValidationException> { service().uploadCover(userId, imageBytes("jpg"), "image/jpeg") }
+
+        assertEquals(ErrorCodes.IMAGE_NOT_ALLOWED, ex.code)
+        assertEquals("file", ex.field)
+        Mockito.verify(flags).raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_FLAGGED, "cover: Hate Symbols")
+        Mockito.verifyNoInteractions(storageService, photographerSettingsRepository)
+    }
+
+    @Test
+    fun `a second flagged cover adds a line to the open flag`() {
+        verdict(ImageModerationVerdict.FLAGGED, "Violence")
+
+        assertFailsWith<ValidationException> { service().uploadCover(userId, imageBytes("jpg"), "image/jpeg") }
+
+        val note = org.mockito.ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(flags).appendNote(
+            Mockito.eq(FlagTargetKind.USER) ?: FlagTargetKind.USER,
+            Mockito.eq(userId) ?: userId,
+            Mockito.eq(SystemFlagReason.PROFILE_IMAGE_FLAGGED) ?: SystemFlagReason.PROFILE_IMAGE_FLAGGED,
+            note.capture() ?: "",
+        )
+        assertTrue(note.value.endsWith(" cover: Violence"), note.value)
+    }
+
+    @Test
+    fun `an unchecked cover is stored and PROFILE_IMAGE_UNCHECKED raised`() {
+        stubExistingSettings()
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cover.test/x")
+        verdict(ImageModerationVerdict.UNCHECKED)
+
+        service().uploadCover(userId, imageBytes("jpg"), "image/jpeg")
+
+        Mockito.verify(storageService).put(anyArg(), anyArg(), Mockito.eq("image/jpeg") ?: "")
+        Mockito.verify(photographerSettingsRepository).save(anyArg())
+        Mockito.verify(flags).raise(FlagTargetKind.USER, userId, SystemFlagReason.PROFILE_IMAGE_UNCHECKED, "cover")
+    }
+
+    @Test
+    fun `a PNG watermark is checked as PNG bytes`() {
+        stubExistingSettings()
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://wm.test/x")
+        verdict(ImageModerationVerdict.CLEAN)
+
+        service().uploadWatermark(userId, imageBytes("png"), "image/png")
+
+        val checked = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
+        Mockito.verify(moderation).checkFor(anyArg(), checked.capture() ?: byteArrayOf())
+        val stored = org.mockito.ArgumentCaptor.forClass(ByteArray::class.java)
+        Mockito.verify(storageService).put(anyArg(), stored.capture() ?: byteArrayOf(), Mockito.eq("image/png") ?: "")
+        assertEquals(listOf<Byte>(-119, 80, 78, 71), checked.value.take(4))
+        assertTrue(checked.value.contentEquals(stored.value))
+        Mockito.verifyNoInteractions(flags)
     }
 }

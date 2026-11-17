@@ -4,7 +4,7 @@ import { ForgotPasswordForm } from "@/components/auth/forgot-password-form";
 import { ROUTES } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "Forgot password | QuickPitik",
+  title: "Forgot password",
 };
 
 export default function ForgotPasswordPage() {

@@ -76,6 +76,26 @@ class PhotoRemovalEvidenceServiceTest {
         assertEquals(RemovalEvidenceCleanupState.RETRY_REQUIRED, request.evidenceCleanupState)
     }
 
+    @Test fun `replace refuses a runner case`() {
+        val runnerCase = PhotoRemovalRequest(eventIdSnapshot = request.eventIdSnapshot, eventNameSnapshot = "Synthetic run",
+            requesterContact = "runner@test.local", supportReference = "Runner request", requesterReason = "Privacy",
+            publicToOwnerReason = "Privacy request", creatorId = UUID.randomUUID(), creationCommandId = UUID.randomUUID(),
+            source = RemovalRequestSource.RUNNER)
+        `when`(requests.findForUpdate(runnerCase.id)).thenReturn(runnerCase)
+        val error = assertFailsWith<ApiException> { service.replace(request.creatorId, runnerCase.id, UUID.randomUUID(), 0, image()) }
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT to "CONFLICT", error.status to error.code)
+        verifyNoInteractions(storage)
+    }
+
+    @Test fun `the system evidence write leaves CANDIDATE items alone`() {
+        val key = PhotoRemovalEvidenceService.recordedEvidenceKey(request.id, request.creationCommandId)
+        assertEquals("photo-removal/${request.id}/evidence/${request.creationCommandId}", key)
+        service.putSystemEvidence(key, image())
+        verify(storage).put(eq(key) ?: key, any(ByteArray::class.java) ?: byteArrayOf(), eq("image/png") ?: "")
+        // Unlike an admin replace, it opens no transaction and never touches the case's items or receipts.
+        verifyNoInteractions(items, requests, commands, transactionManager)
+    }
+
     @Test fun `cancelRetainsCleanupWorkOnStorageFailure`() {
         request.status = RemovalRequestStatus.RESOLVING
         request.evidenceKey = "photo-removal/${request.id}/evidence/${UUID.randomUUID()}"
@@ -166,7 +186,7 @@ class PhotoRemovalIntakeUnitTest {
         mock(PhotoRemovalHistoryRecorder::class.java), PhotoRemovalTransitions(), TransactionTemplate(manager), mapper, Clock.systemUTC(), mock(org.springframework.context.ApplicationEventPublisher::class.java),
         mock(com.quickpitik.service.photos.PhotoErasureService::class.java), mock(PhotoErasureJobRepository::class.java),
         mock(com.quickpitik.service.orders.OrderPhotoRemovalService::class.java), mock(com.quickpitik.service.admin.AdminDecisionLogService::class.java),
-        mock(PhotoRemovalHistoryRepository::class.java), PhotoRemovalProperties())
+        mock(PhotoRemovalHistoryRepository::class.java), PhotoRemovalProperties(), mock(RunnerAutoHidePolicy::class.java))
     init {
         `when`(manager.getTransaction(org.mockito.ArgumentMatchers.any() ?: DefaultTransactionDefinition())).thenReturn(SimpleTransactionStatus())
         `when`(users.findById(adminId)).thenReturn(Optional.of(User(email = "admin@test.local", passwordHash = "unused", name = "Admin", role = Role.ADMIN)))
@@ -198,10 +218,13 @@ class PhotoRemovalQueryUnitTest {
     private val items = mock(PhotoRemovalItemRepository::class.java)
     private val reviews = mock(PhotoRemovalReviewRepository::class.java)
     private val history = mock(PhotoRemovalHistoryRepository::class.java)
+    private val photos = mock(PhotoRepository::class.java)
+    private val storage = mock(StorageService::class.java)
+    private val transactionManager = mock(PlatformTransactionManager::class.java)
     private val service = PhotoRemovalQueryService(requests, items, reviews, history,
-        mock(PhotoRepository::class.java), mock(UserRepository::class.java), mock(PhotoRemovalCommandRepository::class.java),
+        photos, mock(UserRepository::class.java), mock(PhotoRemovalCommandRepository::class.java),
         mock(PhotoRemovalEvidenceService::class.java), mock(com.quickpitik.service.photos.PhotoSearchService::class.java),
-        mock(StorageService::class.java), com.quickpitik.config.StorageProperties(), TransactionTemplate(mock(PlatformTransactionManager::class.java)),
+        storage, com.quickpitik.config.StorageProperties(), TransactionTemplate(transactionManager),
         jacksonObjectMapper().findAndRegisterModules(), Clock.systemUTC(), mock(PhotoErasureJobRepository::class.java))
     private val request = PhotoRemovalRequest(eventIdSnapshot = UUID.randomUUID(), eventNameSnapshot = "Synthetic run",
         requesterContact = "private contact", supportReference = "private ticket", requesterReason = "privacy", publicToOwnerReason = "privacy",
@@ -217,6 +240,28 @@ class PhotoRemovalQueryUnitTest {
         assertEquals(0, detail.phaseCounts.candidate)
         assertTrue(detail.evidencePresent)
         assertFalse(jacksonObjectMapper().findAndRegisterModules().writeValueAsString(detail).contains("photo-removal/private-key"))
+    }
+
+    @Test fun `adminView signs previews after the transaction and keeps the case when storage fails`() {
+        val photo = Photo(eventId = request.eventIdSnapshot, photographerId = UUID.randomUUID(), s3Key = "synthetic/original.jpg",
+            thumbnailS3Key = "synthetic/preview.jpg", pricePhp = java.math.BigDecimal("50.00"))
+        val item = PhotoRemovalItem(requestId = request.id, photoIdSnapshot = photo.id, photoId = photo.id,
+            state = RemovalItemState.VERIFIED, matchSource = RemovalMatchSource.MANUAL)
+        `when`(requests.findById(request.id)).thenReturn(Optional.of(request))
+        `when`(items.findByRequestIdOrderByIdAsc(request.id)).thenReturn(listOf(item))
+        `when`(photos.findAllById(listOf(photo.id))).thenReturn(listOf(photo))
+        `when`(photos.isDeliveryAvailable(photo.id)).thenReturn(true)
+        val inTransaction = booleanArrayOf(false)
+        `when`(transactionManager.getTransaction(any() ?: DefaultTransactionDefinition())).thenAnswer { inTransaction[0] = true; SimpleTransactionStatus() }
+        doAnswer { inTransaction[0] = false; null }.`when`(transactionManager).commit(any())
+        `when`(storage.exists("synthetic/original.jpg")).thenAnswer { assertFalse(inTransaction[0], "storage runs after the transaction"); true }
+        `when`(storage.presignedGetUrl(anyString(), any() ?: java.time.Duration.ZERO)).thenReturn("https://synthetic.test/preview")
+        assertEquals("https://synthetic.test/preview", service.adminView(request.creatorId, request.id).items.single().photo?.photo?.imageUrl)
+
+        `when`(storage.exists(anyString())).thenThrow(IllegalStateException("synthetic outage"))
+        val degraded = service.adminView(request.creatorId, request.id)
+        assertEquals(listOf(photo.id), degraded.items.map { it.photoIdSnapshot })
+        assertNull(degraded.items.single().photo?.photo?.imageUrl)
     }
 
     @Test fun `history rejects missing cases instead of returning a misleading empty page`() {

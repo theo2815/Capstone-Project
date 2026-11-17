@@ -42,8 +42,9 @@ class AdminDecisionLog(
     @Column(name = "id", nullable = false, updatable = false)
     val id: UUID = UUID.randomUUID(),
 
-    @Column(name = "admin_id", nullable = false, updatable = false)
-    val adminId: UUID,
+    // RV-2.1 (G17): NULL only on an automatic row (V106 ck_admin_decision_log_actor).
+    @Column(name = "admin_id", updatable = false)
+    val adminId: UUID?,
 
     @Column(name = "target_user_id")
     val targetUserId: UUID? = null,
@@ -75,4 +76,8 @@ class AdminDecisionLog(
 
     @Column(name = "decided_at", nullable = false, updatable = false)
     val decidedAt: OffsetDateTime = OffsetDateTime.now(),
+
+    // RV-2.1 (G17): true when the system decided with no admin (AdminDecisionLogService.logAutomaticUserDecision).
+    @Column(name = "automatic", nullable = false, updatable = false)
+    val automatic: Boolean = false,
 )

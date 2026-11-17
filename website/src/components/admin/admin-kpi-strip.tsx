@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
-import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { cn } from "@/lib/utils";
 import {
   useAdminKpis,
@@ -36,7 +35,6 @@ interface KpiEntry {
 
 export function AdminKpiStrip() {
   const userRows = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
-  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
   // A-1 followup: hydrate payouts from BE so the fallback path matches the
   // live data shape instead of the empty mock seed.
@@ -58,7 +56,7 @@ export function AdminKpiStrip() {
       }
     }
 
-    let openDisputes = disputes.filter((d) => d.status === "open").length;
+    let disputesNeedingAdmin = 0;
     let openFlags = serverOpenFlags;
     let pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
     // Event requests (V46) have no client-side fallback — BE count only.
@@ -66,7 +64,8 @@ export function AdminKpiStrip() {
 
     if (liveKpis) {
       pendingVerifications = liveKpis.pendingVerifications;
-      openDisputes = liveKpis.openDisputes;
+      disputesNeedingAdmin =
+        liveKpis.disputesNeedingAdmin ?? liveKpis.openDisputes;
       openFlags = liveKpis.openFlags;
       pendingPayouts = liveKpis.pendingPayouts;
     }
@@ -80,7 +79,7 @@ export function AdminKpiStrip() {
         priorityRank: 3,
       },
       {
-        count: openDisputes,
+        count: disputesNeedingAdmin,
         label: "Disputes",
         singularLabel: "Dispute",
         href: `${ROUTES.ADMIN_INBOX}?type=disputes`,
@@ -113,7 +112,6 @@ export function AdminKpiStrip() {
       : all.filter((e) => e.label !== "Flags");
   }, [
     userRows,
-    disputes,
     serverOpenFlags,
     serverPayouts,
     liveKpis,

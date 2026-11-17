@@ -19,9 +19,95 @@ import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 
 @RunWith(RobolectricTestRunner::class)
 class PhotoUploadSchedulerTest {
+    @Test fun `a queued upload backs off linearly in fifteen second steps`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).build())
+        val manager = WorkManager.getInstance(context) as androidx.work.impl.WorkManagerImpl
+        try {
+            PhotoUploadScheduler.enqueue(context).join()
+            val work = manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get().single()
+            val spec = requireNotNull(manager.workDatabase.workSpecDao().getWorkSpec(work.id.toString()))
+            assertEquals(androidx.work.BackoffPolicy.LINEAR, spec.backoffPolicy)
+            assertEquals(15_000L, spec.backoffDelayDuration)
+        } finally { WorkManagerTestInitHelper.closeWorkDatabase() }
+    }
+
+    @Test fun `restart replaces a backed-off request with a fresh one`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val factory = object : WorkerFactory() {
+            override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
+                object : CoroutineWorker(appContext, workerParameters) {
+                    override suspend fun doWork(): Result = Result.retry()
+                }
+        }
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).setWorkerFactory(factory).build())
+        val manager = WorkManager.getInstance(context)
+        try {
+            PhotoUploadScheduler.enqueue(context).join()
+            val old = manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get().single()
+            WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(old.id)
+            withTimeout(5_000) {
+                while (manager.getWorkInfoById(old.id).get().let {
+                        it.state != WorkInfo.State.ENQUEUED || it.runAttemptCount == 0
+                    }) delay(10)
+            }
+            PhotoUploadScheduler.restart(context).join()
+            val work = manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get()
+            val retired = manager.getWorkInfoById(old.id).get()
+            // APPEND_OR_REPLACE may already have pruned the cancelled chain.
+            assertTrue(retired == null || retired.state == WorkInfo.State.CANCELLED)
+            val fresh = work.single { !it.state.isFinished }
+            assertTrue(fresh.id != old.id)
+            assertEquals(0, fresh.runAttemptCount)
+            PhotoUploadScheduler.restart(context).join()
+            assertEquals(fresh.id, manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get()
+                .single { !it.state.isFinished }.id)
+        } finally {
+            manager.cancelAllWork().result.get()
+            WorkManagerTestInitHelper.closeWorkDatabase()
+        }
+    }
+
+    @Test fun `restart never cancels a running drain`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val entered = CountDownLatch(1)
+        val release = CompletableDeferred<Unit>()
+        val factory = object : WorkerFactory() {
+            override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters) =
+                object : CoroutineWorker(appContext, workerParameters) {
+                    override suspend fun doWork(): Result {
+                        entered.countDown()
+                        release.await()
+                        return Result.success()
+                    }
+                }
+        }
+        WorkManagerTestInitHelper.initializeTestWorkManager(context,
+            Configuration.Builder().setExecutor(SynchronousExecutor()).setWorkerFactory(factory).build())
+        val manager = WorkManager.getInstance(context)
+        try {
+            PhotoUploadScheduler.enqueue(context).join()
+            val first = manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get().single()
+            WorkManagerTestInitHelper.getTestDriver(context)!!.setAllConstraintsMet(first.id)
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            PhotoUploadScheduler.restart(context).join()
+            assertEquals(WorkInfo.State.RUNNING, manager.getWorkInfoById(first.id).get().state)
+            val work = manager.getWorkInfosForUniqueWork(PhotoUploadScheduler.WORK_NAME).get()
+            assertEquals(1, work.count { it.state == WorkInfo.State.BLOCKED })
+        } finally {
+            manager.cancelAllWork().result.get()
+            release.complete(Unit)
+            WorkManagerTestInitHelper.closeWorkDatabase()
+        }
+    }
+
     @Test fun `a running drain gets exactly one successor for captures arriving as it finishes`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val entered = CountDownLatch(1)

@@ -6,6 +6,7 @@ import type {
 } from "@/store/photographer-settings-store";
 import type {
   Dispute,
+  DisputeDenyReason,
   DisputeResolution,
 } from "@/lib/admin-disputes";
 import type { Flag, FlagStatus } from "@/lib/admin-flags";
@@ -23,6 +24,7 @@ import type {
   PendingPricingChange,
 } from "@/lib/photographer-mock";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
+import type { RaceCandidate } from "@/lib/api-photographer";
 import type { PaginatedResponse } from "@/types/api";
 
 // Admin queues fetch a page and then categorize/merge/sort it CLIENT-SIDE
@@ -46,7 +48,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   POST   /api/v1/admin/users/{id}/suspend      { reason } → AdminUserRow
 //   POST   /api/v1/admin/users/{id}/unsuspend              → AdminUserRow
 //
-//   GET    /api/v1/admin/disputes?status=&offset=&limit=   → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes?status=&view=&q=&offset=&limit= → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes/{id}                     → Dispute (404 when unknown)
 //   POST   /api/v1/admin/disputes/{id}/resolve   { resolution, refundAmount?, reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/deny      { reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/escalate  { reason } → Dispute
@@ -81,6 +84,10 @@ export interface AdminKpis {
   liveEvents: number;
   decisionsThisWeek: number;
   openDisputes: number;
+  /** DW-2: unresolved disputes that need an admin. Optional until the backend ships it. */
+  disputesNeedingAdmin?: number;
+  /** DW-2: how many of those are past their due time. */
+  disputesOverdue?: number;
   openFlags: number;
   pendingPayouts: number;
   /** V46 — photographer-owned events awaiting a decision (new + pricing change). */
@@ -108,8 +115,11 @@ export interface RecentAdminDecision {
   targetId: string | null;
   /** Name (else e-mail) of a user target; null for other targets or a deleted user. */
   targetName: string | null;
-  adminId: string;
+  /** Null on an automatic row. */
+  adminId: string | null;
   adminName: string | null;
+  /** True when no admin acted: the system decided (Photo Relevance). */
+  automatic?: boolean;
 }
 
 export async function fetchRecentAdminDecisions(
@@ -234,13 +244,6 @@ export async function fetchAdminPhotographerSettings(
   );
 }
 
-export async function approveUser(userId: string, expectedRevision?: number): Promise<AdminUserRow> {
-  return api.post<AdminUserRow>(
-    `/admin/users/${encodeURIComponent(userId)}/approve`,
-    { expectedRevision },
-  );
-}
-
 export async function rejectUser(
   userId: string,
   reason: string,
@@ -249,6 +252,16 @@ export async function rejectUser(
   return api.post<AdminUserRow>(
     `/admin/users/${encodeURIComponent(userId)}/reject`,
     { reason, expectedRevision },
+  );
+}
+
+export async function approveUser(
+  userId: string,
+  expectedRevision?: number,
+): Promise<AdminUserRow> {
+  return api.post<AdminUserRow>(
+    `/admin/users/${encodeURIComponent(userId)}/approve`,
+    { expectedRevision },
   );
 }
 
@@ -341,7 +354,16 @@ export type AdminDisputeStatusFilter =
   | "open"
   | "resolved"
   | "denied"
-  | "escalated";
+  | "escalated"
+  | "withdrawn";
+
+export type AdminDisputeView = "needs_me" | "overdue" | "refund_run" | "closed" | "all";
+
+export interface AdminDisputePageArgs {
+  view?: AdminDisputeView;
+  q?: string;
+  offset?: number;
+}
 
 export interface AdminDisputeListArgs {
   status?: AdminDisputeStatusFilter;
@@ -368,20 +390,24 @@ export async function fetchAdminDisputes(
   return res.items;
 }
 
-// The backend exposes a paginated list, but no GET /disputes/{id}.
-// Deep links must search beyond the first page before declaring a 404.
+// One server page of a queue view; no limit, so the server's default page size decides.
+export async function fetchAdminDisputePage(
+  { view, q, offset, signal }: AdminDisputePageArgs & { signal?: AbortSignal },
+): Promise<PaginatedResponse<Dispute>> {
+  const p = new URLSearchParams();
+  if (view) p.set("view", view);
+  if (q) p.set("q", q);
+  p.set("offset", String(offset ?? 0));
+  return api.get<PaginatedResponse<Dispute>>(`/admin/disputes?${p.toString()}`, { signal });
+}
+
+// Null on 404, and on 400 (a malformed id fails the server's UUID path variable).
 export async function fetchAdminDispute(disputeId: string, signal?: AbortSignal): Promise<Dispute | null> {
-  let offset = 0;
-  while (true) {
-    signal?.throwIfAborted();
-    const page = await api.get<PaginatedResponse<Dispute>>(
-      `/admin/disputes?${buildDisputesQs({ offset })}`,
-    );
-    signal?.throwIfAborted();
-    const dispute = page.items.find((row) => row.id === disputeId);
-    if (dispute) return dispute;
-    offset += page.items.length;
-    if (page.items.length === 0 || offset >= page.total) return null;
+  try {
+    return await api.get<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}`, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 400)) return null;
+    throw error;
   }
 }
 
@@ -411,6 +437,21 @@ export async function denyDispute(
   );
 }
 
+export async function fetchDisputeDenyReasons(): Promise<DisputeDenyReason[]> {
+  return (await api.get<PaginatedResponse<DisputeDenyReason>>("/admin/disputes/deny-reasons")).items;
+}
+
+export async function denyDisputeWithCode(
+  disputeId: string,
+  reasonCode: string,
+  note: string | null,
+): Promise<Dispute> {
+  return api.post<Dispute>(
+    `/admin/disputes/${encodeURIComponent(disputeId)}/deny`,
+    note ? { reasonCode, note } : { reasonCode },
+  );
+}
+
 export async function escalateDispute(
   disputeId: string,
   reason: string | null,
@@ -425,8 +466,8 @@ export async function sendRefundLink(disputeId: string, url: string): Promise<Di
   return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/refund-link`, { url });
 }
 
-export async function markRefunded(disputeId: string): Promise<Dispute> {
-  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`);
+export async function markRefunded(disputeId: string, refundReference: string): Promise<Dispute> {
+  return api.post<Dispute>(`/admin/disputes/${encodeURIComponent(disputeId)}/mark-refunded`, { refundReference });
 }
 
 // ───────────────────────────────────────────── Flags
@@ -683,9 +724,35 @@ export interface AdminEventRow extends ListEvent {
   watermarkPolicy: "platform" | "own" | "none";
   reviewStatus: EventReviewStatus;
   reviewNote: string | null;
-  pendingChange: PendingPricingChange | null;
+  pendingChange: PendingPricingChange | RaceEditChange | null;
   // V89 "Show on /events" for a photographer-owned Public event.
   listedOnEvents: boolean;
+  // AA-R7 race context; optional so an older backend still parses.
+  eventType?: string | null;
+  submittedByHandle?: string | null;
+  submittedByName?: string | null;
+  /** The race a pending race may repeat (review queue only). */
+  possibleDuplicateOf?: RaceCandidate | null;
+  /** The shared race a pending Other event looks like (review queue only). */
+  lookalike?: RaceCandidate | null;
+  checkReasons?: string[];
+  hiddenAt?: string | null;
+  adminApproved?: boolean;
+  /** Link to the new cover of a held race edit; admin only. */
+  heldCoverUrl?: string | null;
+}
+
+/** AA-R5 held race edit: only the changed fields, never a price. */
+export interface RaceEditChange {
+  kind: "race_edit";
+  fields: Partial<Record<"title" | "date" | "location" | "regionCode" | "provinceCode" | "eventType" | "organizerName" | "description", string>>;
+  coverS3Key?: string | null;
+  requestedBy: string;
+  requestedAt: string;
+}
+
+export function isRaceEdit(change: AdminEventRow["pendingChange"]): change is RaceEditChange {
+  return (change as RaceEditChange | null)?.kind === "race_edit";
 }
 
 export async function fetchAdminEvents(
@@ -726,7 +793,52 @@ export async function rejectAdminEvent(
   );
 }
 
+// AA-R6: the pending race is the same as `targetEventId` (default: its possibleDuplicateOf).
+// The submitter joins the target, the pending row is removed; answers the target row.
+export async function sameRaceAdminEvent(
+  eventId: string,
+  targetEventId?: string,
+  expectedRevision?: number,
+): Promise<AdminEventRow> {
+  return api.post<AdminEventRow>(
+    `/admin/events/${encodeURIComponent(eventId)}/same-race`,
+    { targetEventId, expectedRevision },
+  );
+}
+
+// AA-R7: shared races a new admin race may repeat, strong first. Read only, no lock.
+export async function fetchAdminDuplicateCandidates(args: {
+  name: string; date: string; provinceCode?: string; organizerName?: string; excludeId?: string;
+}): Promise<RaceCandidate[]> {
+  const p = new URLSearchParams({ name: args.name, date: args.date });
+  if (args.provinceCode) p.set("provinceCode", args.provinceCode);
+  if (args.organizerName) p.set("organizerName", args.organizerName);
+  if (args.excludeId) p.set("excludeId", args.excludeId);
+  return api.get<RaceCandidate[]>(`/admin/events/duplicate-candidates?${p.toString()}`);
+}
+
+// AA-R12: each covering photographer's price in a race, newest 50 history rows.
+//   GET  /admin/events/{id}/photographer-prices                    → AdminRacePrices
+//   POST /admin/events/{id}/photographer-prices/{photographerId}/reset → AdminRacePrices
+export interface AdminRacePrices {
+  floorPhp: number;
+  ceilingPhp: number;
+  prices: { photographerId: string; name: string; handle: string | null; effectivePhp: number; custom: boolean; priceChangedAt: string | null }[];
+  history: { photographerId: string; changedBy: string | null; fromPhp: number; toPhp: number; reason: "SET" | "RESET" | "CLAMP"; changedAt: string }[];
+}
+
+export async function fetchAdminRacePrices(eventId: string, signal?: AbortSignal): Promise<AdminRacePrices> {
+  return api.get<AdminRacePrices>(`/admin/events/${encodeURIComponent(eventId)}/photographer-prices`, { signal });
+}
+
+export async function resetAdminRacePrice(eventId: string, photographerId: string): Promise<AdminRacePrices> {
+  return api.post<AdminRacePrices>(
+    `/admin/events/${encodeURIComponent(eventId)}/photographer-prices/${encodeURIComponent(photographerId)}/reset`,
+  );
+}
+
 // PATCH /admin/events/{id}/listing — show a photographer's Public event on /events.
+// On a typed race (AA-R6): false hides it, true relists it and marks it admin approved.
 export async function setAdminEventListing(eventId: string, listed: boolean): Promise<AdminEventRow> {
   return api.fetch<AdminEventRow>(
     `/admin/events/${encodeURIComponent(eventId)}/listing`,
@@ -750,6 +862,8 @@ export interface CreateAdminEventArgs {
   /** Organizer name + race-day notes for the "About this race" strip. */
   organizerName?: string;
   description?: string;
+  /** AA-R7 race-type code from /race-types; absent = an untyped admin event. */
+  eventType?: string;
 }
 
 export async function createAdminEvent(
@@ -767,6 +881,7 @@ export async function createAdminEvent(
     form.append("organizerName", args.organizerName);
   if (args.description !== undefined)
     form.append("description", args.description);
+  if (args.eventType) form.append("eventType", args.eventType);
   if (args.cover) form.append("cover", args.cover);
   return api.post<AdminEventRow>("/admin/events", form, { headers: { "Idempotency-Key": idempotencyKey } });
 }
@@ -884,4 +999,177 @@ export async function fetchAdminSalesByEvent(
     { signal },
   );
   return res.items;
+}
+
+// ───────────────────────────────────────────── Relevance flags (PE-2.7)
+
+export function fetchFlagRelevance(
+  flagId: string,
+  signal?: AbortSignal,
+): Promise<import("@/lib/admin-flags").RelevanceEvidence> {
+  return api.get(`/admin/flags/${encodeURIComponent(flagId)}/relevance`, { signal });
+}
+
+export function resolveAdminFlag(flagId: string, resolutionNote?: string | null): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/resolve`, { resolutionNote });
+}
+
+export function confirmFlagPayoutHold(flagId: string): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/payout-hold`);
+}
+
+export function hideFlagBatch(
+  flagId: string,
+  eventId: string,
+  resolutionNote?: string | null,
+): Promise<Flag> {
+  return api.post<Flag>(`/admin/flags/${encodeURIComponent(flagId)}/hide-batch`, {
+    eventId,
+    resolutionNote,
+  });
+}
+
+export function fetchFlagHiddenPhotos(
+  flagId: string,
+  args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-flags").HiddenPhoto>> {
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/flags/${encodeURIComponent(flagId)}/hidden-photos?${p.toString()}`, { signal });
+}
+
+export function restoreFlagHiddenPhoto(flagId: string, photoId: string): Promise<Flag> {
+  return api.post<Flag>(
+    `/admin/flags/${encodeURIComponent(flagId)}/hidden-photos/${encodeURIComponent(photoId)}/restore`,
+  );
+}
+
+// ───────────────────────────────────────────── Photo Relevance (RV-1.11a)
+
+export function fetchRelevanceCases(
+  args: { tab: import("@/lib/admin-relevance").RelevanceTab; offset?: number; limit?: number; repeat?: boolean },
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceCaseRow>> {
+  const p = new URLSearchParams();
+  p.set("tab", args.tab);
+  if (args.repeat) p.set("repeat", "true"); // RV-4.3: "Repeat cases"
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/relevance/cases?${p.toString()}`, { signal });
+}
+
+export function fetchRelevanceCase(
+  caseId: string,
+  signal?: AbortSignal,
+): Promise<import("@/lib/admin-relevance").RelevanceCaseDetail> {
+  return api.get(`/admin/relevance/cases/${encodeURIComponent(caseId)}`, { signal });
+}
+
+export function fetchRelevanceAlerts(
+  args: { unseen?: boolean; offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceAlert>> {
+  const p = new URLSearchParams();
+  if (args.unseen) p.set("unseen", "true");
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/relevance/alerts?${p.toString()}`, { signal });
+}
+
+export function markRelevanceAlertSeen(
+  alertId: string,
+): Promise<import("@/lib/admin-relevance").RelevanceAlert> {
+  return api.post(`/admin/relevance/alerts/${encodeURIComponent(alertId)}/seen`);
+}
+
+// ───────────────────────────────────────────── Photo Relevance actions (RV-2.6)
+
+const relevanceCasePath = (caseId: string) => `/admin/relevance/cases/${encodeURIComponent(caseId)}`;
+
+export function restoreRelevanceCase(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceRestoreResult> {
+  return api.post(`${relevanceCasePath(caseId)}/restore`);
+}
+
+export function keepRelevanceCaseHidden(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`${relevanceCasePath(caseId)}/keep-hidden`);
+}
+
+export function markRelevanceCaseLooksFine(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`${relevanceCasePath(caseId)}/looks-fine`);
+}
+
+export function hideRelevanceBatch(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`${relevanceCasePath(caseId)}/hide-batch`);
+}
+
+export function restoreRelevancePhoto(
+  caseId: string,
+  photoId: string,
+): Promise<import("@/lib/admin-relevance").RelevancePhotoRestoreResult> {
+  return api.post(`${relevanceCasePath(caseId)}/photos/${encodeURIComponent(photoId)}/restore`);
+}
+
+export function fetchRelevanceHiddenPhotos(
+  caseId: string,
+  args: { offset?: number; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceHiddenPhoto>> {
+  const p = new URLSearchParams();
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`${relevanceCasePath(caseId)}/hidden-photos?${p.toString()}`, { signal });
+}
+
+// ───────────────────────────────────────────── Photo Relevance appeals (RV-3.5)
+
+export function fetchRelevanceAppeals(
+  args: { status: import("@/lib/admin-relevance").RelevanceAppealStatus; offset?: number; limit?: number },
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceAppealRow>> {
+  const p = new URLSearchParams();
+  p.set("status", args.status);
+  p.set("offset", String(args.offset ?? 0));
+  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
+  return api.get(`/admin/relevance/appeals?${p.toString()}`, { signal });
+}
+
+export function markRelevanceAppealEvidenceOpened(appealId: string): Promise<import("@/lib/admin-relevance").RelevanceAppealRow> {
+  return api.post(`/admin/relevance/appeals/${encodeURIComponent(appealId)}/evidence-opened`);
+}
+
+export function decideRelevanceAppeal(
+  appealId: string,
+  body: { outcome: "WON" | "LOST"; note?: string },
+): Promise<import("@/lib/admin-relevance").RelevanceAppealRow> {
+  return api.post(`/admin/relevance/appeals/${encodeURIComponent(appealId)}/decide`, body);
+}
+
+// ───────────────────────────────────────────── Photo Relevance consequences (RV-4.3)
+
+export function endRelevanceHold(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`/admin/relevance/cases/${encodeURIComponent(caseId)}/end-hold`);
+}
+
+// ───────────────────────────────────────────── Photo Relevance consent withdrawal (RV-L7 part c)
+
+export interface RelevanceConsentWithdrawal {
+  photographerId: string;
+  /** Null once cleared. */
+  consentWithdrawnAt: string | null;
+}
+
+export function recordRelevanceConsentWithdrawal(photographerId: string): Promise<RelevanceConsentWithdrawal> {
+  return api.put(`/admin/relevance/photographers/${encodeURIComponent(photographerId)}/consent-withdrawal`, undefined);
+}
+
+export function clearRelevanceConsentWithdrawal(photographerId: string): Promise<RelevanceConsentWithdrawal> {
+  return api.delete(`/admin/relevance/photographers/${encodeURIComponent(photographerId)}/consent-withdrawal`);
+}
+
+// ───────────────────────────────────────────── Photo Relevance no-consent actions (RV-4.5b)
+
+export function holdRelevancePayouts(caseId: string): Promise<import("@/lib/admin-relevance").RelevanceCaseRow> {
+  return api.post(`/admin/relevance/cases/${encodeURIComponent(caseId)}/hold-payouts`);
 }

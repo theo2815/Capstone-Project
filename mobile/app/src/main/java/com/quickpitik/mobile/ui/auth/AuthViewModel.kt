@@ -154,7 +154,7 @@ class AuthViewModel(
             _authState.value = AuthState.Loading
             try {
                 val role = if (isPhotographer) "PHOTOGRAPHER" else "RUNNER"
-                RetrofitClient.apiService.register(RegisterRequest(name, email, password, role))
+                RetrofitClient.apiService.register(RegisterRequest(name, email, password, role, termsAccepted = true))
                     .toResult("Registration failed.")
                     .fold(
                         onSuccess = { establishSession(it) },
@@ -216,7 +216,7 @@ class AuthViewModel(
             _authState.value = AuthState.Loading
             try {
                 val role = if (isPhotographer) "PHOTOGRAPHER" else "RUNNER"
-                RetrofitClient.apiService.googleLogin(GoogleLoginRequest(idToken, role))
+                RetrofitClient.apiService.googleLogin(GoogleLoginRequest(idToken, role, termsAccepted = true))
                     .toResult("Google sign-in failed.")
                     .fold(
                         onSuccess = {

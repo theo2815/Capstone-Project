@@ -55,6 +55,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.local.isPhotographerRole
+import com.quickpitik.mobile.ui.common.GoogleSignupLine
+import com.quickpitik.mobile.ui.common.SIGNUP_TICK_ERROR
+import com.quickpitik.mobile.ui.common.SignupAgreementRow
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
 import com.quickpitik.mobile.ui.theme.BrandLogo
@@ -82,6 +85,7 @@ fun RegisterScreen(
     var confirmPasswordVisible by remember { mutableStateOf(false) }
     var validationError by remember { mutableStateOf<String?>(null) }
     var isPhotographer by remember { mutableStateOf(false) }
+    var agreed by remember { mutableStateOf(false) }
 
     val authState by viewModel.authState.collectAsState()
 
@@ -142,6 +146,7 @@ fun RegisterScreen(
                 enabled = authState !is AuthState.Loading,
                 onIdToken = viewModel::googleLogin,
                 onError = viewModel::showError,
+                footnote = { GoogleSignupLine() },
             )
 
             // Role selection buttons
@@ -376,6 +381,12 @@ fun RegisterScreen(
             }
             Spacer(modifier = Modifier.height(20.dp))
 
+            SignupAgreementRow(agreed) {
+                agreed = it
+                if (validationError == SIGNUP_TICK_ERROR) validationError = null
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
             // Dynamic Error Message Text (Client validation or Server Error)
             val displayedError = validationError ?: (authState as? AuthState.Error)?.message
             if (displayedError != null) {
@@ -403,6 +414,7 @@ fun RegisterScreen(
                         password != confirmPassword -> {
                             validationError = "Passwords do not match"
                         }
+                        !agreed -> validationError = SIGNUP_TICK_ERROR
                         else -> {
                             validationError = null
                             viewModel.register(name.trim(), email.trim(), password, isPhotographer)

@@ -108,6 +108,7 @@ fun PhotographerOverviewScreen(
     modifier: Modifier = Modifier,
 ) {
     val verificationState by viewModel.verificationState.collectAsState()
+    val sellerCard by viewModel.sellerDetailsState.collectAsState()
     val eventsState by viewModel.eventsState.collectAsState()
     val earningsUiState by earningsViewModel.earningsUiState.collectAsState()
     val messages by viewModel.messages.collectAsState()
@@ -150,7 +151,8 @@ fun PhotographerOverviewScreen(
     }
     val chipText = when {
         isApproved -> "Studio live"
-        currentStatus == "pending" -> "Review in progress"
+        summary.awaitingAdmin -> "Waiting for admin review"
+        currentStatus == "pending" -> "Waiting for identity check"
         isRejected || currentStatus == "rejected" -> "Changes needed"
         else -> "Setup pending · $completedCount of ${setupItems.size}"
     }
@@ -187,7 +189,8 @@ fun PhotographerOverviewScreen(
                     )
                     Text(
                         text = when {
-                            currentStatus == "pending" || isRejected || currentStatus == "rejected" -> chipText.uppercase()
+                            currentStatus == "pending" -> chipText
+                            isRejected || currentStatus == "rejected" -> chipText.uppercase()
                             completedCount == setupItems.size -> "READY FOR REVIEW"
                             else -> "SETUP PENDING · $completedCount OF ${setupItems.size}"
                         },
@@ -212,8 +215,9 @@ fun PhotographerOverviewScreen(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = when {
+                    summary.awaitingAdmin -> "An admin is reviewing your profile."
                     currentStatus == "pending" ->
-                        "An admin is reviewing your studio setup. Check back shortly."
+                        "Your studio goes live when your identity check passes."
                     isRejected || currentStatus == "rejected" ->
                         rejectionReason ?: "Some details need updates before runners can find you."
                     else ->
@@ -273,6 +277,11 @@ fun PhotographerOverviewScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        sellerCard?.let {
+            SellerDetailsCardView(it, onReturn = { viewModel.fetchSellerDetails() })
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
         if (isApproved) {
             // The money cards must never render a FAILED (or still-loading)
             // earnings fetch as real ₱0 figures — an error shows as an error.
@@ -327,6 +336,8 @@ internal data class VerificationSummary(
     val isRejected: Boolean,
     val rejectionReason: String?,
     val missingCodes: List<String>,
+    // Pending, but an admin reset or rejected it: only an admin's approve releases it (R-10).
+    val awaitingAdmin: Boolean,
 )
 
 internal fun verificationSummary(
@@ -357,6 +368,7 @@ internal fun verificationSummary(
             verification == null || status == "approved" || status == "pending" -> emptyList()
             else -> SETUP_CODES_ALL
         },
+        awaitingAdmin = status == "pending" && verification?.awaitingAdmin == true,
     )
 }
 
@@ -564,16 +576,7 @@ private fun ApprovedHomeBody(
                 Kicker(text = "Billing", color = SlateSoft)
                 Spacer(modifier = Modifier.height(8.dp))
                 val open = balance.openRequest
-                val (line, tone) = when {
-                    open != null && open.status.uppercase() == "HELD" ->
-                        "Payout held — action needed" to StatusTone.Danger
-                    open != null ->
-                        "Payout ${open.status.lowercase().replace('_', ' ')}" to StatusTone.Warning
-                    balance.unpaidBalance >= balance.minimum ->
-                        "Ready to request" to StatusTone.Approved
-                    else ->
-                        "Balance building" to StatusTone.Neutral
-                }
+                val (line, tone) = billingGlanceLine(balance)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -927,5 +930,19 @@ private fun Sparkline(
             color = color,
             style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
         )
+    }
+}
+
+/** The Home billing card's state line. A payout hold (T8, P16) wins over an open request. */
+internal fun billingGlanceLine(balance: PayoutBalanceDto): Pair<String, StatusTone> {
+    val open = balance.openRequest
+    return when {
+        payoutHoldActive(balance) -> "Payouts on hold" to StatusTone.Warning
+        open != null && open.status.uppercase() == "HELD" ->
+            "Payout held — action needed" to StatusTone.Danger
+        open != null ->
+            "Payout ${open.status.lowercase().replace('_', ' ')}" to StatusTone.Warning
+        balance.unpaidBalance >= balance.minimum -> "Ready to request" to StatusTone.Approved
+        else -> "Balance building" to StatusTone.Neutral
     }
 }

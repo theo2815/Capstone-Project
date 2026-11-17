@@ -8,8 +8,10 @@ import com.quickpitik.entity.PhotoStatus
 import com.quickpitik.entity.RemovalState
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -22,6 +24,13 @@ import kotlin.test.assertNull
 class PhotoPipelineAgeQueryIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var photos: PhotoRepository
     @Autowired private lateinit var events: EventRepository
+    @Autowired private lateinit var jdbc: JdbcTemplate
+
+    // Both queries scan every photo, so hide the ones other classes left; rolled back with the test.
+    @BeforeEach
+    fun ignorePhotosFromOtherClasses() {
+        jdbc.update("UPDATE photos SET deleted_at = now() WHERE deleted_at IS NULL")
+    }
 
     @Test
     fun `oldest PROCESSING age ignores deleted and removed photos`() {

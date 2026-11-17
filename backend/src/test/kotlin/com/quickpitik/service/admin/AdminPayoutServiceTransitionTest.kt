@@ -6,12 +6,16 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.spi.ThrowableProxy
 import ch.qos.logback.core.read.ListAppender
 import com.quickpitik.common.ErrorCodes
+import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.MarkPayoutPaidRequest
 import com.quickpitik.entity.AdminDecisionLog
 import com.quickpitik.entity.Event
+import com.quickpitik.entity.Flag
+import com.quickpitik.entity.FlagTargetKind
+import com.quickpitik.entity.SystemFlagReason
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.entity.Order
 import com.quickpitik.entity.PayoutCycle
@@ -24,6 +28,7 @@ import com.quickpitik.entity.User
 import com.quickpitik.exception.ApiException
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.OrderRepository
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PayoutCycleRepository
@@ -88,6 +93,7 @@ class AdminPayoutServiceTransitionTest {
     private lateinit var photographerMessageRepository: PhotographerMessageRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
     private lateinit var payoutStatusHistoryRepository: PayoutStatusHistoryRepository
+    private lateinit var flagRepository: FlagRepository
 
     private val adminId = UUID.randomUUID()
     private val photographerId = UUID.randomUUID()
@@ -108,6 +114,7 @@ class AdminPayoutServiceTransitionTest {
         photographerMessageRepository = Mockito.mock(PhotographerMessageRepository::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
         payoutStatusHistoryRepository = Mockito.mock(PayoutStatusHistoryRepository::class.java)
+        flagRepository = Mockito.mock(FlagRepository::class.java)
 
         // Persistence stubs shared by every transition.
         Mockito.`when`(payoutCycleRepository.save(anyArg<PayoutCycle>())).thenAnswer { it.getArgument(0) }
@@ -124,6 +131,7 @@ class AdminPayoutServiceTransitionTest {
             listOf(ManualDisbursementProvider()), PlatformProperties(),
         ),
         payoutRequestService: PayoutRequestService = Mockito.mock(PayoutRequestService::class.java),
+        flagsEnabled: Boolean = true,
     ): AdminPayoutService {
         val adminDecisionLogService = AdminDecisionLogService(
             adminDecisionLogRepository, photographerMessageRepository, eventPublisher,
@@ -145,6 +153,8 @@ class AdminPayoutServiceTransitionTest {
             disbursementService,
             payoutRequestService,
             testTransactionTemplate(),
+            flagRepository,
+            AdminProperties(flagsEnabled = flagsEnabled),
         )
     }
 
@@ -424,7 +434,7 @@ class AdminPayoutServiceTransitionTest {
     @Test
     fun `a bulk key replayed with a different action runs that action instead of reporting a silent ok`() {
         val cycle = cycle(PayoutCycleStatus.PENDING)
-        Mockito.`when`(payoutCycleRepository.lockById(cycleId)).thenReturn(cycle)
+        givenCycle(cycle)
         val svc = service()
         val key = UUID.randomUUID().toString()
 
@@ -474,6 +484,116 @@ class AdminPayoutServiceTransitionTest {
             service().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-1"))
         }
         assertEquals(ErrorCodes.INVALID_STATE_TRANSITION, ex.code)
+    }
+
+    // ─── PE-2.2: the relevance payout hold ────────────────────────────────
+    private fun heldService(): AdminPayoutService {
+        val payoutRequestService = Mockito.mock(PayoutRequestService::class.java)
+        Mockito.`when`(payoutRequestService.relevanceHoldOpen(photographerId)).thenReturn(true)
+        return service(payoutRequestService = payoutRequestService)
+    }
+
+    private fun assertOnHold(block: () -> Unit) {
+        val ex = assertFailsWith<ApiException> { block() }
+        assertEquals(HttpStatus.CONFLICT, ex.status)
+        assertEquals(ErrorCodes.PAYOUT_ON_HOLD, ex.code)
+        assertEquals(
+            "This photographer's payouts are on hold (open relevance flag). Resolve or dismiss the flag first. " +
+                "If the money was already sent, hold the payout and record the reference in the note.",
+            ex.message,
+        )
+    }
+
+    @Test
+    fun `approve, bulk approve, mark-processing and mark-paid refuse a held photographer and save nothing`() {
+        given(PayoutCycleStatus.PENDING)
+        assertOnHold { heldService().approve(adminId, cycleId) }
+        val bulk = heldService().bulk(adminId, UUID.randomUUID().toString(), BulkPayoutsRequest(listOf(cycleId), "approve"))
+        assertFalse(bulk.results.single().ok)
+        given(PayoutCycleStatus.APPROVED)
+        assertOnHold { heldService().markProcessing(adminId, cycleId) }
+        assertOnHold { heldService().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-1")) }
+
+        Mockito.verify(payoutCycleRepository, Mockito.never()).save(anyArg<PayoutCycle>())
+        Mockito.verifyNoInteractions(payoutStatusHistoryRepository, photographerMessageRepository)
+        Mockito.verify(adminDecisionLogRepository, Mockito.never()).save(anyArg())
+    }
+
+    @Test
+    fun `approve and bulk approve lock the photographer before the cycle`() {
+        given(PayoutCycleStatus.PENDING)
+        service().approve(adminId, cycleId)
+        val order = Mockito.inOrder(userRepository, payoutCycleRepository)
+        order.verify(userRepository).lockById(photographerId)
+        order.verify(payoutCycleRepository).lockById(cycleId)
+
+        given(PayoutCycleStatus.PENDING)
+        service().bulk(adminId, UUID.randomUUID().toString(), BulkPayoutsRequest(listOf(cycleId), "approve"))
+        order.verify(userRepository).lockById(photographerId)
+        order.verify(payoutCycleRepository).lockById(cycleId)
+    }
+
+    @Test
+    fun `hold, reject, mark-failed and mark-returned still work during a relevance hold`() {
+        given(PayoutCycleStatus.PENDING)
+        assertEquals("held", heldService().hold(adminId, cycleId, "check uploads").status)
+        given(PayoutCycleStatus.PENDING)
+        assertEquals("rejected", heldService().reject(adminId, cycleId, "under review").status)
+        given(PayoutCycleStatus.PROCESSING)
+        heldService().markFailed(adminId, cycleId, "instapay rejected")
+        given(PayoutCycleStatus.PAID)
+        heldService().markReturned(adminId, cycleId, "account closed")
+    }
+
+    @Test
+    fun `an approved cycle cannot be paid after a hold is confirmed`() {
+        val approved = cycle(PayoutCycleStatus.APPROVED)
+        givenCycle(approved)
+        assertOnHold { heldService().markPaid(adminId, cycleId, MarkPayoutPaidRequest(paymentReference = "GC-123456")) }
+        assertEquals(PayoutCycleStatus.APPROVED, approved.status)
+    }
+
+    private fun relevanceFlag(target: UUID, held: Boolean) = Flag(
+        targetKindWire = FlagTargetKind.USER.wire,
+        targetId = target,
+        reason = SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
+        payoutHoldAt = if (held) OffsetDateTime.now() else null,
+    )
+
+    private fun listTwoPhotographers(otherId: UUID, flagsEnabled: Boolean): List<com.quickpitik.dto.admin.AdminPayoutCycleDto> {
+        val other = PayoutCycle(id = "PAY-OTHER-001", photographerId = otherId, weekOf = LocalDate.of(2026, 9, 1), methodWire = "gcash")
+        Mockito.`when`(payoutCycleRepository.pageForAdmin(anyArg(), anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(listOf(cycle(PayoutCycleStatus.PENDING), other)))
+        return service(flagsEnabled = flagsEnabled)
+            .list(null, null, com.quickpitik.common.PaginationParams.of(0, 20)).items
+    }
+
+    @Test
+    fun `the list shows an open relevance flag and whether its hold is confirmed, with one flag query per page`() {
+        val otherId = UUID.randomUUID()
+        val heldFlag = relevanceFlag(photographerId, held = true)
+        val openFlag = relevanceFlag(otherId, held = false)
+        Mockito.`when`(flagRepository.findOpenByUserTargetsAndReason(anyArg(), anyArg())).thenReturn(listOf(heldFlag, openFlag))
+
+        val items = listTwoPhotographers(otherId, flagsEnabled = true)
+
+        assertEquals(heldFlag.id, items[0].relevanceFlagId)
+        assertTrue(items[0].relevanceHold)
+        assertEquals(openFlag.id, items[1].relevanceFlagId)
+        assertFalse(items[1].relevanceHold)
+        Mockito.verify(flagRepository, Mockito.times(1)).findOpenByUserTargetsAndReason(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `with the flags switch off the list shows the flag but no hold`() {
+        val heldFlag = relevanceFlag(photographerId, held = true)
+        Mockito.`when`(flagRepository.findOpenByUserTargetsAndReason(anyArg(), anyArg())).thenReturn(listOf(heldFlag))
+
+        val items = listTwoPhotographers(UUID.randomUUID(), flagsEnabled = false)
+
+        assertEquals(heldFlag.id, items[0].relevanceFlagId)
+        assertFalse(items[0].relevanceHold)
+        assertEquals(null, items[1].relevanceFlagId)
     }
 }
 

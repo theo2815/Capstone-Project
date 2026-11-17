@@ -15,6 +15,23 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 interface QuickPitikApi {
+    @GET("api/v1/race-types")
+    suspend fun getRaceTypes(): ApiResponseEnvelope<RaceTypesDto>
+
+    @Multipart
+    @POST("api/v1/me/photographer/races")
+    suspend fun createRace(
+        @Header("Authorization") token: String,
+        @Part parts: List<MultipartBody.Part>,
+    ): ApiResponseEnvelope<RaceCreateResultDto>
+
+    @POST("api/v1/me/photographer/races/{eventId}/join")
+    suspend fun joinRace(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: JoinRaceRequest,
+    ): ApiResponseEnvelope<RaceCreateResultDto>
+
     @GET("api/v1/me/photographer/metadata-settings")
     suspend fun getMetadataSettings(@Header("Authorization") token: String): ApiResponseEnvelope<MetadataSettingsDto>
 
@@ -248,6 +265,12 @@ interface QuickPitikApi {
     suspend fun getVerificationStatus(
         @Header("Authorization") token: String
     ): ApiResponseEnvelope<VerificationSubmitResponseDto>
+
+    // Seller details (SC-1 E1): status only; the form itself lives on quickpitik.com.
+    @GET("api/v1/me/photographer/seller-details")
+    suspend fun getSellerDetails(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<SellerDetailsDto>
 
     // Public reference data — no Authorization header. Backend owns the list;
     // see RegionDto for why neither client hardcodes it any more.
@@ -518,7 +541,8 @@ interface QuickPitikApi {
 
     @GET("api/v1/me/cart")
     suspend fun getCart(
-        @Header("Authorization") token: String
+        @Header("Authorization") token: String,
+        @Query("includeUnavailable") includeUnavailable: Boolean = true
     ): ApiResponseEnvelope<List<CartItemDto>>
 
     @POST("api/v1/me/cart/items")
@@ -695,6 +719,18 @@ interface QuickPitikApi {
         @Path("id") selfieId: String
     ): ApiResponseEnvelope<List<SelfieRefDto>>
 
+    @GET("api/v1/auth/me")
+    suspend fun getMe(
+        @Header("Authorization") token: String
+    ): ApiResponseEnvelope<UserDto>
+
+    // 409 CONSENT_VERSION_MISMATCH when the version is not the server's current one.
+    @POST("api/v1/me/terms-acceptance")
+    suspend fun acceptTerms(
+        @Header("Authorization") token: String,
+        @Body request: TermsAcceptanceRequest
+    ): ApiResponseEnvelope<UserDto>
+
     @PUT("api/v1/me/profile")
     suspend fun updateProfile(
         @Header("Authorization") token: String,
@@ -732,4 +768,19 @@ interface QuickPitikApi {
         @Header("Authorization") token: String,
         @Path("eventId") eventId: String
     ): ApiResponseEnvelope<RemovedResponse>
+
+    // AA-R9 reports, signed-in only.
+    @POST("api/v1/me/reports/events/{eventId}")
+    suspend fun reportEvent(
+        @Header("Authorization") token: String,
+        @Path("eventId") eventId: String,
+        @Body request: ReportRequest
+    ): ApiResponseEnvelope<ReportResultDto>
+
+    @POST("api/v1/me/reports/photographers/{handle}")
+    suspend fun reportPhotographer(
+        @Header("Authorization") token: String,
+        @Path("handle") handle: String,
+        @Body request: ReportRequest
+    ): ApiResponseEnvelope<ReportResultDto>
 }

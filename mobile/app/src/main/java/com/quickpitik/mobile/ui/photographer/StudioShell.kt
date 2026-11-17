@@ -71,15 +71,20 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -94,6 +99,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.quickpitik.mobile.data.remote.PhotographerMessageDto
 import com.quickpitik.mobile.data.remote.RetrofitClient
+import java.net.URLEncoder
+import com.quickpitik.mobile.ui.common.TermsReacceptanceDialog
+import com.quickpitik.mobile.ui.common.WEBSITE_ORIGIN
+import com.quickpitik.mobile.ui.common.openInCustomTab
 import com.quickpitik.mobile.ui.common.formatInboxDate
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -164,11 +173,19 @@ fun StudioTabScaffold(
     viewModel: PhotographerDashboardViewModel,
     settingsViewModel: StudioSettingsViewModel,
     tetherViewModel: TetherViewModel,
+    termsViewModel: TermsAcceptanceViewModel,
     onLogout: () -> Unit,
     onPreviewProfile: () -> Unit,
     onSwitchToRunner: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val terms by termsViewModel.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) termsViewModel.load() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val messages by viewModel.messages.collectAsState()
     val brandSettings by settingsViewModel.brandSettings.collectAsState()
     // Drives the cross-tab GlobalUploadBanner — surfaces sync progress so the
@@ -194,6 +211,15 @@ fun StudioTabScaffold(
     val resolvedAvatarUrl = RetrofitClient.resolveImageUrl(brandSettings?.avatarUrl)
 
     StudioTheme {
+        if (terms.required) {
+            TermsReacceptanceDialog(
+                version = terms.version.orEmpty(),
+                busy = terms.busy,
+                error = terms.error,
+                onAccept = termsViewModel::accept,
+                onSignOut = onLogout,
+            )
+        }
         if (showNotifDialog) {
             NotificationsInboxDialog(
                 messages = messages,
@@ -671,8 +697,22 @@ private fun PhotographerTopBar(
  * tab's PrimaryCta keeps the single Fresh allowance). Slide + fade enter/exit
  * — never fade alone per the Mobile Design motion rule.
  */
+internal fun uploadBannerTitle(uploadingCount: Int, queuedCount: Int, busyUntil: Long, now: Long): String = when {
+    uploadingCount + queuedCount > 0 && busyUntil > now -> "Server busy, retrying in ${(busyUntil - now) / 1_000} s"
+    uploadingCount > 0 -> "Uploading photos"
+    else -> "Photos queued"
+}
+
 @Composable
 private fun GlobalUploadBanner(queueStats: QueueStats) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(queueStats.busyUntil) {
+        now = System.currentTimeMillis()
+        while (now < queueStats.busyUntil) {
+            delay(1_000)
+            now = System.currentTimeMillis()
+        }
+    }
     val inFlight = queueStats.uploadingCount + queueStats.queuedCount
     AnimatedVisibility(
         visible = inFlight > 0,
@@ -695,7 +735,7 @@ private fun GlobalUploadBanner(queueStats: QueueStats) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (queueStats.uploadingCount > 0) "Uploading photos" else "Photos queued",
+                        text = uploadBannerTitle(queueStats.uploadingCount, queueStats.queuedCount, queueStats.busyUntil, now),
                         color = Ink,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -887,24 +927,14 @@ private fun NotificationsInboxDialog(
 }
 
 @Composable
-private fun InboxRow(
+internal fun InboxRow(
     message: PhotographerMessageDto,
     onMarkRead: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val isUnread = message.readAt == null
-    val toneColor = when (message.kind) {
-        "verification_approved", "unsuspended", "dispute_resolved",
-        "payout_approved", "payout_paid", "payout_report_resolved" -> Fresh
-        "verification_rejected", "verification_reset",
-        "dispute_escalated", "payout_held", "dispute_denied" -> WarningOrange
-        "suspended" -> ErrorRed
-        "admin_message", "payout_report_acknowledged" -> Ink
-        // force_edit is deliberately absent: the backend removed that admin
-        // action end-to-end, so the kind can never be emitted. Anything else
-        // new from the backend lands on Slate rather than a wrong colour.
-        else -> Slate
-    }
+    val toneColor = messageToneColor(message.kind)
+    val context = LocalContext.current
     val title = message.title?.trim().takeUnless { it.isNullOrEmpty() }
         ?: messageKindLabel(message.kind)
 
@@ -963,7 +993,23 @@ private fun InboxRow(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            relevanceCaseLinkUrl(message)?.let { url ->
+                // Mobile Design: tap target >= 48dp, sentence case (UPPERCASE is for kickers).
+                Box(
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .clickable(role = Role.Button) {
+                            if (isUnread) onMarkRead()
+                            openInCustomTab(context, url)
+                        }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(text = "View details", color = Ink, style = Typography.labelMedium)
+                }
+            }
             Text(
                 text = "REMOVE",
                 color = SlateSoft,
@@ -976,9 +1022,30 @@ private fun InboxRow(
     }
 }
 
+internal fun messageToneColor(kind: String): Color = when (kind) {
+    "verification_approved", "unsuspended", "dispute_resolved",
+    "payout_approved", "payout_paid", "payout_report_resolved" -> Fresh
+    "verification_rejected", "verification_reset",
+    "dispute_escalated", "payout_held", "dispute_denied", "relevance_notice" -> WarningOrange
+    "suspended" -> ErrorRed
+    "admin_message", "payout_report_acknowledged" -> Ink
+    // force_edit is deliberately absent: the backend removed that admin
+    // action end-to-end, so the kind can never be emitted. Anything else
+    // new from the backend lands on Slate rather than a wrong colour.
+    else -> Slate
+}
+
+// The case page on the website, from the id alone: encoded so a stray "/" or
+// "?" cannot change the path. URLEncoder writes a space as "+", the path wants %20.
+internal fun relevanceCaseUrl(caseId: String): String =
+    "$WEBSITE_ORIGIN/dashboard/relevance/" + URLEncoder.encode(caseId, "UTF-8").replace("+", "%20")
+
+internal fun relevanceCaseLinkUrl(message: PhotographerMessageDto): String? =
+    message.relevanceCaseId?.takeUnless { it.isBlank() }?.let(::relevanceCaseUrl)
+
 // Photographer copy from the website's photographer-messages.ts; the runner
 // inbox (RunnerInboxSheet) words the refund kinds differently on purpose.
-private fun messageKindLabel(kind: String): String = when (kind) {
+internal fun messageKindLabel(kind: String): String = when (kind) {
     "verification_approved" -> "Verification approved"
     "verification_rejected" -> "Verification needs changes"
     "verification_reset" -> "Verification reset"
@@ -994,6 +1061,7 @@ private fun messageKindLabel(kind: String): String = when (kind) {
     "payout_report_acknowledged" -> "Report acknowledged"
     "payout_report_resolved" -> "Report resolved"
     "admin_message" -> "Message from admin"
+    "relevance_notice" -> "Uploads"
     else -> kind.replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 

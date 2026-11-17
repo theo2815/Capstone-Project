@@ -1,0 +1,441 @@
+package com.quickpitik.service.photographer
+
+import com.quickpitik.common.ErrorCodes
+import com.quickpitik.common.OffsetLimitPageable
+import com.quickpitik.common.PaginatedResponse
+import com.quickpitik.common.PaginationParams
+import com.quickpitik.config.IdentityProperties
+import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.admin.AdminSellerDetailsDto
+import com.quickpitik.dto.admin.AdminSellerDetailsRowDto
+import com.quickpitik.dto.admin.RepeatMatchDto
+import com.quickpitik.dto.admin.SellerDetailsFilesDto
+import com.quickpitik.dto.admin.toAdminDto
+import com.quickpitik.dto.admin.toAdminRowDto
+import com.quickpitik.dto.photographer.LiveCheckRequest
+import com.quickpitik.dto.photographer.SellerDetailsDto
+import com.quickpitik.dto.photographer.SellerDetailsForm
+import com.quickpitik.dto.photographer.toDto
+import com.quickpitik.entity.PhotographerMessageKind
+import com.quickpitik.entity.RepeatMatch
+import com.quickpitik.entity.RepeatMatchKind
+import com.quickpitik.entity.SellerDetails
+import com.quickpitik.entity.SellerDetailsStatus
+import com.quickpitik.entity.SellerIdType
+import com.quickpitik.entity.SellerReasonCode
+import com.quickpitik.exception.ApiException
+import com.quickpitik.exception.NotFoundException
+import com.quickpitik.exception.ValidationException
+import com.quickpitik.repository.PayoutAccountRepository
+import com.quickpitik.repository.SellerDetailsRepository
+import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.service.image.ExifOrientation
+import com.quickpitik.service.image.ImageDecode
+import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.service.storage.StorageService
+import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
+import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.web.multipart.MultipartFile
+import java.awt.RenderingHints
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
+import java.time.Clock
+import java.time.OffsetDateTime
+import java.util.UUID
+import javax.imageio.ImageIO
+
+/**
+ * A photographer's seller details (RA 11967 Sec. 21(b), BIR RR 16-2023), required
+ * before new uploads (PhotoUploadService gate). Only the photographer and admins
+ * read a record; the files are private and never go to face search.
+ *
+ * Never log names, the address, the phone or file bytes: delete failures log the
+ * storage key only, which holds no personal data.
+ */
+@Service
+class SellerDetailsService(
+    private val sellerDetailsRepository: SellerDetailsRepository,
+    private val userRepository: UserRepository,
+    private val storageService: StorageService,
+    private val transactionTemplate: TransactionTemplate,
+    private val clock: Clock,
+    private val adminDecisionLogService: AdminDecisionLogService,
+    private val storageProperties: StorageProperties,
+    private val identityCheckService: IdentityCheckService,
+    private val payoutAccountRepository: PayoutAccountRepository,
+    private val identityProperties: IdentityProperties,
+    private val photographerSettingsService: PhotographerSettingsService,
+) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
+    fun get(userId: UUID): SellerDetailsDto = response(sellerDetailsRepository.findById(userId).orElse(null))
+
+    // The one C3 mapper: the GET, submit and live check carry the same upload answer (AA-I6, review F14).
+    private fun response(row: SellerDetails?): SellerDetailsDto = (row?.toDto() ?: SellerDetailsDto.MISSING).copy(
+        uploadsAllowed = row != null && row.status in SellerDetailsStatus.uploadGateSet(identityProperties.gateEnabled),
+        identityGateStartsOn = identityProperties.gateStartsOn,
+    )
+
+    /**
+     * Validates and re-encodes every file, runs the identity checks (AA-I3), stores the
+     * files, then saves the record in a short transaction. No DB transaction is held while
+     * decoding, calling AWS or talking to storage.
+     */
+    fun submit(userId: UUID, form: SellerDetailsForm): SellerDetailsDto {
+        val legalName = text(form.legalName, "legalName", 200)
+        val idType = SellerIdType.fromWire(form.idType?.trim())
+            ?: throw ValidationException("Choose one of the listed ID types.", field = "idType")
+        val address = text(form.address, "address", 500)
+        val phone = validPhone(form.phone)
+            ?: throw ValidationException("Enter a Philippine phone number starting with +63 or 0.", field = "phone")
+        val idFront = jpeg(required(sent(form.idFront), "idFront"), "idFront")
+        val idBack = (if (idType == SellerIdType.PHILSYS) required(sent(form.idBack), "idBack") else sent(form.idBack))
+            ?.let { jpeg(it, "idBack") }
+        val selfie = jpeg(required(sent(form.selfie), "selfie"), "selfie")
+        val birForm = sent(form.birForm)?.let { jpeg(it, "birForm") }
+
+        val checks = identityCheckService.run(userId, form.livenessSessionId?.trim()?.ifEmpty { null }, idType, form.idNumber, legalName) { idFront }
+        return persist(userId, listOf(idFront, idBack, selfie, birForm, checks.referenceImage)) { existing, keys, now ->
+            val (frontKey, backKey, selfieKey, birKey, referenceKey) = keys
+            val row = existing ?: SellerDetails(
+                userId = userId, legalName = legalName, idType = idType, idFrontKey = frontKey!!,
+                idBackKey = backKey, selfieKey = selfieKey!!, birFormKey = birKey, address = address,
+                phone = phone, phoneKey = phoneKey(phone), status = SellerDetailsStatus.MANUAL_REVIEW,
+                revision = 0, submittedAt = now,
+            )
+            row.apply {
+                this.legalName = legalName
+                this.idType = idType
+                idFrontKey = frontKey!!
+                idBackKey = backKey
+                this.selfieKey = selfieKey!!
+                birFormKey = birKey
+                this.address = address
+                this.phone = phone
+                phoneKey = phoneKey(phone)
+                rejectionReason = null
+                reviewedAt = null
+                reviewedBy = null
+                submittedAt = now
+            }.applyChecks(checks, referenceKey, previouslyRejected(existing), now)
+        }
+    }
+
+    /**
+     * C2b: a new live check for a MANUAL_REVIEW record, on its stored ID front. Keeps every
+     * stored file and replaces only the reference image.
+     */
+    fun liveCheck(userId: UUID, request: LiveCheckRequest): SellerDetailsDto {
+        val current = sellerDetailsRepository.findById(userId).orElse(null)
+        if (current?.status != SellerDetailsStatus.MANUAL_REVIEW) throw notInReview()
+        val revision = current.revision
+        val checks = identityCheckService.run(userId, request.livenessSessionId!!.trim(), current.idType, request.idNumber, current.legalName) {
+            storageService.getBytes(current.idFrontKey)
+        }
+        return persist(userId, listOf(checks.referenceImage)) { existing, (referenceKey), now ->
+            // An admin decided, or a resubmission landed, while the checks ran (review F2).
+            if (existing?.status != SellerDetailsStatus.MANUAL_REVIEW || existing.revision != revision) throw notInReview()
+            // A run with no still (AWS error, AI off) keeps the earlier one, so the admin still has it.
+            existing.applyChecks(checks, referenceKey ?: existing.livenessReferenceKey, previouslyRejected(existing), now)
+        }
+    }
+
+    /**
+     * Runs inside the save transaction, under the user lock. Repeat accounts and a payout holder name
+     * that differs from the legal name route to an admin, never refuse (AA-I5). A lock on the ID number
+     * (after the user lock, so no deadlock) makes a second account submitting it at once wait, then see the first (R-9);
+     * a lock on the phone key, taken first, does the same for the phone.
+     */
+    private fun SellerDetails.applyChecks(
+        checks: IdentityChecks, referenceKey: String?, previouslyRejected: Boolean, now: OffsetDateTime,
+    ): SellerDetails = apply {
+        val payouts = payoutAccountRepository.findAllByUserIdOrderByCreatedAtAsc(userId)
+        sellerDetailsRepository.lockPhoneKey(phoneKey) // always before the ID lock: one order, no deadlock
+        val hits = checks.idNumberMatchHmacs.takeIf { it.isNotEmpty() }?.let { hmacs ->
+            sellerDetailsRepository.lockIdNumber(hmacs.first()) // same key whatever ID type was picked
+            sellerDetailsRepository.findUserIdsByIdNumberHmacIn(hmacs, userId).map { it to RepeatMatchKind.ID_NUMBER }
+        }.orEmpty() + (if (payouts.isEmpty()) emptyList() else {
+            payoutAccountRepository.findUserIdsByAccountNumbers(payouts.map { it.accountNumber }, userId)
+                .map { it to RepeatMatchKind.PAYOUT_NUMBER }
+        }) + sellerDetailsRepository.findUserIdsByPhoneKey(phoneKey, userId).map { it to RepeatMatchKind.PHONE }
+        repeatMatches = mergeMatches(emptyList(), hits)
+        val reasons = checks.reasons + listOfNotNull(
+            SellerReasonCode.REPEAT_ACCOUNT_MATCH.takeIf { repeatMatches.isNotEmpty() },
+            SellerReasonCode.PAYOUT_NAME_MISMATCH.takeIf { payouts.any { !NameMatch.same(legalName, it.accountName) } },
+            SellerReasonCode.PREVIOUSLY_REJECTED.takeIf { previouslyRejected },
+            // The count before this try (R-8); only an admin approval clears it.
+            SellerReasonCode.REPEATED_FAILED_CHECKS.takeIf { failedAutoChecks >= identityProperties.maxFailedAutoChecks },
+        )
+        if (checks.reasons.any { it in PERSON_FAILED }) failedAutoChecks += 1
+        status = IdentityCheckService.statusFor(reasons)
+        reasonCodes = reasons.ifEmpty { listOf(SellerReasonCode.PASSED) }
+        livenessSessionId = checks.sessionId
+        livenessConfidence = checks.livenessConfidence
+        faceSimilarity = checks.faceSimilarity
+        biometricConsentAt = checks.consentAt
+        livenessReferenceKey = referenceKey
+        idNumberHmac = checks.idNumberHmac
+        autoCheckedAt = now
+        revision += 1
+    }
+
+    /** After an admin rejection, only an admin approval clears the way to an automatic pass (review F7, P1-N12). */
+    private fun previouslyRejected(existing: SellerDetails?): Boolean = existing != null &&
+        (existing.status == SellerDetailsStatus.REJECTED ||
+            (existing.status != SellerDetailsStatus.APPROVED && SellerReasonCode.PREVIOUSLY_REJECTED in existing.reasonCodes))
+
+    private fun notInReview() = ApiException(
+        HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+        "Only seller details waiting for an admin can take a new live check. Reload the page.",
+    )
+
+    /**
+     * Stores [files] (null = none sent), then runs [write] on the locked row in a short
+     * transaction. After the commit, deletes the old files the saved row no longer names:
+     * every old file on a submit, only a previous reference image on a live check (review F1).
+     * This request's files are deleted if anything fails before the commit or the transaction
+     * rolls back, and kept when the commit's outcome is unknown.
+     */
+    private fun persist(
+        userId: UUID, files: List<ByteArray?>, write: (SellerDetails?, List<String?>, OffsetDateTime) -> SellerDetails,
+    ): SellerDetailsDto {
+        val newKeys = mutableListOf<String>()
+        var outcome: Int? = null // how the transaction ended; null while it has not run
+        val (saved, oldKeys) = try {
+            val keys = files.map { bytes ->
+                bytes?.let {
+                    "$PREFIX$userId/${UUID.randomUUID()}.jpg".also { key ->
+                        newKeys += key
+                        storageService.put(key, it, "image/jpeg")
+                    }
+                }
+            }
+            checkNotNull(transactionTemplate.execute {
+                TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                    override fun afterCompletion(status: Int) { outcome = status }
+                })
+                userRepository.lockById(userId)
+                val existing = sellerDetailsRepository.findById(userId).orElse(null)
+                val old = existing?.fileKeys().orEmpty() // before write() changes the row
+                val row = sellerDetailsRepository.save(write(existing, keys, OffsetDateTime.now(clock)))
+                // AA-I7: an automatic pass approves a waiting, complete profile in the same transaction.
+                if (row.status == SellerDetailsStatus.AUTO_APPROVED) photographerSettingsService.approveIfReady(userId)
+                row to old
+            })
+        } catch (error: Exception) {
+            if (outcome == null || outcome == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                newKeys.forEach(::deleteQuietly)
+            } else {
+                // The commit may have landed (a lost acknowledgement), so the row may point to the new
+                // files: keep them. shortcut: no sweep removes them if it did not; add one if this log appears.
+                log.warn("seller details commit outcome unknown; kept new files {}", newKeys)
+            }
+            throw error
+        }
+        (oldKeys - saved.fileKeys().toSet()).forEach(::deleteQuietly)
+        return response(saved)
+    }
+
+    /** E3: the review queue, waiting records first. No links: an admin opens files one record at a time. */
+    @Transactional(readOnly = true)
+    fun adminList(status: String?, params: PaginationParams): PaginatedResponse<AdminSellerDetailsRowDto> {
+        val filter = status?.let { wire ->
+            SellerDetailsStatus.fromWire(wire)
+                ?: throw ValidationException(
+                    "status must be manual_review, auto_approved, approved or rejected (or the legacy submitted).",
+                    field = "status",
+                )
+        }
+        val page = sellerDetailsRepository.findForAdmin(filter, OffsetLimitPageable(params))
+        val emails = userRepository.findAllById(page.content.map { it.userId }).associate { it.id to it.email }
+        return PaginatedResponse.of(page.content.map { it.toAdminRowDto(emails[it.userId].orEmpty()) }, page.totalElements, params)
+    }
+
+    /** E4: one record with 5-minute file links; every view is logged (which files, never the links). */
+    @Transactional
+    fun adminView(adminId: UUID, userId: UUID): AdminSellerDetailsDto {
+        val row = find(userId)
+        val ttl = storageProperties.presignedTtl.photographerDownload
+        // Presigning is local signing (no storage call), so it may run inside the transaction.
+        fun link(key: String?, part: String) = key?.let { storageService.presignedDownloadUrl(it, ttl, "$part.jpg") }
+        val files = SellerDetailsFilesDto(
+            idFront = link(row.idFrontKey, "id_front")!!,
+            idBack = link(row.idBackKey, "id_back"),
+            selfie = link(row.selfieKey, "selfie")!!,
+            birForm = link(row.birFormKey, "bir_form"),
+            livenessReference = link(row.livenessReferenceKey, "liveness_reference"),
+        )
+        val present = listOfNotNull(
+            "id_front", "id_back".takeIf { row.idBackKey != null }, "selfie", "bir_form".takeIf { row.birFormKey != null },
+            "liveness_reference".takeIf { row.livenessReferenceKey != null },
+        )
+        adminDecisionLogService.logUserDecision(
+            adminId = adminId, targetUserId = userId, decision = "seller_details_viewed",
+            meta = mapOf("files" to present, "revision" to row.revision),
+        )
+        return adminDto(row, files, OffsetDateTime.now(clock).plus(ttl))
+    }
+
+    /** The other accounts' email and suspended state are read live, in one query. */
+    private fun adminDto(row: SellerDetails, files: SellerDetailsFilesDto? = null, linksExpireAt: OffsetDateTime? = null): AdminSellerDetailsDto {
+        val users = userRepository.findAllById(row.repeatMatches.map { it.userId }).associateBy { it.id }
+        val matches = row.repeatMatches.map { m ->
+            val user = users[m.userId]
+            RepeatMatchDto(m.userId, user?.email.orEmpty(), m.matchedOn.map { it.name }, user?.suspendedAt != null)
+        }
+        return row.toAdminDto(email(row.userId), matches, files, linksExpireAt)
+    }
+
+    /** E5: only a MANUAL_REVIEW record at the revision the admin opened. */
+    @Transactional
+    fun approve(adminId: UUID, userId: UUID, revision: Long): AdminSellerDetailsDto {
+        val row = decide(userId, revision, SellerDetailsStatus.MANUAL_REVIEW)
+        row.status = SellerDetailsStatus.APPROVED
+        row.reviewedAt = OffsetDateTime.now(clock)
+        row.reviewedBy = adminId
+        row.failedAutoChecks = 0 // an admin has seen this person; a later resubmission starts a fresh count
+        sellerDetailsRepository.save(row)
+        adminDecisionLogService.logUserDecision(
+            adminId = adminId, targetUserId = userId, decision = "seller_details_approved", meta = mapOf("revision" to revision),
+        )
+        photographerSettingsService.approveIfReady(userId) // AA-I7
+        return adminDto(row)
+    }
+
+    /** E6: from MANUAL_REVIEW, or AUTO_APPROVED / APPROVED (a fake found later); pauses uploads and tells the photographer why. */
+    @Transactional
+    fun reject(adminId: UUID, userId: UUID, revision: Long, reason: String): AdminSellerDetailsDto {
+        val row = decide(
+            userId, revision,
+            SellerDetailsStatus.MANUAL_REVIEW, SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED,
+        )
+        val trimmed = reason.trim()
+        row.status = SellerDetailsStatus.REJECTED
+        row.rejectionReason = trimmed
+        row.reviewedAt = OffsetDateTime.now(clock)
+        row.reviewedBy = adminId
+        sellerDetailsRepository.save(row)
+        val decision = adminDecisionLogService.logUserDecision(
+            adminId = adminId, targetUserId = userId, decision = "seller_details_rejected",
+            reason = trimmed, meta = mapOf("revision" to revision),
+        )
+        adminDecisionLogService.pushMessage(
+            photographerId = userId,
+            kind = PhotographerMessageKind.ADMIN_MESSAGE,
+            title = "Seller details not accepted",
+            body = "Your seller details were not accepted. Reason: ${trimmed.trimEnd('.')}. New uploads are paused until you send them " +
+                "again in your photographer settings on quickpitik.com.",
+            sourceAdminId = adminId,
+            sourceDecisionId = decision.id,
+        )
+        return adminDto(row)
+    }
+
+    private fun find(userId: UUID): SellerDetails = sellerDetailsRepository.findById(userId)
+        .orElseThrow { NotFoundException("Seller details not found", ErrorCodes.NOT_FOUND) }
+
+    private fun email(userId: UUID): String = userRepository.findById(userId).map { it.email }.orElse("")
+
+    /** Locks the user row (as submit does), so a resubmission and a decision never interleave. */
+    private fun decide(userId: UUID, revision: Long, vararg allowed: SellerDetailsStatus): SellerDetails {
+        userRepository.lockById(userId)
+        val row = find(userId)
+        if (row.status !in allowed) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Seller details are ${row.status.toWire()} and cannot be decided this way.")
+        }
+        if (row.revision != revision) {
+            throw ApiException(HttpStatus.CONFLICT, ErrorCodes.INVALID_STATE_TRANSITION,
+                "Seller details have changed. Reload before deciding.", field = "revision")
+        }
+        return row
+    }
+
+    private fun deleteQuietly(key: String) {
+        runCatching { storageService.delete(key) }
+            .onFailure { log.warn("seller details file delete of {} failed: {}", key, it.message) }
+    }
+
+    private fun text(raw: String?, field: String, max: Int): String {
+        val value = raw?.trim().orEmpty()
+        if (value.isEmpty() || value.length > max) {
+            throw ValidationException("$field must be 1 to $max characters.", field = field)
+        }
+        return value
+    }
+
+    // Spring binds a blank browser file input as an empty part, not null: treat it as not sent.
+    private fun sent(file: MultipartFile?): MultipartFile? = file?.takeUnless { it.isEmpty }
+
+    private fun required(file: MultipartFile?, field: String): MultipartFile =
+        file ?: throw ValidationException("$field is required.", field = field)
+
+    /** Checks one uploaded photo and returns it upright, at most 2400 px, as a fresh JPEG (no EXIF, no GPS). */
+    private fun jpeg(file: MultipartFile, field: String): ByteArray {
+        if ((file.contentType ?: "").lowercase() !in SUPPORTED_TYPES) {
+            throw ValidationException("$field must be a JPEG, PNG or WebP image.", ErrorCodes.UNSUPPORTED_MEDIA_TYPE, field)
+        }
+        if (file.size > MAX_FILE_BYTES) {
+            throw ApiException(HttpStatus.PAYLOAD_TOO_LARGE, ErrorCodes.PAYLOAD_TOO_LARGE, "$field must be 5 MB or smaller.", field)
+        }
+        val bytes = file.bytes
+        if (ImagePixelGuard.exceedsPixelBudget(bytes)) {
+            throw ValidationException("Image dimensions exceed the supported maximum.", ErrorCodes.UNSUPPORTED_MEDIA_TYPE, field)
+        }
+        val source = ImageDecode.readOrNull(bytes)
+            ?: throw ValidationException("$field cannot be read as an image.", ErrorCodes.UNSUPPORTED_MEDIA_TYPE, field)
+        val upright = ExifOrientation.apply(source, ExifOrientation.read(bytes))
+        val scale = minOf(1.0, MAX_LONG_EDGE.toDouble() / maxOf(upright.width, upright.height))
+        val width = (upright.width * scale).toInt().coerceAtLeast(1)
+        val height = (upright.height * scale).toInt().coerceAtLeast(1)
+        val out = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        val g = out.createGraphics()
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            g.drawImage(upright, 0, 0, width, height, null)
+        } finally {
+            g.dispose()
+        }
+        return ByteArrayOutputStream().also { ImageIO.write(out, "jpeg", it) }.toByteArray()
+    }
+
+    companion object {
+        const val PREFIX = "seller-details/"
+        const val MAX_FILE_BYTES = 5L * 1024 * 1024
+        private const val MAX_LONG_EDGE = 2400
+        private val SUPPORTED_TYPES = setOf("image/jpeg", "image/png", "image/webp")
+        private val PHONE_SEPARATORS = Regex("[\\s.()\\-]")
+        private val PHONE_SHAPE = Regex("\\+?\\d+")
+        // Checks the person failed. An AWS fault, AI off, an unreadable card or a missing format is never held against them (R-8).
+        private val PERSON_FAILED = setOf(
+            SellerReasonCode.LIVENESS_LOW, SellerReasonCode.FACE_MISMATCH, SellerReasonCode.NO_FACE_ON_ID,
+            SellerReasonCode.ID_NUMBER_MISMATCH, SellerReasonCode.ID_NAME_MISMATCH,
+        )
+
+        /** The § 3.4 phone rule: returns the number as typed (trimmed) when valid, else null. */
+        fun validPhone(raw: String?): String? {
+            val typed = raw?.trim() ?: return null
+            val compact = typed.replace(PHONE_SEPARATORS, "")
+            val digits = compact.count { it.isDigit() }
+            val ok = typed.length <= 30 && PHONE_SHAPE.matches(compact) &&
+                (compact.startsWith("+63") || compact.startsWith("0")) && digits in 10..13
+            return typed.takeIf { ok }
+        }
+
+        /** The last 10 digits of a valid phone, for repeat-account matching (the same rule as V94's backfill). */
+        fun phoneKey(phone: String): String = phone.filter(Char::isDigit).takeLast(10)
+
+        /** Adds [hits] to [matches]: one entry per other account, each kind once (AA-I5). */
+        fun mergeMatches(matches: List<RepeatMatch>, hits: List<Pair<UUID, RepeatMatchKind>>): List<RepeatMatch> =
+            (matches.flatMap { m -> m.matchedOn.map { m.userId to it } } + hits)
+                .groupBy({ it.first }, { it.second })
+                .map { (userId, kinds) -> RepeatMatch(userId, kinds.distinct().sorted()) }
+    }
+}

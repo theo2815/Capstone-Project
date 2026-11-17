@@ -37,6 +37,10 @@ export interface AdminUserRow {
   verificationRevision: number;
   suspendedAt: string | null;
   suspensionReason: string | null;
+  /** Pending and held after an admin reset or reject; only an admin releases it. */
+  adminHold?: boolean;
+  /** RV-L7: when the photographer withdrew the consent to automatic hides and holds; only the detail carries it. */
+  relevanceConsentWithdrawnAt?: string | null;
   settingsSnapshot: PhotographerSettingsSnapshot | null;
 }
 
@@ -51,4 +55,6 @@ export interface DecisionLogEntry {
   adminId?: string | null;
   /** Null when the admin account no longer exists. */
   adminName?: string | null;
+  /** True when no admin acted: the system decided (Photo Relevance). */
+  automatic?: boolean;
 }

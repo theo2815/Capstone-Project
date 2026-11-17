@@ -102,10 +102,12 @@ class AuthViewModelGoogleTest {
         // The session landed exactly like a password login's would.
         assertEquals("access-1", session.getAccessToken())
 
-        server.takeRequest() // the first (role-less) exchange
+        // The first exchange carries no agreement: it may be a returning user.
+        assertTrue(!server.takeRequest().body.readUtf8().contains("termsAccepted"))
         val completing = server.takeRequest().body.readUtf8()
         assertTrue(completing.contains("\"idToken\":\"google-id-token\""))
         assertTrue(completing.contains("\"role\":\"RUNNER\""))
+        assertTrue(completing.contains("\"termsAccepted\":true"))
     }
 
     @Test

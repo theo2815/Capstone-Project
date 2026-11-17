@@ -73,6 +73,30 @@ class PhotoDiversityQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(photographers.take(2).toSet(), ids.drop(3).take(2).toSet())
     }
 
+    // AA-I12a: suspension takes the photographer's photos out of the grid and its total.
+    @Test
+    fun `a suspended photographer's photos leave the grid and its total`() {
+        val eventId = eventRepository.save(newEvent()).id
+        val active = userRepository.save(newPhotographer()).id
+        val suspended = userRepository.save(newPhotographer())
+        val snapshot = OffsetDateTime.now(ZoneOffset.UTC).withNano(0)
+        repeat(2) { photoRepository.save(newPhoto(eventId, active, snapshot.minusMinutes(it + 2L), snapshot.minusMinutes(1))) }
+        repeat(3) { photoRepository.saveAndFlush(newPhoto(eventId, suspended.id, snapshot.minusMinutes(it + 2L), snapshot.minusMinutes(1))) }
+        suspended.suspendedAt = snapshot
+        userRepository.saveAndFlush(suspended)
+
+        val page = photoRepository.findForEventNoBib(
+            eventId = eventId,
+            snapshotAt = snapshot,
+            seed = snapshot.toEpochSecond(),
+            // One row a page: a full first page makes Spring Data run the countQuery.
+            pageable = OffsetLimitPageable(PaginationParams.of(0, 1)),
+        )
+
+        assertEquals(2, page.totalElements)
+        assertEquals(listOf(active), page.content.map { it.photographerId })
+    }
+
     private fun newPhoto(
         eventId: UUID,
         photographerId: UUID,

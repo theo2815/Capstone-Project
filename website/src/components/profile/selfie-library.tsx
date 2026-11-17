@@ -10,6 +10,8 @@ import {
 import { useSelfiesList } from "@/hooks/use-selfies";
 import { useToast } from "@/hooks/use-toast";
 import { Kicker } from "@/components/ui/kicker";
+import { FaceNotice } from "@/components/legal/face-notice";
+import { useFaceConsent } from "@/store/face-consent-store";
 import { ApiError } from "@/lib/api";
 import { captureAuthSession } from "@/lib/auth-session";
 import {
@@ -34,6 +36,8 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Privacy plan D2: no selfie is saved before the face-matching tick.
+  const faceOk = useFaceConsent();
 
   const remaining = SELFIE_MAX - selfies.length;
   const primary = selfies.find((s) => s.isPrimary);
@@ -50,7 +54,7 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
   async function handlePick(e: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (files.length === 0) return;
+    if (files.length === 0 || !faceOk) return;
     const isCurrent = captureAuthSession();
 
     setBusy(true);
@@ -167,11 +171,17 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
   }
 
   if (selfies.length === 0) {
-    return <SelfieEmptyState onPick={handlePick} busy={busy} error={error} />;
+    return (
+      <>
+        <FaceNotice className="mb-5" />
+        <SelfieEmptyState onPick={handlePick} busy={busy} locked={!faceOk} error={error} />
+      </>
+    );
   }
 
   return (
     <div>
+      <FaceNotice className="mb-5" />
       <div className="flex items-baseline justify-between gap-4 mb-5">
         <p className="font-sans text-base text-ink-soft max-w-md">
           {primary ? "Searches running across every event you join." : "Pick a primary selfie below."}{" "}
@@ -195,7 +205,7 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
         ))}
         <li>
           {remaining > 0 ? (
-            <SelfieAddTile onPick={handlePick} busy={busy} />
+            <SelfieAddTile onPick={handlePick} busy={busy} locked={!faceOk} />
           ) : (
             <SelfieCapTile />
           )}
@@ -219,10 +229,12 @@ export function SelfieLibrary({ returnTo = null }: { returnTo?: string | null })
 function SelfieEmptyState({
   onPick,
   busy,
+  locked,
   error,
 }: {
   onPick: (e: ChangeEvent<HTMLInputElement>) => void;
   busy: boolean;
+  locked: boolean;
   error: string | null;
 }) {
   return (
@@ -246,7 +258,7 @@ function SelfieEmptyState({
       <label
         className={
           "mt-6 inline-flex items-center gap-2 font-display text-base font-bold bg-fresh hover:bg-fresh-deep text-surface py-3 px-6 rounded-full transition-colors " +
-          (busy ? "opacity-60 cursor-wait" : "cursor-pointer")
+          (busy ? "opacity-60 cursor-wait" : locked ? "opacity-50 cursor-not-allowed" : "cursor-pointer")
         }
       >
         {busy ? "Processing…" : "Upload selfies"}
@@ -256,7 +268,7 @@ function SelfieEmptyState({
           accept={ACCEPTED_IMAGE_MIME.join(",")}
           onChange={onPick}
           multiple
-          disabled={busy}
+          disabled={busy || locked}
           className="sr-only"
         />
       </label>
@@ -331,15 +343,17 @@ function SelfieTile({
 function SelfieAddTile({
   onPick,
   busy,
+  locked,
 }: {
   onPick: (e: ChangeEvent<HTMLInputElement>) => void;
   busy: boolean;
+  locked: boolean;
 }) {
   return (
     <label
       className={
         "aspect-square rounded-2xl border-2 border-dashed border-line hover:border-fresh hover:bg-bone-deep/40 transition-colors flex flex-col items-center justify-center gap-2 text-slate hover:text-fresh " +
-        (busy ? "opacity-60 cursor-wait" : "cursor-pointer")
+        (busy ? "opacity-60 cursor-wait" : locked ? "opacity-50 cursor-not-allowed" : "cursor-pointer")
       }
     >
       <span aria-hidden="true" className="text-2xl leading-none">
@@ -353,7 +367,7 @@ function SelfieAddTile({
         accept={ACCEPTED_IMAGE_MIME.join(",")}
         onChange={onPick}
         multiple
-        disabled={busy}
+        disabled={busy || locked}
         className="sr-only"
       />
     </label>

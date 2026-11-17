@@ -47,7 +47,7 @@ interface PhotoMetadataRepository : JpaRepository<PhotoMetadata, UUID> {
 
     @Modifying
     @Query("""
-        UPDATE PhotoMetadata m SET m.state = :state, m.fields = :fields, m.extractedAt = :now,
+        UPDATE PhotoMetadata m SET m.state = :state, m.fields = :fields, m.xmpPhotoId = :xmpPhotoId, m.extractedAt = :now,
             m.originalSizeBytes = COALESCE(m.originalSizeBytes, :sizeBytes),
             m.leaseToken = null, m.leaseUntil = null, m.nextAttemptAt = null
         WHERE m.photoId = :photoId AND m.leaseToken = :token AND m.extractorVersion = :version
@@ -55,7 +55,7 @@ interface PhotoMetadataRepository : JpaRepository<PhotoMetadata, UUID> {
             AND EXISTS (SELECT p.id FROM Photo p WHERE p.id = m.photoId AND p.deletionStartedAt IS NULL)
     """)
     fun settle(photoId: UUID, token: UUID, version: Int, state: PhotoMetadataState, fields: PhotoMetadataFields?,
-               now: OffsetDateTime, sizeBytes: Long? = null): Int
+               now: OffsetDateTime, sizeBytes: Long? = null, xmpPhotoId: UUID? = null): Int
 
     @Modifying
     @Query("""

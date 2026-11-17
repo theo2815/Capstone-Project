@@ -13,13 +13,26 @@ import {
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
+import { RaceDuplicateDialog } from "@/components/dashboard/race-duplicate-dialog";
 import { Kicker } from "@/components/ui/kicker";
+import {
+  RegionProvinceFields,
+  type RegionProvinceValue,
+} from "@/components/ui/region-province-fields";
+import { useRaceTypes } from "@/hooks/use-race-types";
+import { useRegions } from "@/hooks/use-regions";
 import { ApiError } from "@/lib/api";
 import {
   createMyEvent,
+  createRace,
+  joinRace,
   updateMyEvent,
+  updateRace,
   type MyEventFields,
   type PhotographerEventDetail,
+  type RaceCandidate,
+  type RaceCreateResult,
+  type RaceFields,
 } from "@/lib/api-photographer";
 import { validateImageFile } from "@/lib/image-utils";
 import { describePricing } from "@/lib/photographer-events";
@@ -64,9 +77,52 @@ interface MyEventFormProps {
   event?: PhotographerEventDetail;
   onDone: (saved: PhotographerEventDetail) => void;
   onCancel: () => void;
+  /** Race create (AA-R15): a final server outcome (created, pending_review, joined). */
+  onRaceDone?: (result: RaceCreateResult) => void;
 }
 
-export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
+function errorMessage(err: unknown): string {
+  return err instanceof ApiError
+    ? (err.errors[0]?.message ?? err.message)
+    : "Couldn't save the event. Try again.";
+}
+
+// Region + province for a race; fetches the region list only when shown.
+function RaceRegionFields(props: {
+  value: RegionProvinceValue;
+  onChange: (next: RegionProvinceValue) => void;
+}) {
+  const { regions } = useRegions();
+  return <RegionProvinceFields {...props} regions={regions} />;
+}
+
+export function MyEventForm({
+  event,
+  onDone,
+  onCancel,
+  onRaceDone,
+}: MyEventFormProps) {
+  const { selfServeEnabled, types } = useRaceTypes();
+  // Shared races (AA-R15): the server owns the codes; "Other" (shared:false)
+  // is today's personal-event form. A race is PAID + PUBLIC at the race price,
+  // so it has no pricing or visibility fields.
+  const raceEdit = !!event?.eventType;
+  const typePicker = !event && selfServeEnabled && types.length > 0;
+  const [raceType, setRaceType] = useState<string | null>(
+    event?.eventType ?? null,
+  );
+  const isRace =
+    raceEdit ||
+    (typePicker && types.some((t) => t.code === raceType && t.shared));
+  const [region, setRegion] = useState<RegionProvinceValue>({
+    regionCode: null,
+    provinceCode: null,
+  });
+  const [dup, setDup] = useState<{
+    outcome: "match" | "candidates";
+    candidates: RaceCandidate[];
+  } | null>(null);
+  const [dupError, setDupError] = useState<string | null>(null);
   const live =
     event?.reviewStatus === "approved" ||
     event?.reviewStatus === "change_pending";
@@ -116,6 +172,7 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
 
   const parsedPrice = Number(price.trim());
   const priceValid =
+    isRace ||
     pricingMode === "free" ||
     (price.trim() !== "" && Number.isFinite(parsedPrice) && parsedPrice > 0);
   const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
@@ -124,6 +181,8 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
     location.trim().length > 0 &&
     dateValid &&
     priceValid &&
+    (!typePicker || raceType !== null) &&
+    (!isRace || raceEdit || (!!region.regionCode && !!region.provinceCode)) &&
     !busy;
 
   const trio: MyEventFields =
@@ -144,9 +203,82 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
     (base.watermarkPolicy ?? "platform") !== trio.watermarkPolicy ||
     Number(base.pricePerPhoto) !== trio.pricePerPhoto;
 
+  // Create a race; `confirmDifferentFrom` = "Mine is different" on a dialog.
+  async function submitRace(confirmDifferentFrom?: string) {
+    setBusy(true);
+    setError(null);
+    setDupError(null);
+    try {
+      const result = await createRace({
+        title: title.trim(),
+        date,
+        location: location.trim(),
+        regionCode: region.regionCode ?? undefined,
+        provinceCode: region.provinceCode ?? undefined,
+        eventType: raceType ?? undefined,
+        organizerName: organizerName.trim() || undefined,
+        description: description.trim() || undefined,
+        confirmDifferentFrom,
+        cover,
+      });
+      if (result.outcome === "match" || result.outcome === "candidates") {
+        setDup({ outcome: result.outcome, candidates: result.candidates });
+      } else {
+        setDup(null);
+        onRaceDone?.(result);
+      }
+    } catch (err) {
+      if (confirmDifferentFrom) setDupError(errorMessage(err));
+      else setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleJoin(candidate: RaceCandidate) {
+    setBusy(true);
+    setDupError(null);
+    try {
+      const result = await joinRace(candidate.id, title.trim());
+      setDup(null);
+      onRaceDone?.(result);
+    } catch (err) {
+      setDupError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Race edit (AA-R5): only changed fields; region and province are not on
+  // the detail DTO, so this form leaves them as they are.
+  async function submitRaceEdit() {
+    if (!event) return;
+    const patch: RaceFields = {};
+    if (title.trim() !== event.name) patch.title = title.trim();
+    if (date !== event.date) patch.date = date;
+    if (location.trim() !== event.location) patch.location = location.trim();
+    if (organizerName.trim() !== event.organizerName)
+      patch.organizerName = organizerName.trim();
+    if (description.trim() !== event.description)
+      patch.description = description.trim();
+    if (raceType && raceType !== event.eventType) patch.eventType = raceType;
+    if (cover) patch.cover = cover;
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await updateRace(event.id, patch));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+    if (raceEdit) return submitRaceEdit();
+    if (isRace) return submitRace();
     setBusy(true);
     setError(null);
     try {
@@ -180,11 +312,7 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
       }
       onDone(saved);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? (err.errors[0]?.message ?? err.message)
-          : "Couldn't save the event. Try again.",
-      );
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -192,14 +320,34 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
 
   const submitLabel = busy
     ? "Saving…"
-    : !event
-      ? "Submit for review"
-      : live && trioChanged
-        ? "Save · request pricing change"
-        : "Save changes";
+    : raceEdit
+      ? "Save changes"
+      : isRace
+        ? "Create race"
+        : !event
+          ? "Submit for review"
+          : live && trioChanged
+            ? "Save · request pricing change"
+            : "Save changes";
+
+  // Race edit lists only the shared codes; create also offers "Other".
+  const typeOptions = (raceEdit ? types.filter((t) => t.shared) : types).map(
+    (t) => ({ value: t.code, label: `${t.label} — ${t.hint}` }),
+  );
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-6">
+      {(typePicker || (raceEdit && typeOptions.length > 0)) && (
+        <fieldset className="space-y-3">
+          <Kicker as="p">Event type</Kicker>
+          <AdminRadioGroup
+            name="my-event-type"
+            options={typeOptions}
+            value={raceType ?? ""}
+            onChange={setRaceType}
+          />
+        </fieldset>
+      )}
       <AdminTextInput
         id="my-event-title"
         label="Title"
@@ -219,6 +367,9 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
         showCounter
         placeholder="SRP Boulevard, Cebu City"
       />
+      {isRace && !raceEdit && (
+        <RaceRegionFields value={region} onChange={setRegion} />
+      )}
       <div className="space-y-2">
         <AdminFieldLabel htmlFor="my-event-date">Date</AdminFieldLabel>
         <input
@@ -265,6 +416,7 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
         }}
       />
 
+      {!isRace && (<>
       <fieldset className="pt-5 border-t border-line space-y-4">
         <Kicker as="p">{live ? "Pricing · change request" : "Pricing"}</Kicker>
         {live && (
@@ -339,11 +491,24 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
           onChange={(next) => setVisibility(next as Visibility)}
         />
       </fieldset>
+      </>)}
 
-      {!event && (
+      {!event && !isRace && (
         <p className="font-sans text-sm text-ink-soft max-w-prose">
           An admin reviews the event and its price first. Uploads open the
           moment it is approved.
+        </p>
+      )}
+      {!event && isRace && (
+        <p className="font-sans text-sm text-ink-soft max-w-prose">
+          A race is shared by every photographer who covers it: public, listed
+          on /events, at the race price. It is checked automatically, and an
+          admin looks at anything the checks are unsure about.
+        </p>
+      )}
+      {typePicker && raceType === null && (
+        <p className="font-sans text-sm text-slate">
+          Pick a race type, or Other for an event of your own.
         </p>
       )}
       {error && (
@@ -368,6 +533,18 @@ export function MyEventForm({ event, onDone, onCancel }: MyEventFormProps) {
           Cancel
         </button>
       </div>
+      <RaceDuplicateDialog
+        outcome={dup?.outcome ?? null}
+        candidates={dup?.candidates ?? []}
+        busy={busy}
+        error={dupError}
+        onJoin={(c) => void handleJoin(c)}
+        onDifferent={() => void submitRace(dup?.candidates[0]?.id)}
+        onClose={() => {
+          setDup(null);
+          setDupError(null);
+        }}
+      />
     </form>
   );
 }

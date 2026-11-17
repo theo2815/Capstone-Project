@@ -1,6 +1,7 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.AiApiProperties
+import com.quickpitik.config.AiProvider
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.ai.AiApiClient
 import com.quickpitik.service.photos.PhotoFaceErasureService
@@ -33,6 +34,7 @@ class PhotoOrphanReaper(
     private val faceErasure: PhotoFaceErasureService,
     private val removalProperties: com.quickpitik.config.PhotoRemovalProperties,
     private val clock: java.time.Clock,
+    private val aiProperties: com.quickpitik.config.AiProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -47,6 +49,9 @@ class PhotoOrphanReaper(
             runCatching { faceErasure.erase(it.eventId, it.photoId) }
                 .onFailure { error -> log.warn("Face cleanup pending for photo {} ({})", it.photoId, error.javaClass.simpleName) }
         }
+        // Rekognition face ids are "<event>.<photo>": a re-index reuses the id and
+        // erasure removes every copy, so only ai-api persons can be orphaned.
+        if (aiProperties.provider != AiProvider.AI_API) return
         val events = photoRepository.findEventsWithFacePersons(
             PageRequest.of(0, REAP_MAX_EVENTS_PER_SWEEP),
         )

@@ -9,7 +9,7 @@ import { ROUTES } from "@/lib/constants";
 // path backend EmailService builds into the registration mail. Renaming the
 // folder breaks every link already sitting in someone's inbox.
 export const metadata: Metadata = {
-  title: "Confirm your email | QuickPitik",
+  title: "Confirm your email",
 };
 
 export default function VerifyEmailPage() {

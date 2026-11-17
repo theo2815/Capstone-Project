@@ -46,10 +46,11 @@ class CartRepositoryImplTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += request
                 return when (request.path) {
-                    "/api/v1/me/cart" -> ok(CART)
+                    "/api/v1/me/cart?includeUnavailable=true" -> ok(CART)
                     "/api/v1/me/cart/items" -> addItem
                     "/api/v1/me/cart/items/p1" -> removeItem
                     "/api/v1/orders" -> order
+                    "/api/v1/coupons/preview" -> ok(PREVIEW)
                     else -> MockResponse().setResponseCode(404)
                 }
             }
@@ -151,7 +152,21 @@ class CartRepositoryImplTest {
         assertEquals(before, repo.cartItems.value.map { it.photoId })
     }
 
+    @Test fun `a guest checkout refused for a price change takes the live prices and keeps the add price`() = runBlocking {
+        repo.addToCart(null, photo("p3"), "e1", "run", "Run").getOrThrow()
+        order = MockResponse().setResponseCode(409).setBody(
+            """{"success":false,"errors":[{"code":"CART_ITEM_PRICE_CHANGED","message":"Photo price changed."}]}""",
+        )
+        assertEquals("Photo price changed.", repo.checkout(null, "g@x.com", "qrph", null).exceptionOrNull()?.message)
+        val row = repo.cartItems.value.single()
+        assertEquals(150.0, row.price, 0.0)
+        assertEquals(100.0, row.priceAtAdd!!, 0.0)
+        val sent = requests.last { it.path == "/api/v1/orders" }.body.readUtf8()
+        assertTrue(sent, sent.contains(""""expectedPricePhp":100.0"""))
+    }
+
     private companion object {
+        const val PREVIEW = """{"code":null,"items":[],"eligibleCount":0,"discountTotal":0.0,"livePrices":[{"photoId":"p3","price":150.0}]}"""
         const val CART = """[{"photoId":"p1","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":"B-1","eventName":"Run","eventSlug":"run","tone":null,"time":null},{"photoId":"p2","eventId":"e1","thumbnailUrl":null,"price":100.0,"bib":null,"eventName":"Run","eventSlug":"run","tone":null,"time":null}]"""
         const val ORDER = """{"id":"o1","status":"PENDING","items":[{"photoId":"p2","price":100.0}],"totalAmount":100.0,"paymentMethod":"GCASH","createdAt":"2026-09-11T00:00:00Z","redirectUrl":"https://pay.example/x"}"""
     }

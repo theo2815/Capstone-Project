@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.io.OutputStream
+import java.time.Clock
 import java.time.OffsetDateTime
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -50,6 +51,7 @@ class OrderBundleService(
     private val downloadGrantRepository: DownloadGrantRepository,
     private val storageService: StorageService,
     private val orderAccessTokenService: OrderAccessTokenService,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -58,7 +60,9 @@ class OrderBundleService(
     // R2 URL, because Meta's in-app browsers append `fbclid=` to top-level
     // navigations and R2 rejects the altered SigV4 signature. Our own route
     // ignores unknown query params.
-    @Transactional(readOnly = true)
+    // Read-write since DW-5: it records the started download. It still never
+    // calls storage; the bytes stream in writeTo(), after this commits.
+    @Transactional
     fun prepare(orderId: UUID, token: String?, photoId: UUID? = null): BundleSpec {
         val order = orderRepository.findById(orderId).orElseThrow { orderNotFound() }
 
@@ -81,7 +85,7 @@ class OrderBundleService(
         val event = eventRepository.findById(order.eventId).orElse(null)
         val eventSlug = event?.slug ?: "quickpitik"
 
-        val now = OffsetDateTime.now()
+        val now = OffsetDateTime.now(clock)
         val usedNames = mutableSetOf<String>()
         val entries = items.mapNotNull { item ->
             val photo = photos[item.id.photoId] ?: return@mapNotNull null
@@ -109,6 +113,8 @@ class OrderBundleService(
             if (isSingle) entries[0].entryName
             else "quickpitik-${sanitizeFilename(eventSlug)}-$ref.zip"
         val contentType = if (isSingle) "image/jpeg" else "application/zip"
+        // Counts a started download, not a finished one: a retry counts again.
+        downloadGrantRepository.recordDownloads(order.id, entries.map { it.photoId }, now)
         return BundleSpec(
             orderId = order.id,
             filename = filename,

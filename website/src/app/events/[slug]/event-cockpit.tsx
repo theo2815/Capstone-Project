@@ -17,6 +17,7 @@ import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
 import { SaveButton } from "@/components/events/save-button";
+import { ReportButton } from "@/components/moderation/report-dialog";
 import {
   BibPanel,
   SelfieSearchPanel,
@@ -36,12 +37,16 @@ import { useEventPhotos } from "@/hooks/use-event-photos";
 import { useEventLivePhotos } from "@/hooks/use-event-live-photos";
 import { searchEventByFace, type EventPhotosResult } from "@/lib/api-photos";
 import { deriveEventState } from "@/lib/event-catalog";
+import { ROUTES } from "@/lib/constants";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
 import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
+import { LegalLinks } from "@/components/legal/legal-links";
+import { BibNotice } from "@/components/legal/face-notice";
+import { useBibConsent, useTickRead } from "@/store/face-consent-store";
 
 type Mode = "cockpit" | "browse";
 
@@ -80,11 +85,13 @@ export function EventCockpit({ event, initialPhotos }: Props) {
   const [myPhotosError, setMyPhotosError] = useState<string | null>(null);
 
   // Q-011: bib-keyed cache. Active in cockpit (no filter) and bib-mode browse.
+  // BT-1b: a ?bib= link is a bib search, so no request before the bib tick.
+  const bibOk = useBibConsent();
   const bibPhotos = useEventPhotos({
     slug: event.slug,
     bib: bibFilter || undefined,
     initialPage: initialPhotos,
-    enabled: !isFaceMode,
+    enabled: !isFaceMode && (!bibFilter || bibOk),
   });
 
   // 2026-05-19 PM: face search is now one-shot, not cached. The selfie panel
@@ -444,19 +451,22 @@ function CockpitTopBar({ event }: { event: EventDetail }) {
           </span>
           <span>Back to events</span>
         </Kicker>
-        <SaveButton
-          eventId={event.id}
-          event={{
-            id: event.id,
-            slug: event.slug,
-            name: event.name,
-            date: event.date,
-            state: deriveEventState(event.date),
-            bannerUrl: event.bannerUrl ?? null,
-            location: event.location,
-          }}
-          variant="inline"
-        />
+        <div className="flex items-center gap-4">
+          <ReportButton target={{ kind: "event", id: event.id }} />
+          <SaveButton
+            eventId={event.id}
+            event={{
+              id: event.id,
+              slug: event.slug,
+              name: event.name,
+              date: event.date,
+              state: deriveEventState(event.date),
+              bannerUrl: event.bannerUrl ?? null,
+              location: event.location,
+            }}
+            variant="inline"
+          />
+        </div>
       </div>
     </div>
   );
@@ -598,6 +608,7 @@ function AboutStrip({ event }: { event: EventDetail }) {
             ) : (
               <>
                 <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+                  {event.priceVaries && <Kicker>from</Kicker>}
                   <span className="font-display text-5xl md:text-6xl font-extrabold text-fresh tracking-tight tnum">
                     ₱{event.pricePerPhoto}
                   </span>
@@ -673,6 +684,11 @@ function BrowseMode({
 
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
+  const bibOk = useBibConsent();
+  // BT-1c: until the saved tick is read, a bib link shows "Searching…", not the notice.
+  const tickRead = useTickRead();
+  const needsBibTick = isBibFilter && tickRead && !bibOk;
+  const bibLoading = isLoadingPhotos || (isBibFilter && !tickRead);
   // Server-filtered by bib (Q-011) or face (Q-005/006) and server-paginated —
   // `photos` is the flattened set loaded so far; Load-more fetches the next page.
   const visible = photos;
@@ -729,7 +745,9 @@ function BrowseMode({
           <h2 className="font-hero text-ink text-4xl md:text-6xl">
             {isAnyFilter ? (
               visible.length === 0 ? (
-                isLoadingPhotos ? (
+                needsBibTick ? (
+                  "Tick the box to search."
+                ) : bibLoading ? (
                   "Searching…"
                 ) : bibSearchError ? (
                   "Search paused."
@@ -783,6 +801,12 @@ function BrowseMode({
             Refund Policy
             <span aria-hidden="true">→</span>
           </Kicker>
+          <Link
+            href={`${ROUTES.ACCOUNT_PHOTO_DELETION_NEW}?event=${encodeURIComponent(event.slug)}`}
+            className="mt-3 flex w-fit font-sans text-sm text-slate underline decoration-line-strong underline-offset-4 hover:decoration-fresh hover:text-ink transition-colors"
+          >
+            In these photos? Request deletion →
+          </Link>
         </div>
       </header>
 
@@ -890,7 +914,13 @@ function BrowseMode({
       </div>
 
       <div className="flex-1 flex flex-col">
-        {isBibFilter && visible.length === 0 && isLoadingPhotos ? (
+        {needsBibTick ? (
+          <div className="px-6 md:px-10 py-10 md:py-14 pb-20">
+            <div className="max-w-7xl mx-auto">
+              <BibNotice className="max-w-xl" />
+            </div>
+          </div>
+        ) : isBibFilter && visible.length === 0 && bibLoading ? (
           // Bib queries cache under their own key with no SSR seed, so the
           // first page loads client-side — don't flash "No matches yet"
           // while the search is still in flight.
@@ -1142,6 +1172,7 @@ function Footer() {
       <Kicker as="p" tone="soft">
         QuickPitik · Cebu, Philippines
       </Kicker>
+      <LegalLinks />
       <Kicker as="p" tone="soft">
         © 2026
       </Kicker>

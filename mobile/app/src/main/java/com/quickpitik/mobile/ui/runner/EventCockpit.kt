@@ -84,6 +84,8 @@ import com.quickpitik.mobile.data.remote.RetrofitClient
 import com.quickpitik.mobile.data.remote.SelfieRefDto
 import com.quickpitik.mobile.ui.common.count
 import com.quickpitik.mobile.ui.common.eventDateLabel
+import com.quickpitik.mobile.ui.common.bibNoticeAccepted
+import com.quickpitik.mobile.ui.common.faceNoticeAccepted
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.Bone
@@ -333,15 +335,17 @@ fun SearchPanel(
 private fun BibPanel(bib: String, photoCount: Int, cb: SearchPanelCallbacks) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Spacer(Modifier.height(28.dp))
+        // Review S10: no bib search before the tick, from the button or the keyboard.
+        val bibOk = bibNoticeAccepted()
         Kicker("Your bib number")
         Spacer(Modifier.height(4.dp))
-        BibField(value = bib, onValueChange = cb.onBibChange, onSubmit = cb.onSubmitBib)
+        BibField(value = bib, onValueChange = cb.onBibChange, onSubmit = { if (bibOk) cb.onSubmitBib() })
         Spacer(Modifier.height(20.dp))
-        // Always enabled, like the website's submit: it is the card's one Fresh
-        // accent, and submitting an empty bib simply does nothing.
+        // Enabled once ticked, like the website's submit: submitting an empty bib simply does nothing.
         PrimaryCta(
             text = "Search by bib →",
             onClick = cb.onSubmitBib,
+            enabled = bibOk,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(24.dp))
@@ -411,11 +415,11 @@ private fun BibField(value: String, onValueChange: (String) -> Unit, onSubmit: (
 private fun SelfiePanel(state: SelfiePanelState, cb: SearchPanelCallbacks) {
     var libraryOpen by remember { mutableStateOf(false) }
     val hasLibrary = state.selfies.isNotEmpty()
-    val enabled = !state.matching
     Column(modifier = Modifier.fillMaxWidth()) {
         Spacer(Modifier.height(28.dp))
         Kicker("Selfie match")
         Spacer(Modifier.height(12.dp))
+        val enabled = faceNoticeAccepted() && !state.matching
         SelfieActionRow(
             label = "Take a selfie",
             caption = "Use your camera to snap one now.",
@@ -716,6 +720,11 @@ fun AboutStrip(
             Kicker("Pricing")
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.Bottom) {
+                // A race whose photographers charge more shows its floor as "from" (AA-R14).
+                if (detail.priceVaries == true) {
+                    Kicker("from", modifier = Modifier.padding(bottom = 8.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = peso(detail.pricePerPhoto, 0),
                     style = NumeralStyle.copy(fontSize = 40.sp, lineHeight = 44.sp),

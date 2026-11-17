@@ -1,186 +1,124 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Slab } from "@/components/profile-shell";
-import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { PAGE_SIZE } from "@/lib/pagination-config";
+import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
+import { RefundRun } from "@/components/admin/refund-run";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import {
   PhotoPreviewCard,
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
-import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
+import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
-import { AdminResolveDisputeModal } from "@/components/admin/admin-resolve-dispute-modal";
-import { AdminRefundConfirmModal } from "@/components/admin/admin-refund-confirm-modal";
-import { AdminDenyDisputeModal } from "@/components/admin/admin-deny-dispute-modal";
-import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
-import { AdminRefundPanel } from "@/components/admin/admin-refund-panel";
-import { useAdminDisputes, useDisputeActions, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
+import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
+import { useAdminDispute, useAdminDisputePage, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
 import { useUrlState } from "@/hooks/use-url-state";
-import { useToast } from "@/hooks/use-toast";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import {
   type Dispute,
   type DisputeResolution,
-  type DisputeStatus,
+  DISPUTE_PAYMENT_LABEL,
   DISPUTE_REASON_LABEL,
   DISPUTE_RESOLUTION_LABEL,
+  DISPUTE_STATUS_LABEL,
+  disputeStatusTone,
 } from "@/lib/admin-disputes";
+import type { AdminDisputeView } from "@/lib/api-admin";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
-import { formatPrice } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 
-const STATUS_LABEL: Record<DisputeStatus, string> = {
-  open: "Open",
-  resolved: "Resolved",
-  denied: "Denied",
-  escalated: "Escalated",
-};
+// The server's views (no status filter in the UI on purpose; the server keeps `status=`).
+type QueueView = Extract<AdminDisputeView, "needs_me" | "overdue" | "refund_run" | "closed" | "all">;
+const VIEWS: readonly { value: QueueView; label: string; empty: string }[] = [
+  { value: "needs_me", label: "Needs you", empty: "Nothing needs you right now." },
+  { value: "overdue", label: "Overdue", empty: "Nothing is overdue." },
+  { value: "refund_run", label: "Refund run", empty: "No approved refunds are waiting to be paid." },
+  { value: "closed", label: "Closed", empty: "No closed disputes yet." },
+  { value: "all", label: "All", empty: "No disputes yet." },
+];
+const parseView = (raw: string): QueueView =>
+  VIEWS.some((v) => v.value === raw) ? (raw as QueueView) : "needs_me";
+const SEARCH_DEBOUNCE_MS = 300;
+// The server's page size when the request names none (PaginationParams.DEFAULT_LIMIT).
+const SERVER_PAGE_SIZE = 50;
 
-function statusTone(status: DisputeStatus): AdminStatusPillTone {
-  switch (status) {
-    case "open":
-      return "amber";
-    case "resolved":
-      return "fresh";
-    case "denied":
-      return "ink";
-    case "escalated":
-      return "slate";
-  }
-}
-
-const PAYMENT_LABEL: Record<string, string> = {
-  gcash: "GCash",
-  maya: "Maya",
-  paymaya: "PayMaya",
-  card: "Card",
-  grabpay: "GrabPay",
-};
-
-interface PendingResolve {
-  resolution: DisputeResolution;
-  refundAmount: number | null;
-  note: string;
-}
-
-// Disputes queue body — extracted from /admin/disputes/page.tsx so the
-// universal /admin/inbox can render the same four slabs (Open / Resolved
-// / Denied / Escalated) under the chip filter. Header stays on the
-// dedicated page; this component renders only the slab stack.
+// Disputes queue body, shared by /admin/disputes and /admin/inbox. The
+// server sorts and pages each view ("Needs you" is due time first); the
+// header stays on the dedicated page.
 //
-// Phase 3 adds a focus-mode drawer. Card click → drawer with full
-// detail (claim, photo, parties, activity log) and Resolve/Deny/Escalate
-// in the footer. URL state via ?row=<disputeId>. The dedicated route
-// /admin/disputes/[id] still works as a deep-link backup. Modal stack
-// (resolve → refund-confirm) is owned at queue level so the drawer's ESC
-// can stand down via escDisabled while any modal is on top.
+// Card click → drawer with full detail (claim, photo, parties, activity
+// log) and the shared <AdminDisputeActionAside> in the footer. URL state
+// via ?row=<disputeId>; the old /admin/disputes/[id] route redirects here.
+// The aside owns its modals and reports when one is open, so the drawer's
+// ESC stands down.
 
 export function DisputesQueue() {
-  const { resolve, deny, escalate, isPending, pendingAction } = useDisputeActions();
-  const query = useAdminDisputes();
-  const effective = query.data ?? EMPTY_DISPUTES;
-  const { showToast } = useToast();
+  const [view, setView] = useUrlState<QueueView>("view", "needs_me", { parse: parseView });
+  const [q, setQ] = useUrlState<string>("q", "");
+  // The box holds what is typed; the URL (and the request) get it trimmed, after a pause.
+  const [qDraft, setQDraft] = useState(q);
+  const [qSeen, setQSeen] = useState(q);
+  if (q !== qSeen) {
+    // q changed from outside (back button, a link): show it in the box.
+    setQSeen(q);
+    if (q !== qDraft.trim()) setQDraft(q);
+  }
+  useEffect(() => {
+    const next = qDraft.trim();
+    if (next === q) return;
+    const timer = setTimeout(() => setQ(next), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [qDraft, q, setQ]);
+
+  // A new view or search starts at the first page.
+  const pageScope = `${view}|${q}`;
+  const [paging, setPaging] = useState({ scope: pageScope, offset: 0 });
+  const offset = paging.scope === pageScope ? paging.offset : 0;
+  const goTo = (next: number) => setPaging({ scope: pageScope, offset: next });
+
+  const query = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined, offset });
+  const items = query.data?.items ?? EMPTY_DISPUTES;
+  const total = query.data?.total ?? 0;
+  const limit = query.data?.limit || SERVER_PAGE_SIZE;
+  // Rows left this page (decided, or the view shrank): step back to the last page that has rows.
+  if (query.isSuccess && !query.isPlaceholderData && items.length === 0 && offset > 0) {
+    goTo(Math.floor(Math.max(total - 1, 0) / limit) * limit);
+  }
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
-  const submitting = isPending(rowId);
-  const [resolveOpen, setResolveOpen] = useState(false);
-  const [denyOpen, setDenyOpen] = useState(false);
-  const [escalateOpen, setEscalateOpen] = useState(false);
-  // The Mark refunded confirm lives inside the drawer actions; the drawer must ignore Esc while it is up.
-  const [refundConfirmOpen, setRefundConfirmOpen] = useState(false);
-  const [pendingResolve, setPendingResolve] = useState<PendingResolve | null>(
-    null,
-  );
+  // Any aside dialog (resolve, refund confirm, deny, escalate, refund panel) is open; the drawer must ignore Esc.
+  const [asideDialogOpen, setAsideDialogOpen] = useState(false);
 
   const byId = useMemo(() => {
     const map = new Map<string, Dispute>();
-    for (const d of effective) map.set(d.id, d);
+    for (const d of items) map.set(d.id, d);
     return map;
-  }, [effective]);
+  }, [items]);
+
+  // A ?row= link to a dispute outside the loaded list is fetched by id.
+  const fallbackId = query.isSuccess && rowId && !byId.has(rowId) ? rowId : "";
+  const fallback = useAdminDispute(fallbackId);
 
   const openRow = useMemo<Dispute | null>(() => {
     if (!rowId) return null;
-    return byId.get(rowId) ?? null;
-  }, [rowId, byId]);
+    return byId.get(rowId) ?? (fallbackId ? fallback.data ?? null : null);
+  }, [rowId, byId, fallbackId, fallback.data]);
 
+  // Close only when the server says the dispute does not exist.
   useEffect(() => {
-    if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
-  }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
+    if (fallbackId && fallback.isSuccess && fallback.data === null) setRowId("");
+  }, [fallbackId, fallback.isSuccess, fallback.data, setRowId]);
 
-  const open = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "open")].sort((a, b) =>
-        a.reportedAt.localeCompare(b.reportedAt),
-      ),
-    [effective],
-  );
-  const resolved = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "resolved")].sort((a, b) =>
-        (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""),
-      ),
-    [effective],
-  );
-  const denied = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "denied")].sort((a, b) =>
-        (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""),
-      ),
-    [effective],
-  );
-  const escalated = useMemo(
-    () =>
-      [...effective.filter((d) => d.status === "escalated")].sort((a, b) =>
-        b.reportedAt.localeCompare(a.reportedAt),
-      ),
-    [effective],
-  );
+  const drawerEscDisabled = asideDialogOpen;
 
-  const drawerEscDisabled =
-    resolveOpen || denyOpen || escalateOpen || pendingResolve !== null || refundConfirmOpen;
-
-  // Pagination — load-more model. Open keeps full visibility because
-  // that's where the triage flow + J/K nav land. Read-only history slabs
-  // start at 10 and grow by 10 per click.
-  const [resolvedLoaded, setResolvedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [deniedLoaded, setDeniedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [escalatedLoaded, setEscalatedLoaded] = useState(
-    PAGE_SIZE.ADMIN_INITIAL,
-  );
-  const resolvedVisible = useMemo(
-    () => resolved.slice(0, resolvedLoaded),
-    [resolved, resolvedLoaded],
-  );
-  const deniedVisible = useMemo(
-    () => denied.slice(0, deniedLoaded),
-    [denied, deniedLoaded],
-  );
-  const escalatedVisible = useMemo(
-    () => escalated.slice(0, escalatedLoaded),
-    [escalated, escalatedLoaded],
-  );
-
-  // Keyboard nav iterates through every dispute slab in render order.
+  // Keyboard nav walks the rows on this page, in server order.
   // Resolve/Deny/Escalate aren't part of the E/R/H/S verb whitelist, so
   // the drawer doesn't register verbs — keystrokes inside the drawer fall
-  // through to ESC + the click-only footer buttons. Use the visible
-  // slices for paginated slabs so J/K only visits rows that are currently
-  // rendered.
-  const rowIds = useMemo(
-    () =>
-      [
-        ...open,
-        ...resolvedVisible,
-        ...deniedVisible,
-        ...escalatedVisible,
-      ].map((d) => d.id),
-    [open, resolvedVisible, deniedVisible, escalatedVisible],
-  );
+  // through to ESC + the click-only footer buttons.
+  const rowIds = useMemo(() => items.map((d) => d.id), [items]);
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
@@ -200,64 +138,6 @@ export function DisputesQueue() {
     setRowId(id);
   }
 
-  async function handleContinueResolve(args: PendingResolve) {
-    if (!openRow || submitting) return;
-    if (args.resolution === "deny") {
-      const ok = await resolve(openRow.id, {
-        resolution: "deny",
-        refundAmount: null,
-        reason: args.note,
-      });
-      if (!ok) return;
-      setResolveOpen(false);
-      showToast({
-        kind: "info",
-        message: `Closed without refund · ${openRow.id}`,
-      });
-      return;
-    }
-    setPendingResolve(args);
-  }
-
-  async function handleConfirmRefund() {
-    if (!openRow || !pendingResolve || submitting) return;
-    const confirmed = await resolve(openRow.id, {
-      resolution: pendingResolve.resolution,
-      refundAmount: pendingResolve.refundAmount,
-      reason: pendingResolve.note,
-    });
-    if (!confirmed) return;
-    setPendingResolve(null);
-    setResolveOpen(false);
-    const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
-    showToast({
-      kind: refunded ? "success" : "info",
-      message: refunded
-        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
-        : `Refund requested · ${confirmed.id}`,
-    });
-  }
-
-  function handleCancelRefund() {
-    setPendingResolve(null);
-  }
-
-  async function handleDeny(reason: string) {
-    if (!openRow || submitting) return;
-    const ok = await deny(openRow.id, reason);
-    if (!ok) return;
-    setDenyOpen(false);
-    showToast({ kind: "info", message: `Denied · ${openRow.id}` });
-  }
-
-  async function handleEscalate(note: string | null) {
-    if (!openRow || submitting) return;
-    const ok = await escalate(openRow.id, note);
-    if (!ok) return;
-    setEscalateOpen(false);
-    showToast({ kind: "info", message: `Escalated · ${openRow.id}` });
-  }
-
   if (query.isPending) return <p role="status" className="py-6">Loading disputes…</p>;
   if (query.isError && !query.data) return (
     <div role="alert" className="space-y-4 py-6">
@@ -268,73 +148,80 @@ export function DisputesQueue() {
     </div>
   );
 
+  const emptyText = q
+    ? `No disputes match “${q}”.`
+    : VIEWS.find((v) => v.value === view)?.empty;
+
   return (
     <>
-      <DisputeSlab
-        id="open"
-        number="01"
-        title="Open"
-        caption="Awaiting decision"
-        totalCount={open.length}
-        rows={open}
-        empty="No open disputes — queue is clear."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-      />
-      <DisputeSlab
-        id="resolved"
-        number="02"
-        title="Resolved"
-        caption="Closed with refund"
-        totalCount={resolved.length}
-        rows={resolvedVisible}
-        empty="No resolved disputes yet."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-        loadMore={{
-          shown: resolvedVisible.length,
-          total: resolved.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setResolvedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />
-      <DisputeSlab
-        id="denied"
-        number="03"
-        title="Denied"
-        caption="Closed without refund"
-        totalCount={denied.length}
-        rows={deniedVisible}
-        empty="No denied disputes."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-        loadMore={{
-          shown: deniedVisible.length,
-          total: denied.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setDeniedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />
-      <DisputeSlab
-        id="escalated"
-        number="04"
-        title="Escalated"
-        caption="Pushed to higher review"
-        totalCount={escalated.length}
-        rows={escalatedVisible}
-        empty="No escalations."
-        onOpenRow={handleOpenRow}
-        focusedId={focusedId}
-        loadMore={{
-          shown: escalatedVisible.length,
-          total: escalated.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setEscalatedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />
+      <div className="pt-6 md:pt-8 space-y-6">
+        {/* Side by side from lg only: at md the admin rail leaves too narrow a column. */}
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div role="tablist" aria-label="Dispute views" className="flex flex-wrap gap-2">
+            {VIEWS.map((v) => {
+              const active = view === v.value;
+              return (
+                <button
+                  key={v.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setView(v.value)}
+                  className={cn(
+                    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
+                    active
+                      ? "bg-ink text-bone border border-ink"
+                      : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
+                  )}
+                >
+                  {v.label}
+                </button>
+              );
+            })}
+          </div>
+          {view !== "refund_run" && (
+          <div className="lg:w-80">
+            <label htmlFor="dispute-search" className="sr-only">
+              Search disputes
+            </label>
+            <input
+              id="dispute-search"
+              type="search"
+              value={qDraft}
+              onChange={(e) => setQDraft(e.target.value)}
+              placeholder="Runner, photographer, event, or an ID"
+              className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
+            />
+          </div>
+          )}
+        </div>
+
+        {view === "refund_run" ? (
+          <RefundRun onOpen={handleOpenRow} />
+        ) : items.length === 0 ? (
+          <p className="font-sans text-sm text-slate-soft">{emptyText}</p>
+        ) : (
+          <ul className="space-y-4">
+            {items.map((row) => (
+              <li key={row.id}>
+                <AdminDisputeCard
+                  dispute={row}
+                  focused={focusedId === row.id}
+                  onOpen={() => handleOpenRow(row.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {view !== "refund_run" && total > limit && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - limit))}>← Previous</button>
+            <span className="font-mono tnum text-sm text-slate">{offset + 1}–{offset + items.length} of {total}</span>
+            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset + items.length >= total} onClick={() => goTo(offset + items.length)}>Next →</button>
+          </div>
+        )}
+      </div>
 
       {openRow && (
         <AdminDetailDrawer
@@ -351,140 +238,29 @@ export function DisputesQueue() {
           }
           rightHeader={
             <AdminStatusPill
-              label={STATUS_LABEL[openRow.status]}
-              tone={statusTone(openRow.status)}
+              label={DISPUTE_STATUS_LABEL[openRow.status]}
+              tone={disputeStatusTone(openRow.status)}
             />
           }
           subtitle={<DisputeSubtitle dispute={openRow} />}
           actions={
-            <DisputeDrawerActions
-              dispute={openRow}
-              submitting={submitting}
-              onResolve={() => setResolveOpen(true)}
-              onDeny={() => setDenyOpen(true)}
-              onEscalate={() => setEscalateOpen(true)}
-              onRefundConfirmOpenChange={setRefundConfirmOpen}
-            />
+            // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
+            <div className="w-full max-h-[50vh] overflow-y-auto p-1">
+              <AdminDisputeActionAside
+                key={openRow.id}
+                dispute={openRow}
+                runnerHandle={openRow.runnerHandle}
+                onDialogOpenChange={setAsideDialogOpen}
+                className=""
+              />
+            </div>
           }
         >
-          {submitting && <p role="status">{pendingAction(rowId)}</p>}
           <DisputeDetailBody dispute={openRow} />
         </AdminDetailDrawer>
       )}
 
-      {openRow && (
-        <>
-          <AdminResolveDisputeModal
-            submitting={submitting}
-            open={resolveOpen}
-            escDisabled={pendingResolve !== null}
-            onClose={() => {
-              setResolveOpen(false);
-              setPendingResolve(null);
-            }}
-            onContinue={handleContinueResolve}
-            disputeId={openRow.id}
-            orderTotal={openRow.orderSnapshot.total}
-            itemChargeAmount={openRow.itemChargeAmount}
-          />
-          {pendingResolve &&
-            pendingResolve.resolution !== "deny" &&
-            pendingResolve.refundAmount !== null && (
-              <AdminRefundConfirmModal
-                submitting={submitting}
-                open={true}
-                onCancel={handleCancelRefund}
-                onConfirm={handleConfirmRefund}
-                amount={pendingResolve.refundAmount}
-                runnerHandle={openRow.runnerHandle}
-                isFull={pendingResolve.resolution === "refund_full"}
-                paymentMethod={openRow.orderSnapshot.paymentMethod}
-              />
-            )}
-          <AdminDenyDisputeModal
-            submitting={submitting}
-            open={denyOpen}
-            onClose={() => setDenyOpen(false)}
-            onSubmit={handleDeny}
-            disputeId={openRow.id}
-          />
-          <AdminEscalateModal
-            submitting={submitting}
-            open={escalateOpen}
-            onClose={() => setEscalateOpen(false)}
-            onSubmit={handleEscalate}
-            targetLabel={`Escalate ${openRow.id}`}
-            body="Push this dispute to the next review tier. The runner sees the dispute remains open while higher-level review takes place."
-          />
-        </>
-      )}
     </>
-  );
-}
-
-function DisputeSlab({
-  id,
-  number,
-  title,
-  caption,
-  rows,
-  totalCount,
-  empty,
-  onOpenRow,
-  focusedId,
-  loadMore,
-}: {
-  id: string;
-  number: string;
-  title: string;
-  caption: string;
-  rows: Dispute[];
-  totalCount: number;
-  empty: string;
-  onOpenRow: (id: string) => void;
-  focusedId: string | null;
-  loadMore?: {
-    shown: number;
-    total: number;
-    increment: number;
-    onLoadMore: () => void;
-  };
-}) {
-  const noun = totalCount === 1 ? "dispute" : "disputes";
-  return (
-    <Slab
-      id={id}
-      number={number}
-      title={title}
-      caption={caption}
-      trailing={`${totalCount} ${noun}`}
-    >
-      {totalCount === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">{empty}</p>
-      ) : (
-        <>
-          <ul className="space-y-4">
-            {rows.map((row) => (
-              <li key={row.id}>
-                <AdminDisputeCard
-                  dispute={row}
-                  focused={focusedId === row.id}
-                  onOpen={() => onOpenRow(row.id)}
-                />
-              </li>
-            ))}
-          </ul>
-          {loadMore && (
-            <LoadMoreButton
-              shown={loadMore.shown}
-              total={loadMore.total}
-              increment={loadMore.increment}
-              onLoadMore={loadMore.onLoadMore}
-            />
-          )}
-        </>
-      )}
-    </Slab>
   );
 }
 
@@ -494,81 +270,17 @@ function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
     <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
       {eventName}
       <span className="text-slate-soft"> · </span>
-      {formatPrice(dispute.orderSnapshot.total)}
+      Order total {formatPrice(dispute.orderSnapshot.total)}
       <span className="text-slate-soft"> · </span>
       Reported {formatLongDate(dispute.reportedAt)}
     </p>
   );
 }
 
-function DisputeDrawerActions({
-  dispute,
-  submitting,
-  onResolve,
-  onDeny,
-  onEscalate,
-  onRefundConfirmOpenChange,
-}: {
-  dispute: Dispute;
-  submitting: boolean;
-  onResolve: () => void;
-  onDeny: () => void;
-  onEscalate: () => void;
-  onRefundConfirmOpenChange: (open: boolean) => void;
-}) {
-  // Every action needs an open dispute: the server escalates open ones only.
-  const isOpen = dispute.status === "open";
-
-  if (!isOpen) {
-    // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
-    if (dispute.refundStatus === "manual_review") return <div className="w-full max-h-[50vh] overflow-y-auto p-1"><AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={onRefundConfirmOpenChange} /></div>;
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        This dispute is closed. No further actions are available.
-      </p>
-    );
-  }
-
-  return (
-    <>
-      {isOpen && (
-        <button
-          type="button"
-          onClick={onEscalate}
-          disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Escalate…
-        </button>
-      )}
-      {isOpen && (
-        <button
-          type="button"
-          onClick={onDeny}
-          disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Deny…
-        </button>
-      )}
-      {isOpen && (
-        <button
-          type="button"
-          onClick={onResolve}
-          disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Resolve…
-        </button>
-      )}
-    </>
-  );
-}
-
 function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   const paymentLabel =
-    PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
+    DISPUTE_PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
     dispute.orderSnapshot.paymentMethod;
   const thumbnailUrl = dispute.photoSnapshot.thumbnailUrl;
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -641,7 +353,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Order id" value={dispute.orderId} mono />
           <FieldRow
-            label="Total"
+            label="Order total"
             value={formatPrice(dispute.orderSnapshot.total)}
             mono
           />
@@ -653,6 +365,8 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
           />
         </dl>
       </section>
+
+      <DecisionFacts dispute={dispute} />
 
       <section>
         <Kicker as="p" tone="soft" className="mb-3">
@@ -710,6 +424,59 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
   );
 }
 
+// What the admin needs beside the decision. A field the server did not send (an older response) shows no row;
+// null means the server looked and there is nothing: no download record, or a deleted runner.
+function DecisionFacts({ dispute: d }: { dispute: Dispute }) {
+  const h = d.runnerHistory;
+  return (
+    <section>
+      <Kicker as="p" tone="soft" className="mb-3">
+        Decision facts
+      </Kicker>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
+        {d.itemChargeAmount != null && (
+          <FieldRow label="This photo's charge" value={formatPrice(d.itemChargeAmount)} mono />
+        )}
+        {d.paymentPhotoCount != null && (
+          <FieldRow label="Payment covered" value={`${d.paymentPhotoCount} ${d.paymentPhotoCount === 1 ? "photo" : "photos"}`} mono />
+        )}
+        {d.refundable != null && (
+          <FieldRow
+            label="Can it be refunded?"
+            value={d.refundable ? "Yes" : `No: ${d.refundBlockedMessage ?? "see the payment"}`}
+            mono={false}
+          />
+        )}
+        {d.downloadCount !== undefined && (
+          <FieldRow
+            label="Downloads started"
+            value={
+              d.downloadCount === null
+                ? "No download record"
+                : d.downloadCount === 0
+                  ? "No downloads yet"
+                  : `${d.downloadCount}${d.lastDownloadedAt ? ` · last ${formatLongDate(d.lastDownloadedAt)}` : ""}`
+            }
+            help="Counts download starts; retries and share attempts count again. Gallery and receipt previews are not counted."
+            mono={d.downloadCount !== null && d.downloadCount > 0}
+          />
+        )}
+        {h !== undefined && (
+          <FieldRow
+            label="This runner's other requests"
+            value={
+              h === null
+                ? "Runner deleted"
+                : `${h.total} total · ${h.refunded} refunded · ${h.denied} declined · ${h.withdrawn} withdrawn · ${h.open} open`
+            }
+            mono={false}
+          />
+        )}
+      </dl>
+    </section>
+  );
+}
+
 function DisputePhotoThumb({
   thumbnailUrl,
   disputeId,
@@ -759,10 +526,12 @@ function FieldRow({
   label,
   value,
   mono,
+  help,
 }: {
   label: string;
   value: string;
   mono: boolean;
+  help?: string;
 }) {
   return (
     <div>
@@ -773,11 +542,12 @@ function FieldRow({
         className={`mt-1 ${
           mono
             ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
-            : "font-sans text-sm text-ink"
+            : "font-sans text-sm text-ink tnum"
         }`}
       >
         {value}
       </dd>
+      {help && <p className="mt-1 font-sans text-xs text-slate-soft">{help}</p>}
     </div>
   );
 }

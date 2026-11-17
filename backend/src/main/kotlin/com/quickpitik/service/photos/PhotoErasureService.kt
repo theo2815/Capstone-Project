@@ -39,6 +39,7 @@ class PhotoErasureService(
     private val json: ObjectMapper,
     private val clock: Clock,
     private val metrics: MeterRegistry,
+    private val relevance: BatchRelevanceRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -143,7 +144,8 @@ class PhotoErasureService(
         }
     }
 
-    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    // No @Transactional: even NOT_SUPPORTED opens a scope whose shared EntityManager holds one pooled
+    // connection from the first read to the return, i.e. through every storage call (UP-10 pool exhaustion).
     fun attempt(jobId: UUID): PhotoErasureOutcome {
         val target = jobs.findById(jobId).orElseThrow { NotFoundException(message = "Erasure job not found") }
         val claim = tx.execute {
@@ -179,6 +181,7 @@ class PhotoErasureService(
             intent?.state in setOf(PhotoUploadIntentState.PENDING, PhotoUploadIntentState.VERIFYING) || intent?.leaseToken != null
         }
         pending = pending || unresolvedUpload
+        var held = pending
         if (!pending) {
             val keys = (claim.manifest.keys + claim.additionalIntents.flatMap { listOf(it.stagingKey, it.originalKey) } +
                 photos.erasureWorkKeys(claim.photoId)).distinct()
@@ -195,18 +198,17 @@ class PhotoErasureService(
                 } catch (_: Exception) { outcomes[key] = "RETRY_REQUIRED"; failure = "STORAGE_CLEANUP_REQUIRED" }
             }
         }
-        receipts.forEach { saved ->
-            if (clock.instant().isBefore(saved.recheckUntil)) pending = true
-        }
+        var windowEnd = receipts.map { it.recheckUntil }.filter { clock.instant().isBefore(it) }.maxOrNull()
+        if (windowEnd != null) pending = true
         val settled = tx.execute {
             val photo = photos.findAllByIdForUpdate(listOf(claim.photoId)).singleOrNull()
             val job = jobs.lock(jobId) ?: return@execute PhotoErasureOutcome.PENDING
             if (job.leaseToken != claim.leaseToken) return@execute PhotoErasureOutcome.PENDING
-            if (job.revision != claim.revision || photos.hasUnfinishedWork(claim.photoId, "ANY")) pending = true
-            if (receipts.any { saved ->
-                    intents.findById(saved.id).orElse(null)?.cleanupAfter?.toInstant()?.isAfter(clock.instant()) == true
-                }) pending = true
-            if (photo != null && photo.removalState != RemovalState.NONE && !job.retainTombstone) pending = true
+            if (job.revision != claim.revision || photos.hasUnfinishedWork(claim.photoId, "ANY")) { pending = true; held = true }
+            receipts.mapNotNull { intents.findById(it.id).orElse(null)?.cleanupAfter?.toInstant() }
+                .filter { it.isAfter(clock.instant()) }.maxOrNull()
+                ?.let { pending = true; windowEnd = maxOf(windowEnd ?: it, it) }
+            if (photo != null && photo.removalState != RemovalState.NONE && !job.retainTombstone) { pending = true; held = true }
             job.resourceOutcomes = outcomes
             job.faceOutcome = faceOutcome
             job.outcome = when { pending -> PhotoErasureOutcome.PENDING; failure != null -> PhotoErasureOutcome.RETRY_REQUIRED; else -> PhotoErasureOutcome.COMPLETE }
@@ -215,12 +217,16 @@ class PhotoErasureService(
             job.leaseUntil = null
             job.updatedAt = clock.instant()
             // Backoff is bounded; due ordering moves persistent failures behind other jobs.
-            job.nextAttemptAt = clock.instant().plus(properties.cleanupBackoff.multipliedBy(minOf(job.attempts, 12).toLong()))
+            val backoff = clock.instant().plus(properties.cleanupBackoff.multipliedBy(minOf(job.attempts, 12).toLong()))
+            // The job cannot complete before its re-check window ends, so trying sooner only repeats the deletes.
+            val end = windowEnd
+            job.nextAttemptAt = if (!held && failure == null && end != null) maxOf(backoff, end) else backoff
             if (job.outcome == PhotoErasureOutcome.COMPLETE) {
                 if (photo != null) {
                     metadata.findById(photo.id).orElse(null)?.let(metadata::delete)
                     photo.facePersons.clear()
                     photo.bibs.clear()
+                    relevance.deletePhotoCheck(photo.id) // RV-1.2: a kept tombstone keeps no words mark or scores
                     photos.saveAndFlush(photo)
                     intents.scheduleCleanupForResultPhoto(photo.id, OffsetDateTime.now(clock))
                     if (job.retainTombstone) photos.minimizeErasedPhoto(photo.id, OffsetDateTime.now(clock))

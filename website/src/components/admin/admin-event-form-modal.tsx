@@ -5,19 +5,26 @@ import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFieldHint,
   AdminFieldLabel,
+  AdminRadioGroup,
   AdminTextInput,
   AdminTextarea,
 } from "@/components/admin/admin-form-fields";
+import { useRaceTypes } from "@/hooks/use-race-types";
+import { fetchAdminDuplicateCandidates } from "@/lib/api-admin";
+import type { RaceCandidate } from "@/lib/api-photographer";
+import { formatLongDate } from "@/lib/format";
 import type { ListEvent } from "@/types/event";
 import {
   ACCEPTED_IMAGE_MIME,
   validateImageFile,
 } from "@/lib/image-utils";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import { RegionProvinceFields, type RegionProvinceValue } from "@/components/ui/region-province-fields";
 import { useRegions } from "@/hooks/use-regions";
+import { useAdminRacePrices } from "@/hooks/use-admin-events";
+import { ApiError } from "@/lib/api";
 import { getRegion } from "@/lib/ph-regions";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 // Create / edit form modal for admin events. Fields: Title, Location, Date,
 // and an optional cover banner. The cover File is handed back to the caller
@@ -39,7 +46,8 @@ interface AdminEventFormModalProps {
   mode: Mode;
   pending?: boolean;
   recoveryNotice?: string | null;
-  event?: ListEvent | null;
+  /** An admin row at runtime; eventType (AA-R7) marks a shared race. */
+  event?: (ListEvent & { eventType?: string | null }) | null;
   onClose: () => void;
   onSubmit: (payload: {
     name: string;
@@ -60,6 +68,8 @@ interface AdminEventFormModalProps {
      *  file — signals to the caller to send `removeCover` to the backend.
      *  Always false in create mode (no existing cover to remove). */
     removeCover: boolean;
+    /** AA-R7 race-type code; create only, absent = an untyped admin event. */
+    eventType?: string;
   }) => Promise<boolean>;
 }
 
@@ -100,6 +110,12 @@ export function AdminEventFormModal({
   // removeCover=true on the PATCH.
   const [initialHadCover, setInitialHadCover] = useState(false);
   const [coverError, setCoverError] = useState<string | null>(null);
+  // AA-R17b: a typed create checks GET /admin/events/duplicate-candidates first;
+  // a hit shows the races and the next press creates anyway, for those inputs only.
+  const { types } = useRaceTypes();
+  const [raceType, setRaceType] = useState("");
+  const [warned, setWarned] = useState<{ key: string; races: RaceCandidate[] } | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const draftTarget = useRef<string | null>(null);
@@ -137,6 +153,9 @@ export function AdminEventFormModal({
     }
     setCoverFile(null);
     setCoverError(null);
+    setRaceType("");
+    setWarned(null);
+    setCheckError(null);
     setSubmitting(false);
   }, [open, mode, event, recoveryNotice]);
 
@@ -180,6 +199,13 @@ export function AdminEventFormModal({
     pairValid &&
     !submitting && !pending;
 
+  const duplicateKey = JSON.stringify([raceType, trimmedName, date, pair.provinceCode, organizerName.trim()]);
+  const warnedNow = warned?.key === duplicateKey ? warned.races : null;
+  const raceOptions = mode === "create" && types.some((t) => t.shared)
+    ? [{ value: "", label: "No race type (a regular admin event)" },
+       ...types.filter((t) => t.shared).map((t) => ({ value: t.code, label: `${t.label} — ${t.hint}` }))]
+    : [];
+
   async function handleSubmit() {
     if (!canSubmit || parsedPrice === null || submittingRef.current) return;
     // User cleared an existing cover (Remove button) and didn't replace it.
@@ -190,6 +216,23 @@ export function AdminEventFormModal({
     submittingRef.current = true;
     setSubmitting(true);
     try {
+      if (raceType && warned?.key !== duplicateKey) {
+        setCheckError(null);
+        let races: RaceCandidate[];
+        try {
+          races = await fetchAdminDuplicateCandidates({
+            name: trimmedName, date, provinceCode: pair.provinceCode ?? undefined,
+            organizerName: organizerName.trim() || undefined,
+          });
+        } catch (error) {
+          setCheckError(`${error instanceof Error ? error.message : "Request failed."} Couldn't check for duplicate races; try again.`);
+          return;
+        }
+        if (races.length > 0) {
+          setWarned({ key: duplicateKey, races });
+          return;
+        }
+      }
       const completed = await onSubmit({
         name: trimmedName,
         location: trimmedLocation,
@@ -200,6 +243,7 @@ export function AdminEventFormModal({
         description: description.trim(),
         cover: coverFile,
         removeCover,
+        ...(raceType ? { eventType: raceType } : {}),
       });
       if (completed) draftTarget.current = null;
     } finally {
@@ -214,7 +258,7 @@ export function AdminEventFormModal({
       ? "Creating…"
       : "Saving…"
     : mode === "create"
-      ? "Create event"
+      ? warnedNow ? "Create anyway" : "Create event"
       : "Save changes";
   const intro =
     mode === "create"
@@ -235,6 +279,12 @@ export function AdminEventFormModal({
       escDisabled={locationOpen}
     >
       {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
+      {raceOptions.length > 0 && (
+        <fieldset className="space-y-3">
+          <AdminFieldLabel>Race type</AdminFieldLabel>
+          <AdminRadioGroup name="admin-event-type" options={raceOptions} value={raceType} onChange={setRaceType} />
+        </fieldset>
+      )}
       <AdminTextInput
         id="event-name"
         label="Title"
@@ -294,6 +344,7 @@ export function AdminEventFormModal({
         inputClassName="tnum"
         hint={priceHint}
       />
+      {mode === "edit" && event?.eventType && <RacePriceList eventId={event.id} />}
 
       <AdminTextInput
         id="event-organizer"
@@ -333,7 +384,99 @@ export function AdminEventFormModal({
           setCoverError(null);
         }}
       />
+      {checkError && <p role="alert" className="font-sans text-sm text-error">{checkError}</p>}
+      {warnedNow && (
+        <div role="alert" className="rounded-2xl border border-warning/40 bg-bone-deep p-4 space-y-2">
+          <p className="font-sans text-sm text-ink">
+            This may repeat a race that is already on QuickPitik. Check it first; press Create anyway only if yours is a different race.
+          </p>
+          <ul className="space-y-1 font-sans text-sm text-ink tnum">
+            {warnedNow.map((race) => (
+              <li key={race.id} className="break-words">
+                {race.name} · {formatLongDate(race.date, true)} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </AdminFormModal>
+  );
+}
+
+// AA-R16a: who charges what in a race. Reset asks inline (no stacked overlay
+// inside this modal) and the list shows only what the server answers.
+function RacePriceList({ eventId }: { eventId: string }) {
+  const { data, error, refetch, reset } = useAdminRacePrices(eventId);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [resetting, setResetting] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  async function confirmReset(photographerId: string) {
+    if (resetting) return;
+    setResetting(photographerId);
+    setResetError(null);
+    try {
+      await reset(photographerId);
+      setConfirming(null);
+    } catch (err) {
+      setResetError(err instanceof ApiError ? (err.errors[0]?.message ?? err.message) : "Couldn't reset the price. Try again.");
+    } finally {
+      setResetting(null);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <AdminFieldLabel>Photographer prices</AdminFieldLabel>
+      {error ? (
+        <div role="alert" className="space-y-2">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load photographer prices.</p>
+          <button type="button" onClick={() => void refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry prices</button>
+        </div>
+      ) : !data ? (
+        <p role="status" className="font-sans text-sm text-slate">Loading photographer prices…</p>
+      ) : (
+        <>
+          <p className="font-sans text-sm text-slate tnum">
+            Race price {formatPrice(data.floorPhp)} · photographers may charge up to {formatPrice(data.ceilingPhp)}. Changing the price above moves everyone into the new range.
+          </p>
+          {data.prices.length === 0 ? (
+            <p className="font-sans text-sm text-slate">No photographer covers this race yet.</p>
+          ) : (
+            <ul className="divide-y divide-line rounded-2xl border border-line bg-surface">
+              {data.prices.map((row) => (
+                <li key={row.photographerId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="font-sans text-sm font-bold text-ink break-words">{row.name}</p>
+                    {row.handle && <p className="font-sans text-sm text-slate break-words">@{row.handle}</p>}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <p className="font-mono text-sm text-ink tnum">{formatPrice(row.effectivePhp)}</p>
+                    {!row.custom ? (
+                      <p className="font-sans text-sm text-slate">Race price</p>
+                    ) : confirming === row.photographerId ? (
+                      <>
+                        <button type="button" onClick={() => void confirmReset(row.photographerId)} disabled={!!resetting} className={cn(BTN_DANGER, BTN_SIZE.sm)}>
+                          {resetting === row.photographerId ? "Resetting…" : "Confirm reset"}
+                        </button>
+                        <button type="button" onClick={() => { setConfirming(null); setResetError(null); }} disabled={!!resetting} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => { setConfirming(row.photographerId); setResetError(null); }} disabled={!!resetting} aria-label={`Reset ${row.name}`} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {resetError && <p role="alert" className="font-sans text-sm text-error">{resetError}</p>}
+        </>
+      )}
+    </section>
   );
 }
 

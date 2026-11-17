@@ -4,7 +4,7 @@ import { Footer } from "@/components/layout/footer";
 import { VerifyForm } from "./verify-form";
 
 export const metadata: Metadata = {
-  title: "Verify a photo | QuickPitik",
+  title: "Verify a photo",
   description:
     "Check whether an image is a QuickPitik race photo and which photographer took it — even after a screenshot, crop, or re-save.",
 };

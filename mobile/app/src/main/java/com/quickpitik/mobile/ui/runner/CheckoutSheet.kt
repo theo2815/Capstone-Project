@@ -1,11 +1,7 @@
 package com.quickpitik.mobile.ui.runner
 
-import android.content.ActivityNotFoundException
 import android.graphics.BitmapFactory
-import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.browser.customtabs.CustomTabColorSchemeParams
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -53,16 +49,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.quickpitik.mobile.data.download.PhotoDownloader
+import com.quickpitik.mobile.data.remote.payableItems
 import com.quickpitik.mobile.ui.auth.validateEmail
+import com.quickpitik.mobile.ui.common.CheckoutTermsLine
 import com.quickpitik.mobile.ui.common.formatManila
 import com.quickpitik.mobile.ui.common.formatOrderRef
+import com.quickpitik.mobile.ui.common.openInCustomTab
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.Bone
 import com.quickpitik.mobile.ui.theme.BoneDeep
@@ -270,7 +267,7 @@ fun CheckoutSheet(
                         couponLabel = couponPreview?.code?.let { "Coupon $it" } ?: "Coupon discount",
                         ownedCount = ownedItems.size,
                         onRemoveOwned = { ownedItems.forEach { cartViewModel.removeFromCart(it.photoId) } },
-                        photoCount = cartItems.size,
+                        photoCount = payableItems(cartItems).size,
                         discount = discount,
                         net = net,
                         isLoading = isLoading,
@@ -505,6 +502,8 @@ private fun PayStep(
             Text(text = peso(net), style = NumeralStyle.copy(fontSize = 28.sp), color = Ink)
         }
         Spacer(modifier = Modifier.height(16.dp))
+        CheckoutTermsLine()
+        Spacer(modifier = Modifier.height(10.dp))
         PrimaryCta(
             text = when {
                 net == 0.0 -> "Complete order →"
@@ -732,7 +731,6 @@ private fun ColumnScope.QrPaymentStep(
 @Composable
 private fun TestModePanel(testUrl: String) {
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
     QpCard {
         Kicker("Test mode · PayMongo sandbox")
         Spacer(modifier = Modifier.height(6.dp))
@@ -744,21 +742,7 @@ private fun TestModePanel(testUrl: String) {
             Spacer(modifier = Modifier.height(10.dp))
             GhostCta(
                 text = "Open PayMongo simulator ↗",
-                onClick = {
-                    runCatching {
-                        try {
-                            CustomTabsIntent.Builder()
-                                .setShowTitle(true)
-                                .setDefaultColorSchemeParams(
-                                    CustomTabColorSchemeParams.Builder().setToolbarColor(Bone.toArgb()).build()
-                                )
-                                .build()
-                                .launchUrl(context, Uri.parse(testUrl))
-                        } catch (e: ActivityNotFoundException) {
-                            uriHandler.openUri(testUrl)
-                        }
-                    }
-                },
+                onClick = { openInCustomTab(context, testUrl) },
             )
         }
     }

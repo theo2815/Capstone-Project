@@ -26,6 +26,11 @@ export async function updateProfileName(name: string): Promise<User> {
   return api.put<User>("/me/profile", { name });
 }
 
+// RV-L4: POST /api/v1/me/terms-acceptance { version } → User; 409 CONSENT_VERSION_MISMATCH when not the current version.
+export async function acceptTerms(version: string): Promise<User> {
+  return api.post<User>("/me/terms-acceptance", { version });
+}
+
 export interface ChangePasswordArgs {
   currentPassword: string;
   newPassword: string;

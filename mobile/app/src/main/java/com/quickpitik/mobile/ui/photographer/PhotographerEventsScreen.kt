@@ -42,6 +42,7 @@ import com.quickpitik.mobile.ui.common.deriveEventDisplayState
 import com.quickpitik.mobile.ui.common.eventDateLabel
 import com.quickpitik.mobile.ui.common.extractCity
 import com.quickpitik.mobile.ui.common.peso
+import com.quickpitik.mobile.ui.common.canUploadToEvent
 import com.quickpitik.mobile.ui.theme.*
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -58,7 +59,26 @@ private enum class StatusFilter(val label: String, val tone: StatusTone) {
 // Primary owner split the user asked for: events the photographer created vs
 // admin-created races they can cover. Web parity: /dashboard/events renders
 // these as two sections; on a phone one bucket shows at a time.
-private enum class OwnerTab(val label: String) { MINE("My events"), ADMIN("Admin events") }
+private enum class OwnerTab(val label: String) { MINE("My events"), ADMIN("Race events") }
+
+internal fun submittedRaceLabel(event: PhotographerEventSummaryDto): String? {
+    if (event.eventType == null || event.submittedByMe != true) return null
+    return when {
+        event.hidden == true -> "Hidden from /events"
+        event.reviewStatus == "pending" -> "Pending review"
+        event.reviewStatus == "rejected" -> "Sent back"
+        event.reviewStatus == "change_pending" -> "Change pending"
+        else -> "Your race"
+    }
+}
+
+internal fun raceUploadNotice(event: PhotographerEventSummaryDto): String? = when {
+    event.ownedByMe -> null
+    event.hidden == true -> "Hidden"
+    event.reviewStatus == "pending" -> "Waiting for an admin"
+    event.reviewStatus == "rejected" -> "Sent back"
+    else -> null
+}
 
 /**
  * The one place the roster's search box filters: on the event name, trimmed and
@@ -333,7 +353,7 @@ fun PhotographerEventsScreen(
                                         event = event,
                                         isActive = activeEvent?.id == event.id,
                                         canManagePhotos = coveredEvents.any { it.id == event.id },
-                                        onSync = { guardAction { onSyncEvent(event) } },
+                                        onSync = { if (canUploadToEvent(event)) guardAction { onSyncEvent(event) } },
                                         onOpenShare = { guardAction { onOpenShare(event) } },
                                     )
                                     EventState.UPCOMING -> UpcomingEventCard(
@@ -344,6 +364,10 @@ fun PhotographerEventsScreen(
                                         event = event,
                                         onOpenShare = { guardAction { onOpenShare(event) } },
                                     )
+                                }
+                                submittedRaceLabel(event)?.let { label ->
+                                    StatusChip(text = label, tone = if (event.reviewStatus == "approved" && event.hidden != true)
+                                        StatusTone.Approved else StatusTone.Neutral)
                                 }
                                 // Owned events (V46): review chip + edit/coupon controls.
                                 if (event.ownedByMe) {
@@ -480,9 +504,9 @@ private fun LiveEventCard(
                 )
             }
             StatusChip(
-                text = if (isActive) "Syncing here"
+                text = raceUploadNotice(event) ?: if (isActive) "Syncing here"
                     else if (deriveEventDisplayState(event.date) == EventState.LIVE) "Live" else "Uploading",
-                tone = StatusTone.Approved,
+                tone = if (canUploadToEvent(event)) StatusTone.Approved else StatusTone.Neutral,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(10.dp),
@@ -527,8 +551,9 @@ private fun LiveEventCard(
 
             Spacer(modifier = Modifier.height(16.dp))
             PrimaryCta(
-                text = if (isActive) "Continue syncing" else "Sync from camera",
+                text = raceUploadNotice(event) ?: if (isActive) "Continue syncing" else "Sync from camera",
                 onClick = onSync,
+                enabled = canUploadToEvent(event),
                 modifier = Modifier.fillMaxWidth(),
             )
             if (canManagePhotos) {

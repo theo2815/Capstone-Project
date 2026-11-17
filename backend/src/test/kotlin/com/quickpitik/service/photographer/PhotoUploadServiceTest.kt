@@ -14,6 +14,7 @@ import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
+import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.WatermarkPolicy
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.exception.ApiException
@@ -103,6 +104,7 @@ class PhotoUploadServiceTest {
     private lateinit var userRepository: UserRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
     private lateinit var entityManager: EntityManager
+    private lateinit var sellerDetailsRepository: com.quickpitik.repository.SellerDetailsRepository
     private val storageProperties = StorageProperties(
         backend = StorageProperties.Backend.S3,
         endpoint = "https://test-account.r2.cloudflarestorage.com",
@@ -137,6 +139,9 @@ class PhotoUploadServiceTest {
         userRepository = Mockito.mock(UserRepository::class.java)
         eventPublisher = Mockito.mock(ApplicationEventPublisher::class.java)
         entityManager = Mockito.mock(EntityManager::class.java)
+        // Default: the photographer has sent seller details, so the gate passes.
+        sellerDetailsRepository = Mockito.mock(com.quickpitik.repository.SellerDetailsRepository::class.java)
+        Mockito.`when`(sellerDetailsRepository.existsByUserIdAndStatusIn(anyArg(), anyArg())).thenReturn(true)
     }
 
     private fun service(
@@ -144,6 +149,7 @@ class PhotoUploadServiceTest {
         meterRegistry: SimpleMeterRegistry = SimpleMeterRegistry(),
         clock: Clock = Clock.systemUTC(),
         directUpload: StorageProperties.DirectUpload = storageProperties.directUpload,
+        identity: com.quickpitik.config.IdentityProperties = com.quickpitik.config.IdentityProperties(),
     ) = PhotoUploadService(
         storageService,
         storageProperties.copy(directUpload = directUpload),
@@ -169,6 +175,8 @@ class PhotoUploadServiceTest {
         entityManager,
         clock,
         Mockito.mock(com.quickpitik.service.photos.PhotoErasureService::class.java),
+        sellerDetailsRepository,
+        identity,
     )
 
     private fun event(id: UUID = eventId, name: String = "Cebu Marathon 2026"): Event =
@@ -1381,7 +1389,8 @@ class PhotoUploadServiceTest {
     }
 
     private class SteppingClock(var now: Instant) : Clock() {
-        override fun getZone(): ZoneId = ZoneOffset.UTC
+        // Manila, like the fixtures' event date: withZone returns this, so a UTC zone gave yesterday's date before 08:00 Manila.
+        override fun getZone(): ZoneId = ZoneId.of("Asia/Manila")
         override fun withZone(zone: ZoneId): Clock = this
         override fun instant(): Instant = now
     }
@@ -1637,6 +1646,33 @@ class PhotoUploadServiceTest {
             .put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
         // The watermark job is queued for AFTER_COMMIT dispatch.
         Mockito.verify(eventPublisher).publishEvent(anyArg<PhotoUploadedForWatermark>())
+    }
+
+    @Test
+    fun `race upload re-seeds price after the coverage upsert`() {
+        stubValidationsPass()
+        Mockito.`when`(eventRepository.findById(eventId))
+            .thenReturn(Optional.of(event().apply { eventType = com.quickpitik.entity.RaceType.ROAD_RACE }))
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        val photo = ArgumentCaptor.forClass(Photo::class.java)
+        Mockito.verify(entityManager).persist(capture(photo))
+        val order = Mockito.inOrder(eventPhotographerRepository, photoRepository)
+        order.verify(eventPhotographerRepository).upsertOnUpload(eqArg(eventId), eqArg(photographerId), anyArg())
+        order.verify(photoRepository).reseedRacePrice(photo.value.id)
+    }
+
+    @Test
+    fun `non-race upload never re-seeds`() {
+        stubValidationsPass()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+
+        service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+
+        Mockito.verify(eventPhotographerRepository).upsertOnUpload(eqArg(eventId), eqArg(photographerId), anyArg())
+        Mockito.verify(photoRepository, Mockito.never()).reseedRacePrice(anyArg())
     }
 
     @Test
@@ -1925,6 +1961,202 @@ class PhotoUploadServiceTest {
             "constraint violation",
             ConstraintViolationException("constraint violation", SQLException("violation"), constraintName),
         )
+
+    // ─── SC-1a: seller details gate both upload routes, never commit ───
+
+    private fun noSellerDetails() {
+        Mockito.`when`(sellerDetailsRepository.existsByUserIdAndStatusIn(anyArg(), anyArg())).thenReturn(false)
+    }
+
+    // A record in this status: the gate query answers by set membership, findById returns the row.
+    private fun sellerStatus(status: SellerDetailsStatus) {
+        Mockito.`when`(sellerDetailsRepository.existsByUserIdAndStatusIn(anyArg(), anyArg())).thenAnswer {
+            it.getArgument<UUID>(0) == photographerId && status in it.getArgument<Collection<SellerDetailsStatus>>(1)
+        }
+        val row = Mockito.mock(com.quickpitik.entity.SellerDetails::class.java)
+        Mockito.`when`(row.status).thenReturn(status)
+        Mockito.`when`(sellerDetailsRepository.findById(photographerId)).thenReturn(Optional.of(row))
+    }
+
+    private fun gateOn() = service(AiApiProperties(enabled = false), identity = com.quickpitik.config.IdentityProperties(gateEnabled = true))
+
+    private fun assertSellerDetailsRequired(error: ApiException) {
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.status)
+        assertEquals(ErrorCodes.SELLER_DETAILS_REQUIRED, error.code)
+        assertEquals(
+            "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com.",
+            error.message,
+        )
+    }
+
+    private fun beginDirect(svc: PhotoUploadService = service(AiApiProperties(enabled = false))) =
+        svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(), UUID.randomUUID(), "website")
+
+    @Test
+    fun `the direct route refuses with SELLER_DETAILS_REQUIRED when there is no record`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        noSellerDetails()
+
+        assertSellerDetailsRequired(assertFailsWith<ApiException> { beginDirect() })
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
+    fun `the multipart route refuses with SELLER_DETAILS_REQUIRED when there is no record`() {
+        stubValidationsPass()
+        noSellerDetails()
+
+        assertSellerDetailsRequired(assertFailsWith<ApiException> {
+            service(AiApiProperties(enabled = false)).upload(photographerId, eventId, file())
+        })
+        Mockito.verify(storageService, Mockito.never()).put(anyArg<String>(), anyArg<ByteArray>(), anyArg<String>())
+        Mockito.verify(entityManager, Mockito.never()).persist(anyArg())
+    }
+
+    @Test
+    fun `gate off lets manual review upload`() {
+        // Gate off = the legacy set (anything but REJECTED); the query itself is checked on
+        // Postgres in SellerDetailsPersistenceIntegrationTest.
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+        sellerStatus(SellerDetailsStatus.MANUAL_REVIEW)
+        val svc = service(AiApiProperties(enabled = false))
+
+        assertEquals("direct", beginDirect(svc).mode)
+        assertEquals("processing", svc.upload(photographerId, eventId, file()).status)
+        Mockito.verify(sellerDetailsRepository, Mockito.times(2))
+            .existsByUserIdAndStatusIn(photographerId, SellerDetailsStatus.UPLOAD_GATE_LEGACY)
+    }
+
+    @Test
+    fun `gate on refuses manual review with SELLER_DETAILS_REQUIRED and the admin-check message`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        sellerStatus(SellerDetailsStatus.MANUAL_REVIEW)
+        val svc = gateOn()
+
+        for (error in listOf(
+            assertFailsWith<ApiException> { beginDirect(svc) },
+            assertFailsWith<ApiException> { svc.upload(photographerId, eventId, file()) },
+        )) {
+            assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.status)
+            assertEquals("SELLER_DETAILS_REQUIRED", error.code)
+            assertEquals("An admin is checking your seller details. New uploads open once they are approved.", error.message)
+        }
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
+    fun `gate on keeps the add-details message for a rejected record`() {
+        stubValidationsPass()
+        sellerStatus(SellerDetailsStatus.REJECTED)
+
+        assertSellerDetailsRequired(assertFailsWith<ApiException> { gateOn().upload(photographerId, eventId, file()) })
+    }
+
+    @Test
+    fun `gate on lets auto approved and approved upload`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+        for (status in listOf(SellerDetailsStatus.AUTO_APPROVED, SellerDetailsStatus.APPROVED)) {
+            sellerStatus(status)
+            val svc = gateOn()
+            assertEquals("direct", beginDirect(svc).mode, "$status")
+            assertEquals("processing", svc.upload(photographerId, eventId, file()).status, "$status")
+        }
+        Mockito.verify(sellerDetailsRepository, Mockito.times(4))
+            .existsByUserIdAndStatusIn(photographerId, SellerDetailsStatus.UPLOAD_GATE_STRICT)
+    }
+
+    @Test
+    fun `after a rejection, a begin replay and a reuse of an earlier reservation still answer without the gate`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        noSellerDetails()
+        val requestId = UUID.randomUUID()
+        val replayed = intent(helloBytes.size.toLong(), requestId = requestId)
+        Mockito.`when`(photoUploadIntentRepository.findByPhotographerIdAndRequestId(photographerId, requestId)).thenReturn(replayed)
+        val open = intent(helloBytes.size.toLong(), requestId = null)
+        Mockito.`when`(photoUploadIntentRepository.findReusablePending(
+            eqArg(photographerId), eqArg(eventId), eqArg(helloSha256), eqArg("image/jpeg"),
+            eqArg(helloBytes.size.toLong()), anyArg(), anyArg(),
+        )).thenReturn(open)
+        Mockito.`when`(storageService.presignedUpload(anyArg(), anyArg(), anyArg(), Mockito.anyLong()))
+            .thenReturn(PresignedUpload("https://test-account.r2.cloudflarestorage.com/put", emptyMap()))
+        val svc = service(AiApiProperties(enabled = false))
+
+        val replay = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong(), requestId, "website")
+        val reuse = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong())
+
+        assertEquals(replayed.photoId, replay.photoId)
+        assertEquals(open.photoId, reuse.photoId)
+        Mockito.verify(photoUploadIntentRepository, Mockito.never()).saveAndFlush(anyArg())
+    }
+
+    @Test
+    fun `a reservation made before a rejection still commits`() {
+        assertEquals("processing", reserveThenCommit { noSellerDetails() }.status) // an admin rejects between begin and commit
+    }
+
+    @Test
+    fun `a reservation made before the gate turned on still commits`() {
+        val dto = reserveThenCommit(gateOn()) {
+            sellerStatus(SellerDetailsStatus.MANUAL_REVIEW)
+            Mockito.clearInvocations(sellerDetailsRepository)
+        }
+
+        assertEquals("processing", dto.status)
+        Mockito.verifyNoInteractions(sellerDetailsRepository)
+    }
+
+    // Begins a direct upload with the gate passing, runs [between], then commits through [commitWith].
+    private fun reserveThenCommit(
+        commitWith: PhotoUploadService? = null,
+        between: () -> Unit,
+    ): com.quickpitik.dto.photographer.UploadedPhotoDto {
+        stubValidationsPass()
+        stubIntentAdmission()
+        Mockito.`when`(photoRepository.findFirstByPhotographerIdAndContentHash(anyArg(), anyArg())).thenReturn(null)
+        var saved: PhotoUploadIntent? = null
+        Mockito.`when`(photoUploadIntentRepository.saveAndFlush(anyArg())).thenAnswer {
+            it.getArgument<PhotoUploadIntent>(0).also { intent -> saved = intent }
+        }
+        Mockito.`when`(photoUploadIntentRepository.findOwned(anyArg(), anyArg(), anyArg())).thenAnswer { saved }
+        Mockito.`when`(photoUploadIntentRepository.acquireVerification(anyArg(), anyArg(), anyArg(), anyArg())).thenReturn(1)
+        Mockito.`when`(photoUploadIntentRepository.complete(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())).thenReturn(1)
+        val svc = service(AiApiProperties(enabled = false))
+        val begin = svc.beginDirectUpload(photographerId, eventId, helloSha256, "image/jpeg", helloBytes.size.toLong())
+        val intent = checkNotNull(saved)
+        Mockito.`when`(storageService.metadata(intent.originalKey)).thenReturn(null)
+        Mockito.`when`(storageService.metadata(intent.stagingKey))
+            .thenReturn(StoredObject(intent.stagingKey, helloBytes.size.toLong(), "image/jpeg", etag = "etag"))
+        Mockito.`when`(storageService.copyIfAbsent(intent.stagingKey, intent.originalKey, "etag", "image/jpeg"))
+            .thenReturn(StoredObject(intent.originalKey, helloBytes.size.toLong(), "image/jpeg"))
+        Mockito.`when`(storageService.open(intent.originalKey)).thenReturn(ByteArrayInputStream(helloBytes))
+        between()
+
+        return (commitWith ?: svc).commitDirectUpload(photographerId, eventId, begin.photoId!!, begin.key!!, helloSha256)
+    }
+
+    @Test
+    fun `an unverified photographer still gets PHOTOGRAPHER_NOT_VERIFIED first`() {
+        stubValidationsPass()
+        stubIntentAdmission()
+        noSellerDetails()
+        Mockito.`when`(photographerSettingsRepository.findById(photographerId)).thenReturn(
+            Optional.of(approvedSettings().apply { verificationStatus = VerificationStatus.PENDING }),
+        )
+        val svc = service(AiApiProperties(enabled = false))
+
+        val direct = assertFailsWith<ApiException> { beginDirect(svc) }
+        val multipart = assertFailsWith<ApiException> { svc.upload(photographerId, eventId, file()) }
+
+        assertEquals(ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED, direct.code)
+        assertEquals(ErrorCodes.PHOTOGRAPHER_NOT_VERIFIED, multipart.code)
+    }
 
     private companion object {
         val CLEANUP_NOW: OffsetDateTime = OffsetDateTime.parse("2026-09-24T00:00:00Z")

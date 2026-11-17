@@ -21,6 +21,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
+import { SellerDetailsSlab } from "@/components/dashboard/seller-details-slab";
+import { useSellerDetails } from "@/hooks/use-seller-details";
+import { reviewStateOf } from "@/lib/api-seller-details";
 import { CharCounter } from "@/components/ui/char-counter";
 import { RegionProvinceFields } from "@/components/ui/region-province-fields";
 import { FieldError } from "@/components/ui/field-error";
@@ -914,10 +917,11 @@ function SlabStatusChip({ ready }: { ready: boolean }) {
 }
 
 // Phase 1 — consume the BE submitVerification response instead of fire-and-
-// forget. Three outcomes per the controller + DTO:
-//   1. { status: "pending" }                 — accepted; row in DB is PENDING.
-//   2. { status: "incomplete", missing[] }   — soft-reject; nothing written.
-//   3. throws (ApiError or network)          — hard failure; nothing written.
+// forget. Outcomes per the controller + DTO (C4, AA-I7):
+//   1. { status: "approved" }                — identity already passed; live now.
+//   2. { status: "pending" }                 — saved; waits for the identity check.
+//   3. { status: "incomplete", missing[] }   — soft-reject; nothing written.
+//   4. throws (ApiError or network)          — hard failure; nothing written.
 // Returns whether the BE accepted, so callers (the nudge modal) can decide
 // to close their own UI or stay open for a retry.
 async function submitForReview(opts: {
@@ -928,11 +932,19 @@ async function submitForReview(opts: {
   try {
     const response = await submitVerification();
     if (!isCurrent()) return { submitted: false };
+    if (response.status === "approved") {
+      opts.setStatus("approved");
+      opts.showToast({ kind: "success", message: "Your studio is live." });
+      return { submitted: true };
+    }
     if (response.status === "pending") {
       opts.setStatus("pending");
+      usePhotographerSettingsStore.getState().setVerificationAwaitingAdmin(response.awaitingAdmin === true);
       opts.showToast({
         kind: "info",
-        message: "Submitted for review. We'll let you know.",
+        message: response.awaitingAdmin
+          ? "Saved. An admin is reviewing your profile."
+          : "Saved. Your studio goes live when your identity check passes.",
       });
       return { submitted: true };
     }
@@ -947,8 +959,7 @@ async function submitForReview(opts: {
       });
       return { submitted: false };
     }
-    // Defensive: BE shouldn't return "approved" from /verification, but if it
-    // ever does, sync local state so the dashboard banner reflects it.
+    // Defensive: an unknown status from a newer backend; sync local state.
     opts.setStatus(response.status);
     return { submitted: false };
   } catch (err) {
@@ -1043,6 +1054,7 @@ export default function SettingsPage() {
       <PayoutSlab />
       <EventCouponsSlab />
       <MetadataDefaultSlab />
+      <SellerDetailsSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
     </EditModeProvider>
@@ -1271,6 +1283,8 @@ function useAllRequiredFilled(): boolean {
 function VerificationStatusPanel() {
   const { editing, canEdit, beginEdit } = useEditMode();
   const status = usePhotographerSettingsStore((s) => s.verificationStatus);
+  const awaitingAdmin = usePhotographerSettingsStore((s) => s.verificationAwaitingAdmin);
+  const seller = useSellerDetails().query.data;
   const setStatus = usePhotographerSettingsStore(
     (s) => s.setVerificationStatus,
   );
@@ -1331,14 +1345,28 @@ function VerificationStatusPanel() {
   }
 
   if (status === "approved") {
+    // The server's upload-gate answer (SELLER_DETAILS_REQUIRED), never re-derived here.
+    const paused = seller?.uploadsAllowed === false;
+    const state = seller ? reviewStateOf(seller) : null;
     return (
       <div className="border border-line rounded-2xl px-5 py-4 bg-bone-deep/30 flex items-center gap-3 mb-8">
         <span
           aria-hidden="true"
-          className="size-1.5 rounded-full bg-fresh shrink-0"
+          className={cn("size-1.5 rounded-full shrink-0", paused ? "bg-warning" : "bg-fresh")}
         />
         <Kicker as="p">
-          Verified · uploads enabled
+          {paused ? (
+            <Link href={`${ROUTES.DASHBOARD_SETTINGS}#seller-details`} className="underline underline-offset-4 hover:text-ink">
+              Verified · uploads paused{" "}
+              {state === "missing"
+                ? "until you add your seller details"
+                : state === "rejected"
+                  ? "until you send your seller details again"
+                  : "while an admin checks your seller details"}
+            </Link>
+          ) : (
+            "Verified · uploads enabled"
+          )}
         </Kicker>
       </div>
     );
@@ -1348,15 +1376,16 @@ function VerificationStatusPanel() {
     return (
       <div className="border border-line rounded-2xl px-5 py-4 bg-bone-deep/40 mb-8">
         <Kicker as="p">
-          Awaiting review
+          Awaiting your identity check
         </Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2">
-          We&apos;re looking over your settings.
+          {awaitingAdmin
+            ? "An admin is reviewing your profile."
+            : "Your studio goes live when your identity check passes."}
         </p>
         <p className="font-sans text-sm text-slate mt-2 max-w-md">
-          Reviews take 1–2 business days. You&apos;ll be able to upload as soon
-          as we&apos;re done. Edits below stay live — the admin always sees your
-          latest changes.
+          Seller details below show where your check stands. Your edits stay
+          live meanwhile.
         </p>
         <div className="mt-5">
           <button

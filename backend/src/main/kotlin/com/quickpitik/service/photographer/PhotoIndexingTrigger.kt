@@ -4,6 +4,7 @@ import com.quickpitik.config.AiApiProperties
 import com.quickpitik.config.IndexingMode
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.photos.PhotoWorkFence
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
@@ -26,6 +27,7 @@ class PhotoIndexingTrigger(
     private val photoRepository: PhotoRepository,
     private val aiApiProperties: AiApiProperties,
     private val meterRegistry: MeterRegistry,
+    private val workFence: PhotoWorkFence,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -49,6 +51,14 @@ class PhotoIndexingTrigger(
         if (!aiApiProperties.enabled) return
         // BATCH mode uses its own drain + poll-ingest loops, not the per-photo sweep.
         if (aiApiProperties.indexingMode == IndexingMode.BATCH) return
+        photoRepository.findEndedIndexingClaims(workFence.endedIndexingCutoff(), aiApiProperties.maxIndexingAttempts,
+            PageRequest.of(0, 50)).forEach { photoId ->
+            try {
+                if (workFence.releaseEndedIndexing(photoId)) meterRegistry.counter("qp.indexing.released").increment()
+            } catch (ex: Exception) {
+                log.warn("Reconcile claim release failed for photo {}: {}", photoId, ex.message)
+            }
+        }
         // Grace window: skip photos the hot path is probably still handling, so
         // the sweep only picks up genuinely-stuck work.
         val cutoff = OffsetDateTime.now().minusSeconds(RECONCILE_GRACE_SECONDS)

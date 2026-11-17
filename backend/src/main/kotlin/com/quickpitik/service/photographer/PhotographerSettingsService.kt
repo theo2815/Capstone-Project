@@ -10,6 +10,7 @@ import com.quickpitik.dto.photographer.MissingRequirement
 import com.quickpitik.dto.photographer.RegionPatchRequest
 import com.quickpitik.dto.photographer.VerificationSubmitResponseDto
 import com.quickpitik.dto.photographer.WatermarkSettingsRequest
+import com.quickpitik.entity.PhotographerMessageKind
 import com.quickpitik.entity.PhotographerSettings
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.VerificationStatus
@@ -19,11 +20,18 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.PayoutAccountRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.ReservedHandleRepository
+import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.repository.SocialLinkRepository
 import com.quickpitik.repository.UserRepository
 import com.quickpitik.service.reference.RegionsService
 import com.quickpitik.service.image.ImageDecode
 import com.quickpitik.service.image.ImagePixelGuard
+import com.quickpitik.service.admin.AdminDecisionLogService
+import com.quickpitik.service.admin.SystemFlagService
+import com.quickpitik.service.moderation.ImageModerationService
+import com.quickpitik.service.moderation.ProfileImageModeration
+import com.quickpitik.service.moderation.WordList
+import com.quickpitik.service.moderation.WordListChecker
 import com.quickpitik.service.storage.StorageService
 import com.quickpitik.websocket.AdminInboxEvent
 import org.hibernate.exception.ConstraintViolationException
@@ -32,7 +40,9 @@ import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.OffsetDateTime
 import java.util.UUID
 import javax.imageio.ImageIO
@@ -49,6 +59,12 @@ class PhotographerSettingsService(
     private val socialLinkRepository: SocialLinkRepository,
     private val payoutAccountRepository: PayoutAccountRepository,
     private val eventPublisher: ApplicationEventPublisher,
+    private val wordListChecker: WordListChecker,
+    private val imageModerationService: ImageModerationService,
+    private val systemFlagService: SystemFlagService,
+    private val transactionTemplate: TransactionTemplate,
+    private val sellerDetailsRepository: SellerDetailsRepository,
+    private val adminDecisionLogService: AdminDecisionLogService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -136,6 +152,7 @@ class PhotographerSettingsService(
                     field = "brandName",
                 )
             }
+            requireAllowedText(trimmed, field = "brandName", label = "brand name")
             settings.brandName = trimmed.ifBlank { null }
         }
         req.brandColor?.let { color ->
@@ -156,9 +173,21 @@ class PhotographerSettingsService(
                     field = "bio",
                 )
             }
+            requireAllowedText(bio, field = "bio", label = "bio")
             settings.bio = bio
         }
         return photographerSettingsRepository.save(settings)
+    }
+
+    // A listed bad word refuses the whole save; the message never repeats the word.
+    private fun requireAllowedText(text: String, field: String, label: String) {
+        if (wordListChecker.hits(text, setOf(WordList.BAD_WORDS)).isNotEmpty()) {
+            throw ValidationException(
+                code = ErrorCodes.TEXT_NOT_ALLOWED,
+                message = "Your $label has a word we don't allow. Please change it.",
+                field = field,
+            )
+        }
     }
 
     // ─── Handle ───────────────────────────────────────────────────────────
@@ -171,6 +200,7 @@ class PhotographerSettingsService(
                 field = "handle",
             )
         }
+        requireAllowedText(normalized, field = "handle", label = "handle")
         if (reservedHandleRepository.existsByHandle(normalized)) {
             throw ApiException(
                 status = HttpStatus.CONFLICT,
@@ -286,6 +316,8 @@ class PhotographerSettingsService(
     }
 
     // ─── Cover ────────────────────────────────────────────────────────────
+    // No transaction: the moderation call (AWS) runs first; the store runs in its own template.
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun uploadCover(userId: UUID, bytes: ByteArray, contentType: String?): MediaUploadResponseDto {
         val mime = validateImageMime(contentType, field = "file")
         if (bytes.isEmpty()) {
@@ -302,19 +334,23 @@ class PhotographerSettingsService(
                 message = "image cannot be decoded",
                 field = "file",
             )
-        val settings = getOrCreate(userId)
-        val previousKey = settings.coverS3Key
+        val verdict = ProfileImageModeration.checkOrRefuse(imageModerationService, systemFlagService, userId, "cover", processed)
         val newKey = "photographers/$userId/cover/${UUID.randomUUID()}.jpg"
-        storageService.put(newKey, processed, "image/jpeg")
-        settings.coverS3Key = newKey
-        // Picking an explicit cover image clears the gradient fallback so
-        // public-facing renderers don't have to guess which one wins.
-        settings.coverGradientFrom = null
-        settings.coverGradientTo = null
-        photographerSettingsRepository.save(settings)
-        if (previousKey != null && previousKey != newKey) {
-            runCatching { storageService.delete(previousKey) }
-                .onFailure { log.warn("cover delete of {} failed: {}", previousKey, it.message) }
+        transactionTemplate.executeWithoutResult {
+            val settings = getOrCreate(userId)
+            val previousKey = settings.coverS3Key
+            storageService.put(newKey, processed, "image/jpeg")
+            settings.coverS3Key = newKey
+            // Picking an explicit cover image clears the gradient fallback so
+            // public-facing renderers don't have to guess which one wins.
+            settings.coverGradientFrom = null
+            settings.coverGradientTo = null
+            photographerSettingsRepository.save(settings)
+            ProfileImageModeration.flagIfUnchecked(systemFlagService, verdict, userId, "cover")
+            if (previousKey != null && previousKey != newKey) {
+                runCatching { storageService.delete(previousKey) }
+                    .onFailure { log.warn("cover delete of {} failed: {}", previousKey, it.message) }
+            }
         }
         // Suppress unused mime warning while keeping the validation eager.
         @Suppress("UNUSED_VARIABLE") val _mime = mime
@@ -325,6 +361,7 @@ class PhotographerSettingsService(
     }
 
     // ─── Watermark ────────────────────────────────────────────────────────
+    @Transactional(propagation = Propagation.NOT_SUPPORTED) // as uploadCover
     fun uploadWatermark(userId: UUID, bytes: ByteArray, contentType: String?): MediaUploadResponseDto {
         val mime = validateImageMime(contentType, field = "file")
         if (bytes.isEmpty()) {
@@ -351,17 +388,21 @@ class PhotographerSettingsService(
             message = "image cannot be decoded",
             field = "file",
         )
-        val settings = getOrCreate(userId)
-        val previousKey = settings.watermarkS3Key
+        val verdict = ProfileImageModeration.checkOrRefuse(imageModerationService, systemFlagService, userId, "watermark", processed)
         val ext = if (isPng) "png" else "jpg"
         val storedContentType = if (isPng) "image/png" else "image/jpeg"
         val newKey = "photographers/$userId/watermark/${UUID.randomUUID()}.$ext"
-        storageService.put(newKey, processed, storedContentType)
-        settings.watermarkS3Key = newKey
-        photographerSettingsRepository.save(settings)
-        if (previousKey != null && previousKey != newKey) {
-            runCatching { storageService.delete(previousKey) }
-                .onFailure { log.warn("watermark delete of {} failed: {}", previousKey, it.message) }
+        transactionTemplate.executeWithoutResult {
+            val settings = getOrCreate(userId)
+            val previousKey = settings.watermarkS3Key
+            storageService.put(newKey, processed, storedContentType)
+            settings.watermarkS3Key = newKey
+            photographerSettingsRepository.save(settings)
+            ProfileImageModeration.flagIfUnchecked(systemFlagService, verdict, userId, "watermark")
+            if (previousKey != null && previousKey != newKey) {
+                runCatching { storageService.delete(previousKey) }
+                    .onFailure { log.warn("watermark delete of {} failed: {}", previousKey, it.message) }
+            }
         }
         @Suppress("UNUSED_VARIABLE") val _mime = mime
         return MediaUploadResponseDto(
@@ -380,7 +421,8 @@ class PhotographerSettingsService(
         val settings = photographerSettingsRepository.findById(userId).orElse(null)
         val status = settings?.verificationStatus ?: VerificationStatus.INCOMPLETE
         val incomplete = collectMissing(userId, settings)
-        return buildVerificationResponse(userId, status, missing = incomplete.missing)
+        return buildVerificationResponse(userId, status, missing = incomplete.missing,
+            held = settings?.verificationAdminHold == true)
     }
 
     // ─── Verification withdraw ────────────────────────────────────────────
@@ -420,11 +462,16 @@ class PhotographerSettingsService(
             )
         }
         if (settings.verificationStatus == VerificationStatus.PENDING) {
+            approveIfReady(userId) // a repeat submit while PENDING re-checks (P1-N2)
+            return buildVerificationResponse(userId, settings.verificationStatus, held = settings.verificationAdminHold)
+        }
+        // Approved with identity passed: a new round would only approve again, so nothing changes.
+        if (settings.verificationStatus == VerificationStatus.APPROVED && identityPassed(userId)) {
             return buildVerificationResponse(userId, settings.verificationStatus)
         }
-        // PENDING is the post-submit state; admins move it to APPROVED/REJECTED
-        // in PR 10. APPROVED/REJECTED rows can be re-submitted (resets to
-        // PENDING) so admins see fresh evidence without an out-of-band reset.
+        // PENDING is the post-submit state; approveIfReady moves it to APPROVED once
+        // identity has passed (AA-I7). APPROVED/REJECTED rows can be re-submitted
+        // (resets to PENDING) so admins see fresh evidence without an out-of-band reset.
         settings.verificationStatus = VerificationStatus.PENDING
         settings.verificationRevision++
         photographerSettingsRepository.save(settings)
@@ -441,8 +488,34 @@ class PhotographerSettingsService(
                 ),
             ),
         )
-        return buildVerificationResponse(userId, settings.verificationStatus)
+        approveIfReady(userId)
+        return buildVerificationResponse(userId, settings.verificationStatus, held = settings.verificationAdminHold)
     }
+
+    /**
+     * AA-I7: a PENDING profile with all 8 items becomes APPROVED once identity has passed (AUTO_APPROVED
+     * or admin-APPROVED seller details), whatever IDENTITY_GATE_ENABLED says (P1-N4). Joins the caller's
+     * transaction: the verification submit, a seller details submit or live check, an admin identity approval.
+     */
+    fun approveIfReady(userId: UUID): Boolean {
+        val settings = lockVerificationSettings(userId)
+        if (settings.verificationStatus != VerificationStatus.PENDING) return false
+        if (settings.verificationAdminHold) return false // R-10: after a reset or reject only an admin releases it
+        if (!collectMissing(userId, settings).isComplete) return false
+        if (!identityPassed(userId)) return false
+        settings.verificationStatus = VerificationStatus.APPROVED
+        settings.verificationRevision++
+        photographerSettingsRepository.save(settings)
+        adminDecisionLogService.pushMessage(
+            photographerId = userId,
+            kind = PhotographerMessageKind.VERIFICATION_APPROVED,
+            body = "Your photographer profile is approved. You can now upload to events.",
+        )
+        return true
+    }
+
+    private fun identityPassed(userId: UUID): Boolean =
+        sellerDetailsRepository.findById(userId).orElse(null)?.status?.passesIdentity() == true
 
     // Hydrates verification responses with suspended fields so the FE can
     // render a suspended-state banner separately from verification status.
@@ -452,6 +525,7 @@ class PhotographerSettingsService(
         userId: UUID,
         status: VerificationStatus,
         missing: List<MissingRequirement>? = null,
+        held: Boolean = false,
     ): VerificationSubmitResponseDto {
         val user = userRepository.findById(userId).orElse(null)
         return VerificationSubmitResponseDto(
@@ -460,6 +534,7 @@ class PhotographerSettingsService(
             missingCodes = missing?.map { it.name },
             suspendedAt = user?.suspendedAt?.toString(),
             suspensionReason = user?.suspensionReason,
+            awaitingAdmin = held && status == VerificationStatus.PENDING,
         )
     }
 

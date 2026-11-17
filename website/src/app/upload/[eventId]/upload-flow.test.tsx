@@ -5,7 +5,8 @@ import { useAuthStore } from "@/store/auth-store";
 import { OfflineUploadError } from "@/lib/api-photographer";
 import { ApiError } from "@/lib/api";
 
-const { upload, check, hash } = vi.hoisted(() => ({ upload: vi.fn(), check: vi.fn(), hash: vi.fn() }));
+const { upload, check, hash, seller } = vi.hoisted(() => ({ upload: vi.fn(), check: vi.fn(), hash: vi.fn(), seller: { reviewState: "missing" } }));
+vi.mock("@/hooks/use-seller-details", () => ({ useSellerDetails: () => ({ query: { data: { status: "missing", reviewState: seller.reviewState } } }) }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ eventId: "event-1" }), notFound: () => { throw new Error("not found"); }, unstable_rethrow: () => undefined }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
 vi.mock("@/components/dashboard/verification-banner", () => ({ VerificationBanner: () => null }));
@@ -28,7 +29,7 @@ beforeEach(() => {
   check.mockResolvedValue([{ hash: "a".repeat(64), status: "new", eventName: null }]);
   hash.mockResolvedValue("a".repeat(64));
 });
-afterEach(() => { upload.mockReset(); check.mockReset(); hash.mockReset(); vi.unstubAllGlobals(); });
+afterEach(() => { upload.mockReset(); check.mockReset(); hash.mockReset(); vi.unstubAllGlobals(); seller.reviewState = "missing"; });
 
 it("labels a preflight duplicate that sits in the photographer's trash", async () => {
   check.mockReset();
@@ -328,12 +329,39 @@ it.each(["EVENT_NOT_UPLOADABLE", "PHOTOGRAPHER_NOT_VERIFIED", "ACCOUNT_SUSPENDED
     await act(async () => { pending.get("gate-0.jpg")!.reject(new ApiError([{ code, message: "Upload access changed" }], code === "ACCOUNT_SUSPENDED" ? 403 : 422)); });
     expect(upload).toHaveBeenCalledTimes(4);
     expect([...pending.values()].slice(1).every(({ signal }) => signal.aborted)).toBe(true);
-    expect(screen.getByRole("alert")).toHaveTextContent("Upload access changed");
+    expect(screen.getByRole("alert")).toHaveTextContent("Upload access changed Resolve access to this event or account, then resume uploads.");
     expect(screen.getByText("gate-4.jpg")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /resume uploads/i }));
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(8));
   },
 );
+
+it("pauses the batch on SELLER_DETAILS_REQUIRED and links to the seller details form", async () => {
+  const pending = new Map<string, (error: Error) => void>();
+  upload.mockImplementation((_event, file: File) => new Promise((_resolve, reject) => { pending.set(file.name, reject); }));
+  render(<FocusedUploadPage />);
+  const files = Array.from({ length: 5 }, (_, index) => new File([`${index}`], `seller-${index}.jpg`, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await waitFor(() => expect(upload).toHaveBeenCalledTimes(4));
+  const serverMessage = "Before you can upload, add your ID, address and phone number in your photographer settings on quickpitik.com.";
+  await act(async () => { pending.get("seller-0.jpg")!(new ApiError([{ code: "SELLER_DETAILS_REQUIRED", message: serverMessage }], 403)); });
+  expect(upload).toHaveBeenCalledTimes(4);
+  expect(screen.getByText(serverMessage)).toBeInTheDocument();
+  expect(screen.getByRole("alert")).not.toHaveTextContent("Resolve access");
+  expect(screen.getByText("seller-4.jpg")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Add your seller details" })).toHaveAttribute("href", "/dashboard/settings#seller-details");
+});
+
+it("a manual_review refusal does not ask to add seller details", async () => {
+  seller.reviewState = "manual_review";
+  upload.mockRejectedValueOnce(new ApiError([{ code: "SELLER_DETAILS_REQUIRED", message: "An admin is checking your seller details. New uploads open once they are approved." }], 403));
+  render(<FocusedUploadPage />);
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, {
+    target: { files: [new File(["a"], "review.jpg", { type: "image/jpeg" })] },
+  });
+  expect(await screen.findByRole("link", { name: "See your seller-details status" })).toHaveAttribute("href", "/dashboard/settings#seller-details");
+  expect(screen.queryByRole("link", { name: "Add your seller details" })).toBeNull();
+});
 
 it.each([
   ["UPLOAD_CHECKSUM_MISMATCH", 422],

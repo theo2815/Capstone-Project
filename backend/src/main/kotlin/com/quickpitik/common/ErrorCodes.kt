@@ -34,6 +34,8 @@ object ErrorCodes {
     const val SELFIE_REQUIRED = "SELFIE_REQUIRED"
     const val SELFIE_REJECTED = "SELFIE_REJECTED"
     const val SELFIE_NOT_FOUND = "SELFIE_NOT_FOUND"
+    // 410: the event's face templates were deleted (6 months after the event, V92).
+    const val FACE_SEARCH_ENDED = "FACE_SEARCH_ENDED"
     const val SELFIE_LIMIT_REACHED = "SELFIE_LIMIT_REACHED"
     const val SAME_PASSWORD = "SAME_PASSWORD"
     const val WEAK_PASSWORD = "WEAK_PASSWORD"
@@ -80,6 +82,8 @@ object ErrorCodes {
     const val COUPON_USAGE_LIMIT_REACHED = "COUPON_USAGE_LIMIT_REACHED"
 
     const val PHOTOGRAPHER_NOT_VERIFIED = "PHOTOGRAPHER_NOT_VERIFIED"
+    // A photographer with no seller details on file, or rejected ones, cannot start new uploads (SC-1, RA 11967).
+    const val SELLER_DETAILS_REQUIRED = "SELLER_DETAILS_REQUIRED"
     const val ACCOUNT_SUSPENDED = "ACCOUNT_SUSPENDED"
     // Temporary, self-clearing (V29) — unlike ACCOUNT_SUSPENDED, which is an
     // admin decision and only an admin can lift.
@@ -103,6 +107,8 @@ object ErrorCodes {
     const val PAYOUT_ACCOUNT_COOLDOWN = "PAYOUT_ACCOUNT_COOLDOWN"
     const val PAYOUT_SECOND_APPROVER_REQUIRED = "PAYOUT_SECOND_APPROVER_REQUIRED"
     const val PAYOUT_NOT_COVERED = "PAYOUT_NOT_COVERED"
+    // PE-2.2: an admin confirmed a payout hold on the photographer's open relevance flag (HTTP 409).
+    const val PAYOUT_ON_HOLD = "PAYOUT_ON_HOLD"
     // Sensitive action needs a fresh password re-entry (step-up). Only enforced
     // when PAYOUT_STEP_UP_ENABLED is on; the client answers by POSTing /me/reauth
     // and retrying with the X-Step-Up header.
@@ -121,10 +127,54 @@ object ErrorCodes {
     const val FLAGS_DISABLED = "FLAGS_DISABLED"
     const val FLAG_NOT_FOUND = "FLAG_NOT_FOUND"
     const val REPORT_NOT_FOUND = "REPORT_NOT_FOUND"
+    const val RELEVANCE_CASE_NOT_FOUND = "RELEVANCE_CASE_NOT_FOUND"
+    const val RELEVANCE_ALERT_NOT_FOUND = "RELEVANCE_ALERT_NOT_FOUND"
+    // RV-2.5b: an admin hide of a batch needs the effective relevance mode auto-hide.
+    const val RELEVANCE_ACTIONS_OFF = "RELEVANCE_ACTIONS_OFF"
+    // RV-3.2 part b: an unknown appeal; deciding before this admin opened its evidence; an appeal decided already.
+    const val RELEVANCE_APPEAL_NOT_FOUND = "RELEVANCE_APPEAL_NOT_FOUND"
+    const val EVIDENCE_NOT_OPENED = "EVIDENCE_NOT_OPENED"
+    const val APPEAL_ALREADY_DECIDED = "APPEAL_ALREADY_DECIDED"
 
     const val RATE_LIMITED = "RATE_LIMITED"
     const val PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
     const val UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
 
     const val AI_API_UNAVAILABLE = "AI_API_UNAVAILABLE"
+
+    // A profile text field (brandName, handle, bio) holds a word on the bad-word lists.
+    const val TEXT_NOT_ALLOWED = "TEXT_NOT_ALLOWED"
+
+    // A photographer profile image (avatar, cover, watermark) was flagged by image moderation.
+    const val IMAGE_NOT_ALLOWED = "IMAGE_NOT_ALLOWED"
+
+    // AA-I2 live selfie: AI off or an AWS error; the daily cap; an unknown, foreign or used session.
+    const val LIVENESS_UNAVAILABLE = "LIVENESS_UNAVAILABLE"
+    const val LIVENESS_ATTEMPTS_EXHAUSTED = "LIVENESS_ATTEMPTS_EXHAUSTED"
+    const val LIVENESS_SESSION_INVALID = "LIVENESS_SESSION_INVALID"
+
+    // RD-2 runner photo deletion: an open request already covers this event (or the open-request cap is reached);
+    // intake is closed (checks-per-day 0); the consent tick was for an older legal version; the live check failed (RD-4).
+    const val REMOVAL_REQUEST_OPEN = "REMOVAL_REQUEST_OPEN"
+    const val REMOVAL_INTAKE_CLOSED = "REMOVAL_INTAKE_CLOSED"
+    const val CONSENT_VERSION_MISMATCH = "CONSENT_VERSION_MISMATCH"
+    const val LIVENESS_FAILED = "LIVENESS_FAILED"
+
+    // AA-R3 shared races: the rollout switch is off; the event cannot be joined; the V98 backstop fired.
+    const val SELF_SERVE_RACES_DISABLED = "SELF_SERVE_RACES_DISABLED"
+    const val EVENT_NOT_JOINABLE = "EVENT_NOT_JOINABLE"
+    const val RACE_DUPLICATE = "RACE_DUPLICATE"
+    // AA-R5: the submitter edits a race after another photographer has uploaded to it.
+    const val RACE_EDIT_LOCKED = "RACE_EDIT_LOCKED"
+
+    // AA-R11 race price: not a priceable race (or the switch is off); a second change inside the cooldown.
+    const val RACE_PRICE_NOT_ALLOWED = "RACE_PRICE_NOT_ALLOWED"
+    const val RACE_PRICE_COOLDOWN = "RACE_PRICE_COOLDOWN"
+
+    // RV-3.2a Photo Relevance appeals: past the last day; this case was appealed already; another appeal of the same
+    // photos is open; the case hides nothing a photographer can appeal (or the checks are off).
+    const val APPEAL_WINDOW_CLOSED = "APPEAL_WINDOW_CLOSED"
+    const val APPEAL_ALREADY_FILED = "APPEAL_ALREADY_FILED"
+    const val APPEAL_ALREADY_OPEN = "APPEAL_ALREADY_OPEN"
+    const val NOTHING_TO_APPEAL = "NOTHING_TO_APPEAL"
 }

@@ -65,6 +65,8 @@ class PayoutRequestServiceWithdrawTest {
         PlatformProperties(),
         Mockito.mock(UserRepository::class.java),
         Clock.systemUTC(),
+        Mockito.mock(com.quickpitik.repository.FlagRepository::class.java),
+        com.quickpitik.config.AdminProperties(),
     )
 
     private fun cycle(status: PayoutCycleStatus): PayoutCycle {

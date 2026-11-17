@@ -31,6 +31,22 @@ export interface PhotographerEventDetail extends PhotographerEventSummary {
   description: string;
   organizerName: string;
   pricePerPhoto: number;
+  // AA-R11: set only on a race this photographer covers while self-serve races are on.
+  racePrice?: RacePrice | null;
+}
+
+// AA-R11 race price. myPricePhp null = the race price; nextChangeAt null = can change now.
+//   PUT /api/v1/me/photographer/events/{id}/price  { pricePhp: number | null } → RacePrice
+export interface RacePrice {
+  floorPhp: number;
+  ceilingPhp: number;
+  myPricePhp: number | null;
+  effectivePhp: number;
+  nextChangeAt: string | null;
+}
+
+export async function putRacePrice(eventId: string, pricePhp: number | null): Promise<RacePrice> {
+  return api.put<RacePrice>(`/me/photographer/events/${encodeURIComponent(eventId)}/price`, { pricePhp });
 }
 
 // Photographer-owned events (V46). Multipart like the admin create; text
@@ -54,7 +70,7 @@ export interface MyEventFields {
   withdrawPendingChange?: boolean;
 }
 
-function toEventForm(fields: MyEventFields): FormData {
+function toEventForm(fields: MyEventFields | RaceFields): FormData {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) {
     if (value === undefined || value === null || key === "cover") continue;
@@ -79,6 +95,87 @@ export async function updateMyEvent(
 ): Promise<PhotographerEventDetail> {
   return api.fetch<PhotographerEventDetail>(
     `/me/photographer/events/${encodeURIComponent(eventId)}`,
+    { method: "PATCH", body: toEventForm(fields) },
+  );
+}
+
+// Shared race events (AA-R3/R5), behind SELF_SERVE_RACES_ENABLED. The server
+// decides every outcome; the client only shows what it answers.
+//   GET    /api/v1/race-types                      → RaceTypes (public)
+//   POST   /api/v1/me/photographer/races           → RaceCreateResult (multipart)
+//   POST   /api/v1/me/photographer/races/{id}/join → RaceCreateResult
+//   PATCH  /api/v1/me/photographer/races/{id}      → PhotographerEventDetail (multipart)
+export interface RaceType {
+  code: string;
+  label: string;
+  hint: string;
+  shared: boolean;
+}
+
+export interface RaceTypes {
+  selfServeEnabled: boolean;
+  types: RaceType[];
+}
+
+export interface RaceCandidate {
+  id: string;
+  slug: string;
+  name: string;
+  date: string;
+  location: string;
+  regionCode: string | null;
+  provinceCode: string | null;
+  organizerName: string;
+  eventType: string | null;
+  bannerUrl: string | null;
+  reviewStatus: string;
+  strength: "strong" | "medium";
+}
+
+export interface RaceCreateResult {
+  outcome: "created" | "pending_review" | "match" | "candidates" | "joined";
+  event?: PhotographerEventDetail | null;
+  candidates: RaceCandidate[];
+  checkReasons: string[];
+}
+
+export interface RaceFields {
+  title?: string;
+  date?: string;
+  location?: string;
+  regionCode?: string;
+  provinceCode?: string;
+  eventType?: string;
+  organizerName?: string;
+  description?: string;
+  confirmDifferentFrom?: string;
+  cover?: File | null;
+}
+
+export async function fetchRaceTypes(): Promise<RaceTypes | null> {
+  return api.get<RaceTypes>("/race-types");
+}
+
+export async function createRace(fields: RaceFields): Promise<RaceCreateResult> {
+  return api.post<RaceCreateResult>("/me/photographer/races", toEventForm(fields));
+}
+
+export async function joinRace(
+  eventId: string,
+  typedName?: string,
+): Promise<RaceCreateResult> {
+  return api.post<RaceCreateResult>(
+    `/me/photographer/races/${encodeURIComponent(eventId)}/join`,
+    { typedName },
+  );
+}
+
+export async function updateRace(
+  eventId: string,
+  fields: RaceFields,
+): Promise<PhotographerEventDetail> {
+  return api.fetch<PhotographerEventDetail>(
+    `/me/photographer/races/${encodeURIComponent(eventId)}`,
     { method: "PATCH", body: toEventForm(fields) },
   );
 }
@@ -777,4 +874,77 @@ export async function checkPhotosExist(
     { signal },
   );
   return res.results;
+}
+
+// RV-3.4a: a photographer's own Photo Relevance case (linked from its inbox note) and its appeal.
+//   GET  /api/v1/me/photographer/relevance/cases/{caseId}         -> PhotographerRelevanceCase (404 when not theirs)
+//   POST /api/v1/me/photographer/relevance/cases/{caseId}/appeal  { reason } -> PhotographerRelevanceCase
+// Mirrors backend PhotographerRelevanceCaseDto: never the model's reason, the summary sent or the words read (G12).
+export type RelevanceVerdict = "FITS" | "MIXED" | "JUNK_DUMP" | "WRONG_EVENT" | "COPIED" | "CANT_TELL";
+export type RelevanceAction = "NONE" | "HIDE_JUNK" | "HIDE_ALL";
+export interface PhotographerRelevanceAppeal {
+  id: string;
+  status: "OPEN" | "WON" | "LOST";
+  createdAt: string | null;
+  decidedAt: string | null;
+}
+export interface PhotographerRelevanceCase {
+  caseId: string;
+  eventId: string;
+  eventName: string;
+  verdict: RelevanceVerdict | null;
+  action: RelevanceAction | null;
+  current: boolean;
+  batchPhotos: number;
+  sampleSize: number | null;
+  junkCount: number | null;
+  hiddenPhotos: number;
+  scanMeasured: number | null;
+  scanBlurry: number | null;
+  noticeAt: string | null;
+  /** Last day to appeal, a Philippine date (YYYY-MM-DD); null when the case has no appeal clock. */
+  appealDeadline: string | null;
+  appeal: PhotographerRelevanceAppeal | null;
+  /** The event's date (YYYY-MM-DD), which V2-T13 names. */
+  eventDate: string | null;
+  /** Why a closed case closed (RECHECK_LIFTED, APPEAL_WON, SUPERSEDED, ...); null while it is open. */
+  closeReason: string | null;
+  // RV-4.5a review: missing (an older server) reads as true, the texts as before.
+  /** A payout hold binds this case now. */
+  payoutHoldBinds?: boolean;
+  /** A lost appeal counts as a confirmed case (false for an admin's hide). */
+  lostAppealCounts?: boolean;
+}
+
+export async function fetchMyRelevanceCase(caseId: string, signal?: AbortSignal): Promise<PhotographerRelevanceCase> {
+  return api.get<PhotographerRelevanceCase>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}`, { signal });
+}
+
+export async function fileMyRelevanceAppeal(caseId: string, reason: string): Promise<PhotographerRelevanceCase> {
+  return api.post<PhotographerRelevanceCase>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/appeal`, { reason });
+}
+
+// RV-3.4b: the case's blurry photos still on sale, the ones the photographer hid themselves, and hide / undo.
+//   GET  /api/v1/me/photographer/relevance/cases/{caseId}/blurry?offset=&limit=  -> PaginatedResponse<RelevancePhoto>
+//   GET  /api/v1/me/photographer/relevance/cases/{caseId}/hidden?offset=&limit=  -> PaginatedResponse<RelevancePhoto>
+//   POST /api/v1/me/photographer/relevance/cases/{caseId}/hide | /unhide  { photoIds } (1 to 200) -> { affected }
+// thumbnailUrl is a short-lived preview link (the watermarked one, else the thumbnail), never the original.
+export interface RelevancePhoto {
+  photoId: string;
+  thumbnailUrl: string | null;
+}
+
+export async function fetchMyRelevancePhotos(
+  caseId: string,
+  list: "blurry" | "hidden",
+  offset: number,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<RelevancePhoto>> {
+  return api.get<PaginatedResponse<RelevancePhoto>>(
+    `/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/${list}?offset=${offset}&limit=${limit}`, { signal });
+}
+
+export async function setMyRelevancePhotosHidden(caseId: string, hide: boolean, photoIds: string[]): Promise<{ affected: number }> {
+  return api.post<{ affected: number }>(`/me/photographer/relevance/cases/${encodeURIComponent(caseId)}/${hide ? "hide" : "unhide"}`, { photoIds });
 }

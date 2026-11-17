@@ -177,6 +177,32 @@ class PaymongoWebhookServiceTest {
     @Test
     fun `free group locks every sibling photo before the first ledger write`() = assertGroupLockOrder(true)
 
+    @Test
+    fun `a refund webhook with no status is acknowledged and applies nothing`() {
+        val refunds = Mockito.mock(PaymongoRefundService::class.java)
+        val service = PaymongoWebhookService(
+            Mockito.mock(OrderRepository::class.java), Mockito.mock(OrderItemRepository::class.java),
+            Mockito.mock(PaymentRepository::class.java), Mockito.mock(DownloadGrantRepository::class.java),
+            Mockito.mock(TransactionMintingService::class.java), Mockito.mock(ApplicationEventPublisher::class.java),
+            refunds, Mockito.mock(OrderPhotoRemovalService::class.java),
+        )
+        val event = PaymongoWebhookEvent(
+            PaymongoEventData(
+                id = "evt_refund",
+                attributes = PaymongoEventAttributes(
+                    type = "payment.refund.updated",
+                    data = PaymongoResource(id = "ref_test", attributes = PaymongoResourceAttributes(status = null)),
+                ),
+            ),
+        )
+
+        val result = service.handle(event)
+
+        assertEquals(true, result["acknowledged"])
+        assertEquals(false, result["applied"])
+        Mockito.verifyNoInteractions(refunds)
+    }
+
     private fun assertGroupLockOrder(free: Boolean) {
         val siblings = List(2) { Order(eventId = UUID.randomUUID(), recipientEmail = "runner@test.local",
             paymentMethodWire = "qrph", totalPhp = if (free) BigDecimal.ZERO else BigDecimal("125.00")) }

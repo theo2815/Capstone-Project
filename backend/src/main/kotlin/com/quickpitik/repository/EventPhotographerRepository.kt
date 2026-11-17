@@ -2,9 +2,13 @@ package com.quickpitik.repository
 
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventPhotographerId
+import com.quickpitik.entity.RacePriceChange
+import com.quickpitik.dto.admin.AdminRacePriceDto
+import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
@@ -13,6 +17,34 @@ import java.time.OffsetDateTime
 import java.util.UUID
 
 interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPhotographerId> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT ep FROM EventPhotographer ep WHERE ep.id.eventId = :eventId ORDER BY ep.id.photographerId")
+    fun lockByEventIdForUpdate(@Param("eventId") eventId: UUID): List<EventPhotographer>
+
+    @Query("""
+        SELECT new com.quickpitik.dto.admin.AdminRacePriceDto(
+            ep.id.photographerId, u.name, s.handle, COALESCE(ep.pricePhp, e.pricePerPhoto),
+            CASE WHEN ep.pricePhp IS NULL THEN false ELSE true END, ep.priceChangedAt)
+        FROM EventPhotographer ep JOIN Event e ON e.id = ep.id.eventId
+        JOIN User u ON u.id = ep.id.photographerId
+        LEFT JOIN PhotographerSettings s ON s.userId = ep.id.photographerId
+        WHERE ep.id.eventId = :eventId ORDER BY ep.id.photographerId
+    """)
+    fun findAdminPrices(@Param("eventId") eventId: UUID): List<AdminRacePriceDto>
+
+    @Query("SELECT c FROM RacePriceChange c WHERE c.eventId = :eventId ORDER BY c.changedAt DESC, c.id DESC")
+    fun findPriceHistory(@Param("eventId") eventId: UUID, pageable: Pageable): List<RacePriceChange>
+
+    // AA-R14: events where a covering photographer with photos charges above the race price
+    // (a row's price equal to the floor is stored NULL, so NOT NULL means raised).
+    @Query("SELECT DISTINCT ep.id.eventId FROM EventPhotographer ep " +
+        "WHERE ep.id.eventId IN :eventIds AND ep.pricePhp IS NOT NULL AND ep.photoCount > 0")
+    fun findEventIdsWithRaisedPrice(@Param("eventIds") eventIds: Collection<UUID>): List<UUID>
+
+    // AA-R11: the race price row, locked after the photographer's photos in that race.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT ep FROM EventPhotographer ep WHERE ep.id = :id")
+    fun findByIdForUpdate(@Param("id") id: EventPhotographerId): EventPhotographer?
 
     @Query("""
         SELECT ep.id.photographerId FROM EventPhotographer ep
@@ -173,6 +205,27 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("photographerId") photographerId: UUID,
         @Param("value") value: Boolean,
     ): Int
+
+    // AA-R3: a race's submitter and joiners get their coverage row before any upload; joining twice is a no-op.
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_photographer (event_id, photographer_id, metadata_public)
+        VALUES (:eventId, :photographerId, :metadataPublic)
+        ON CONFLICT (event_id, photographer_id) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertCoverageIfAbsent(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("metadataPublic") metadataPublic: Boolean,
+    ): Int
+
+    // AA-R5: once another photographer has uploaded to a race, its submitter can no longer edit it.
+    @Query("SELECT COUNT(ep) > 0 FROM EventPhotographer ep WHERE ep.id.eventId = :eventId " +
+        "AND ep.id.photographerId <> :photographerId AND ep.firstUploadAt IS NOT NULL")
+    fun existsOtherUploader(@Param("eventId") eventId: UUID, @Param("photographerId") photographerId: UUID): Boolean
 
     @Modifying
     @Query("UPDATE EventPhotographer ep SET ep.photoCount = GREATEST(0, ep.photoCount + :delta) " +

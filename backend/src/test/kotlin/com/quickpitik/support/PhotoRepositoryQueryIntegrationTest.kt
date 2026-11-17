@@ -24,6 +24,7 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
     @Autowired lateinit var events: EventRepository
     @Autowired lateinit var users: UserRepository
     @Autowired lateinit var tx: TransactionTemplate
+    @Autowired lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
     lateinit var event: Event
     lateinit var otherEvent: Event
     lateinit var owner: User
@@ -82,6 +83,58 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(1, inTx { photos.incrementProcessingAttempts(photo.id) })
         assertEquals(1, inTx { photos.incrementProcessingAttempts(photo.id) })
         assertEquals(3, reload(photo).processingAttempts)
+    }
+
+    @Test fun `a failed indexing attempt is counted and the fifth one marks the photo failed`() {
+        val photo = save(indexingStatus = IndexingStatus.PENDING, indexingAttempts = 3)
+        val settled = save(indexingStatus = IndexingStatus.INDEXED, indexingAttempts = 4)
+
+        assertEquals(1, inTx { photos.failIndexingAttempt(photo.id, "DataIntegrityViolationException", 5) })
+        reload(photo).let {
+            assertEquals(4, it.indexingAttempts)
+            assertEquals(IndexingStatus.PENDING, it.indexingStatus)
+            assertEquals("DataIntegrityViolationException", it.indexingError)
+        }
+        assertEquals(1, inTx { photos.failIndexingAttempt(photo.id, "IllegalStateException", 5) })
+        reload(photo).let {
+            assertEquals(5, it.indexingAttempts)
+            assertEquals(IndexingStatus.FAILED, it.indexingStatus)
+            assertEquals("IllegalStateException", it.indexingError)
+        }
+        // A settled row gets no attempt and is not set to FAILED.
+        assertEquals(0, inTx { photos.failIndexingAttempt(settled.id, "IllegalStateException", 5) })
+        reload(settled).let {
+            assertEquals(4, it.indexingAttempts)
+            assertEquals(IndexingStatus.INDEXED, it.indexingStatus)
+        }
+    }
+
+    @Test fun `ended indexing claims are found, and batching, deleted and exhausted photos are not`() {
+        fun held(status: IndexingStatus = IndexingStatus.PENDING, attempts: Int = 0,
+            provider: String = "rekognition", expiry: OffsetDateTime = old, finished: Boolean = false,
+            deleted: Boolean = false, deleting: Boolean = false, removal: String = "NONE",
+            batchId: UUID? = null, cleanupFinished: Boolean = true): Photo {
+            val p = save(indexingStatus = status, indexingAttempts = attempts)
+            val token = UUID.randomUUID()
+            jdbc.update("UPDATE photos SET indexing_work_token = ?, indexing_work_expires_at = ?, deleted_at = ?, deletion_started_at = ?, removal_state = ? WHERE id = ?",
+                token, expiry, if (deleted || deleting) old else null, if (deleting) old else null, removal, p.id)
+            tx.executeWithoutResult {
+                photos.recordWork(token, p.id, event.id, 0, "INDEXING", provider, expiry, null, p.id.toString(), null, "[]")
+                if (cleanupFinished) jdbc.update("UPDATE photo_work_outputs SET prior_cleanup_finished_at = ? WHERE token = ?", old, token)
+                if (finished) photos.finishWorkOutput(token, old)
+                if (batchId != null) photos.attributeWorkBatch(token, batchId)
+            }
+            return p
+        }
+        val eligible = listOf(held(), held(IndexingStatus.FAILED), held(IndexingStatus.PARTIAL))
+        val excluded = listOf(held(IndexingStatus.BATCHING), held(IndexingStatus.INDEXED), held(IndexingStatus.SKIPPED),
+            held(attempts = 5), held(provider = "ai_api"), held(expiry = cutoff), held(finished = true),
+            held(deleted = true), held(deleting = true), held(removal = "REVIEW"), held(batchId = UUID.randomUUID()), held(cleanupFinished = false))
+        val noClaim = save(indexingStatus = IndexingStatus.PENDING)
+        val mine = (eligible + excluded + noClaim).map { it.id }.toSet()
+
+        assertEquals(eligible.map { it.id }.toSet(),
+            photos.findEndedIndexingClaims(cutoff, 5, everything).filter { it in mine }.toSet())
     }
 
     @Test fun `findPhotographerLibrary returns the owner's untrashed photos in the event at any status`() {
@@ -148,7 +201,66 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
         assertFalse(otherEvent.id in eventIds)
     }
 
+    // ─── AA-I12a: a suspended photographer's photos leave the public read paths ───
+
+    @Test fun `bib search, face search, both public counts and free delivery skip suspended owners (content and total)`() {
+        event.pricingMode = EventPricingMode.FREE
+        events.save(event)
+        val suspended = users.save(User(email = "susp-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Susp", role = Role.PHOTOGRAPHER))
+        val mine = save(personIds = listOf("p-both"), bibs = listOf("183"))
+        val theirs = save(photographerId = suspended.id, personIds = listOf("p-both"), bibs = listOf("183"))
+        suspend(suspended, OffsetDateTime.now())
+
+        // A one-row page: Spring Data skips the count query when the first page is not full,
+        // so only a full page proves the countQuery carries the clause too.
+        val bib = photos.searchForEvent(event.id, PhotoStatus.LIVE, "183", PageRequest.of(0, 1))
+        assertEquals(listOf(mine.id), bib.content.map { it.id })
+        assertEquals(1L, bib.totalElements)
+        val face = photos.findByEventAndPersonIds(event.id, PhotoStatus.LIVE, listOf("p-both"), PageRequest.of(0, 1))
+        assertEquals(listOf(mine.id), face.content.map { it.id })
+        assertEquals(1L, face.totalElements)
+        assertEquals(1L, photos.countPublicForEvent(event.id))
+        assertEquals(1L, photos.countPublicByEventIds(listOf(event.id)).single().photoCount)
+        assertTrue(photos.isFreeDeliveryAvailable(event.id, mine.id))
+        assertFalse(photos.isFreeDeliveryAvailable(event.id, theirs.id))
+
+        suspend(suspended, null)
+        assertEquals(2L, photos.searchForEvent(event.id, PhotoStatus.LIVE, "183", PageRequest.of(0, 1)).totalElements)
+        assertEquals(2L, photos.findByEventAndPersonIds(event.id, PhotoStatus.LIVE, listOf("p-both"), PageRequest.of(0, 1)).totalElements)
+        assertEquals(2L, photos.countPublicForEvent(event.id))
+        assertTrue(photos.isFreeDeliveryAvailable(event.id, theirs.id), "unsuspend must restore free delivery")
+    }
+
+    @Test fun `a photo with no photographer stays visible`() {
+        val orphan = save(photographerId = null, bibs = listOf("42"))
+
+        assertEquals(listOf(orphan.id), photos.searchForEvent(event.id, PhotoStatus.LIVE, "42", PageRequest.of(0, 20)).content.map { it.id })
+        assertEquals(1L, photos.countPublicForEvent(event.id))
+    }
+
+    @Test fun `a suspended owner's sold photo is still delivery-available`() {
+        val sold = save()
+        suspend(owner, OffsetDateTime.now())
+
+        assertTrue(photos.isDeliveryAvailable(sold.id))
+        assertEquals(listOf(sold.id), photos.findDeliveryAvailableIds(owner.id, listOf(sold.id)))
+    }
+
+    @Test fun `findSuspendedIdsIn returns only the suspended ids asked for`() {
+        val other = users.save(User(email = "susp-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Susp", role = Role.PHOTOGRAPHER))
+        val notAsked = users.save(User(email = "susp-${UUID.randomUUID()}@test.local", passwordHash = "unused", name = "Susp", role = Role.PHOTOGRAPHER))
+        suspend(other, OffsetDateTime.now())
+        suspend(notAsked, OffsetDateTime.now())
+
+        assertEquals(listOf(other.id), users.findSuspendedIdsIn(listOf(owner.id, other.id)))
+    }
+
     // ─── fixtures ─────────────────────────────────────────────────────────
+
+    private fun suspend(user: User, at: OffsetDateTime?) {
+        user.suspendedAt = at
+        users.save(user)
+    }
 
     private fun inTx(block: () -> Int): Int = tx.execute { block() }!!
 
@@ -167,6 +279,7 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
         uploadedAt: OffsetDateTime = OffsetDateTime.now(),
         deletedAt: OffsetDateTime? = null,
         personIds: List<String> = emptyList(),
+        bibs: List<String> = emptyList(),
     ): Photo = photos.saveAndFlush(
         Photo(
             eventId = eventId,
@@ -180,6 +293,9 @@ class PhotoRepositoryQueryIntegrationTest : PostgresIntegrationTest() {
             indexingError = indexingError,
             uploadedAt = uploadedAt,
             deletedAt = deletedAt,
-        ).apply { personIds.forEachIndexed { i, id -> facePersons.add(PhotoFacePersonEmbed(faceIndex = i, aiPersonId = id)) } },
+        ).apply {
+            personIds.forEachIndexed { i, id -> facePersons.add(PhotoFacePersonEmbed(faceIndex = i, aiPersonId = id)) }
+            bibs.forEach { this.bibs.add(PhotoBibEmbed(bibNumber = it, ocrConfidence = BigDecimal("0.9000"))) }
+        },
     )
 }

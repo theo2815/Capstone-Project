@@ -20,6 +20,7 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.events.EventCoverService
 import com.quickpitik.service.events.EventDtoMapper
+import com.quickpitik.service.events.EventFaceExpiry
 import com.quickpitik.service.events.EventInputs
 import com.quickpitik.websocket.AdminInboxEvent
 import org.springframework.context.ApplicationEventPublisher
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -126,6 +128,7 @@ class PhotographerOwnedEventService(
     private val eventDtoMapper: EventDtoMapper,
     private val eventPublisher: ApplicationEventPublisher,
     private val transactionTemplate: TransactionTemplate,
+    private val eventFaceExpiry: EventFaceExpiry,
 ) {
     fun create(
         photographerId: UUID,
@@ -186,7 +189,7 @@ class PhotographerOwnedEventService(
         val coverKey = cover?.let {
             val event = eventRepository.findByIdAndCreatedByAndDeletedAtIsNull(eventId, photographerId)
                 ?: throw NotFoundException(code = ErrorCodes.EVENT_NOT_FOUND, message = "Event not found")
-            req.date?.takeIf { it.isNotBlank() }?.let(EventInputs::parseDate)
+            req.date?.takeIf { it.isNotBlank() }?.let { parseEditDate(event, it) }
             req.visibility?.takeIf { it.isNotBlank() }?.let(::parseVisibility)
             requestedTrio(event, req)
             eventCoverService.upload(eventId, it.bytes, it.contentType)
@@ -202,6 +205,10 @@ class PhotographerOwnedEventService(
         return result
     }
 
+    // Checked before the cover upload too, so a refused date stores nothing.
+    private fun parseEditDate(event: Event, raw: String): LocalDate =
+        EventInputs.parseDate(raw).also { eventFaceExpiry.checkDateChange(event, it) }
+
     private fun updateEvent(
         photographerId: UUID,
         event: Event,
@@ -212,7 +219,7 @@ class PhotographerOwnedEventService(
             event.visibility, event.coverS3Key, PricingTrio.of(event), event.reviewStatus, event.pendingChange)
         // Presentation + visibility apply straight away in every state.
         req.title?.takeIf { it.isNotBlank() }?.let { event.name = it.trim() }
-        req.date?.takeIf { it.isNotBlank() }?.let { event.date = EventInputs.parseDate(it) }
+        req.date?.takeIf { it.isNotBlank() }?.let { event.date = parseEditDate(event, it) }
         req.location?.takeIf { it.isNotBlank() }?.let { event.location = it.trim() }
         req.organizerName?.takeIf { it.isNotBlank() }?.let { event.organizerName = it.trim() }
         req.description?.takeIf { it.isNotBlank() }?.let { event.description = it.trim() }

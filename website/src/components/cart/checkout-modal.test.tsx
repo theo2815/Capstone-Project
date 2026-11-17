@@ -174,6 +174,18 @@ describe("CheckoutModal QRPH", () => {
 
   // Auto-apply (2026-09-05): the pay step asks the server how the cart is
   // priced — no code typed — and the order goes out without one.
+  it("tells a guest on the pay step that paying means agreeing to the Terms", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+    expect(screen.getByText(/By paying, you agree to the/)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /Terms of Service \(including refunds\)/ });
+    expect(link).toHaveAttribute("href", "/terms#refunds");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
   it("quotes photographer discounts automatically on the pay step", async () => {
     const order = {
       id: ORDER_ID,

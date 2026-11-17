@@ -27,7 +27,7 @@ class PhotoErasureServiceTest {
     private val service = PhotoErasureService(mock(), jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
         storage, mock(), com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
         TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
-        io.micrometer.core.instrument.simple.SimpleMeterRegistry())
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry(), mock())
 
     @Test fun `privacy purpose alone never authorizes resource deletion`() {
         assertFailsWith<ConflictException> {
@@ -89,7 +89,7 @@ class PhotoErasureServiceTest {
         val eraser = PhotoErasureService(photos, jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
             storage, mock(), com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
             TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
-            io.micrometer.core.instrument.simple.SimpleMeterRegistry())
+            io.micrometer.core.instrument.simple.SimpleMeterRegistry(), mock())
         val owner = UUID.randomUUID()
         val photo = Photo(eventId = UUID.randomUUID(), photographerId = owner, s3Key = "original.jpg",
             pricePhp = java.math.BigDecimal("199.00")).also { it.deletedAt = java.time.OffsetDateTime.now() }
@@ -120,7 +120,7 @@ class PhotoErasureServiceTest {
         val eraser = PhotoErasureService(photos, jobs, mock(), mock(), mock(), mock(), mock(), mock(), mock(),
             storage, faces, com.quickpitik.config.PhotoRemovalProperties(), com.quickpitik.config.StorageProperties(),
             TransactionTemplate(manager), com.fasterxml.jackson.module.kotlin.jacksonObjectMapper(), java.time.Clock.systemUTC(),
-            io.micrometer.core.instrument.simple.SimpleMeterRegistry())
+            io.micrometer.core.instrument.simple.SimpleMeterRegistry(), mock())
         val job = job(neverIndexed = false)
         Mockito.`when`(jobs.findById(job.id)).thenReturn(Optional.of(job))
         Mockito.`when`(jobs.lock(job.id)).thenReturn(job)

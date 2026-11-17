@@ -45,6 +45,7 @@ const KIND_TONE: Record<PhotographerMessageKind, string> = {
   admin_message: "text-ink",
   photo_removal_request: "text-warning",
   photo_removal_outcome: "text-slate",
+  relevance_notice: "text-warning",
 };
 
 export function PhotographerInboxModal({
@@ -216,6 +217,18 @@ function InboxRow({ message, pending, onMarkRead, onRemove, onOpenRequest }: Inb
             className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
           >
             View request →
+          </Link>
+        )}
+        {message.relevanceCaseId && (
+          <Link
+            href={`${ROUTES.DASHBOARD_RELEVANCE}/${encodeURIComponent(message.relevanceCaseId)}`}
+            onClick={() => {
+              onMarkRead();
+              onOpenRequest();
+            }}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            View details →
           </Link>
         )}
         <button

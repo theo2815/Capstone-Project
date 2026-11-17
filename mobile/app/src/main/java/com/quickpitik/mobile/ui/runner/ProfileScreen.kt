@@ -44,6 +44,7 @@ import com.quickpitik.mobile.ui.common.EventState
 import com.quickpitik.mobile.ui.common.deriveEventState
 import com.quickpitik.mobile.ui.common.eventDateLabel
 import com.quickpitik.mobile.ui.common.extractCity
+import com.quickpitik.mobile.ui.common.faceNoticeAccepted
 import com.quickpitik.mobile.ui.common.peso
 import com.quickpitik.mobile.ui.theme.ArrowLabel
 import com.quickpitik.mobile.ui.theme.BadgeShape
@@ -300,6 +301,7 @@ fun ProfileScreen(
                             // sentence of what appears here, the primary action to
                             // seed it — and the tips a runner needs to pick a photo
                             // that actually matches.
+                            val faceOk = faceNoticeAccepted()
                             QpCard(modifier = Modifier.fillMaxWidth()) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -332,12 +334,14 @@ fun ProfileScreen(
                                         text = "Take a selfie",
                                         onClick = launchCamera,
                                         modifier = Modifier.fillMaxWidth(),
+                                        enabled = faceOk,
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     GhostCta(
                                         text = "Upload a photo",
                                         onClick = { galleryLauncher.launch("image/*") },
                                         modifier = Modifier.fillMaxWidth(),
+                                        enabled = faceOk,
                                     )
                                 }
                             }
@@ -383,16 +387,19 @@ fun ProfileScreen(
                                     color = Slate,
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
+                                val faceOk = faceNoticeAccepted()
                                 PrimaryCta(
                                     text = "Take a selfie",
                                     onClick = { showAddSheet = false; launchCamera() },
                                     modifier = Modifier.fillMaxWidth(),
+                                    enabled = faceOk,
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 GhostCta(
                                     text = "Upload a photo",
                                     onClick = { showAddSheet = false; galleryLauncher.launch("image/*") },
                                     modifier = Modifier.fillMaxWidth(),
+                                    enabled = faceOk,
                                 )
                             }
                         }

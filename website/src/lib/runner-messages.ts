@@ -11,7 +11,8 @@ export type RunnerMessageKind =
   | "admin_message"
   | "account_suspended"
   | "account_unsuspended"
-  | "photo_removed";
+  | "photo_removed"
+  | "photo_removal_update";
 
 // FE shape mirrors the BE RunnerMessageDto (see
 // backend/dto/runner/RunnerMessageDtos.kt). `orderId` deep-links the
@@ -24,6 +25,9 @@ export interface RunnerMessage {
   title: string | null;
   body: string;
   orderId: string | null;
+  // RD-12: set on photo_removal_update rows (the runner's own case). A buyer's
+  // photo_removed row may carry another person's case id: never link it.
+  photoRemovalRequestId?: string | null;
   sourceDecisionId: string | null;
   createdAt: string;
   readAt: string | null;
@@ -37,13 +41,15 @@ export const RUNNER_MESSAGE_KIND_LABEL: Record<RunnerMessageKind, string> = {
   account_suspended: "Account suspended",
   account_unsuspended: "Account reinstated",
   photo_removed: "Photo removed",
+  photo_removal_update: "Photo deletion",
 };
 
 // Resolve the title shown in the inbox row header. admin_message carries
 // the admin-supplied subject in `title`; every other kind falls back to
 // the kind label.
 export function resolveRunnerMessageTitle(message: RunnerMessage): string {
-  return message.title?.trim() || RUNNER_MESSAGE_KIND_LABEL[message.kind];
+  // ?? "Update": an older tab meeting a kind added later shows a neutral label.
+  return message.title?.trim() || (RUNNER_MESSAGE_KIND_LABEL[message.kind] ?? "Update");
 }
 
 export function getRunnerUnreadCount(

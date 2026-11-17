@@ -30,6 +30,8 @@ data class AdminFlagDto(
     val targetKind: String,
     val targetId: UUID,
     val reporterId: UUID?,
+    // PE-2.2: when an admin confirmed a payout hold on this relevance flag.
+    val payoutHoldAt: String? = null,
 )
 
 data class FlagActionRequest(

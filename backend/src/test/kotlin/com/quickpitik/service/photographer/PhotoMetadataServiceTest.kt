@@ -1,12 +1,15 @@
 package com.quickpitik.service.photographer
 
 import com.quickpitik.config.PhotoMetadataProperties
+import com.quickpitik.config.RelevanceMode
+import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.dto.photos.PhotoMetadataFields
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoMetadataState
 import com.quickpitik.repository.PhotoMetadataRepository
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.image.ExtractedMetadata
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.Test
@@ -32,12 +35,14 @@ class PhotoMetadataServiceTest {
     private val storage = Mockito.mock(StorageService::class.java)
     private val watermarkPool = Mockito.mock(ThreadPoolTaskExecutor::class.java)
     private val manager = Mockito.mock(PlatformTransactionManager::class.java)
+    private val suspension = Mockito.mock(com.quickpitik.service.photos.PhotographerSuspension::class.java)
     private val clock = Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC)
     private fun <T> anyArg(): T = Mockito.any()
-    private fun service(recoveryEnabled: Boolean = true): PhotoMetadataService {
+    private fun service(recoveryEnabled: Boolean = true, mode: RelevanceMode = RelevanceMode.OFF): PhotoMetadataService {
         Mockito.`when`(manager.getTransaction(anyArg())).thenReturn(SimpleTransactionStatus())
         return PhotoMetadataService(repository, photos, coverage, extractor, storage, watermarkPool,
-            PhotoMetadataProperties(recoveryEnabled = recoveryEnabled), TransactionTemplate(manager), clock, watermarkPool)
+            PhotoMetadataProperties(recoveryEnabled = recoveryEnabled), TransactionTemplate(manager), clock, watermarkPool, suspension,
+            RelevanceProperties(mode = mode))
     }
 
     @Test
@@ -61,10 +66,10 @@ class PhotoMetadataServiceTest {
     @Test
     fun `fatal parser error settles FAILED without leaking parser values`() {
         Mockito.`when`(repository.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
-        Mockito.`when`(extractor.extract(anyArg())).thenThrow(IllegalArgumentException("private tag value"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenThrow(IllegalArgumentException("private tag value"))
         var state: PhotoMetadataState? = null
         var fields: PhotoMetadataFields? = PhotoMetadataFields()
-        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())).thenAnswer {
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>(), anyArg())).thenAnswer {
             state = it.getArgument(3)
             fields = it.getArgument(4)
             1
@@ -91,14 +96,40 @@ class PhotoMetadataServiceTest {
         Mockito.verify(repository, Mockito.never()).findDueCandidateIds(Mockito.anyInt(), Mockito.anyInt(), anyArg(), anyArg(), anyArg())
 
         Mockito.`when`(repository.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "R6"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(cameraModel = "R6"), null))
         var settled: PhotoMetadataState? = null
-        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())).thenAnswer {
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>(), anyArg())).thenAnswer {
             settled = it.getArgument(3)
             1
         }
         service.extractIfDue(UUID.randomUUID(), byteArrayOf(1))
         assertEquals(PhotoMetadataState.READY, settled)
+    }
+
+    @Test
+    fun `the marker is stored beside the fields when extraction settles`() {
+        val marker = UUID.randomUUID()
+        assertEquals(marker, settledMarker(RelevanceMode.SHADOW, marker))
+    }
+
+    @Test
+    fun `mode off stores no marker`() {
+        assertNull(settledMarker(RelevanceMode.OFF, UUID.randomUUID()))
+    }
+
+    private fun settledMarker(mode: RelevanceMode, marker: UUID): UUID? {
+        Mockito.`when`(repository.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(cameraModel = "R6"), marker))
+        var stored: UUID? = null
+        var fields: PhotoMetadataFields? = null
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>(), anyArg())).thenAnswer {
+            fields = it.getArgument(4)
+            stored = it.getArgument(7)
+            1
+        }
+        service(mode = mode).extractIfDue(UUID.randomUUID(), byteArrayOf(1))
+        assertEquals("R6", fields?.cameraModel)
+        return stored
     }
 
     @Test
@@ -123,10 +154,10 @@ class PhotoMetadataServiceTest {
     @Test
     fun `settlement outage does not escape or attempt a second settlement`() {
         Mockito.`when`(repository.claimIfDue(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), Mockito.anyInt())).thenReturn(1)
-        Mockito.`when`(extractor.extract(anyArg())).thenReturn(PhotoMetadataFields(cameraModel = "R6"))
-        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())).thenThrow(IllegalStateException("database down"))
+        Mockito.`when`(extractor.extractWithMarker(anyArg())).thenReturn(ExtractedMetadata(PhotoMetadataFields(cameraModel = "R6"), null))
+        Mockito.`when`(repository.settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>(), anyArg())).thenThrow(IllegalStateException("database down"))
         service().extractIfDue(UUID.randomUUID(), byteArrayOf(1))
-        Mockito.verify(repository, Mockito.times(1)).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>())
+        Mockito.verify(repository, Mockito.times(1)).settle(anyArg(), anyArg(), Mockito.anyInt(), anyArg(), anyArg(), anyArg(), Mockito.isNull<Long>(), anyArg())
     }
 
     @Test
@@ -152,5 +183,20 @@ class PhotoMetadataServiceTest {
         assertEquals("public", access.getValue(gallery[1].id))
         assertEquals("none", access.getValue(gallery[2].id))
         Mockito.verify(coverage, Mockito.times(1)).findPublicMetadataPhotographerIds(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `public metadata of a suspended photographer's photo is not found`() {
+        val eventId = UUID.randomUUID()
+        val ownerId = UUID.randomUUID()
+        val photo = Photo(eventId = eventId, photographerId = ownerId, s3Key = "p.jpg", pricePhp = BigDecimal.ONE)
+        Mockito.`when`(photos.findById(photo.id)).thenReturn(java.util.Optional.of(photo))
+        Mockito.`when`(coverage.findPublicMetadataPhotographerIds(anyArg(), anyArg())).thenReturn(listOf(ownerId))
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenReturn(setOf(ownerId))
+
+        assertFailsWith<com.quickpitik.exception.NotFoundException> { service().getPublic(photo.id) }
+        assertEquals("none", service().metadataAccess(eventId, listOf(photo), null).getValue(photo.id))
+        // The photographer still sees their own metadata.
+        assertEquals("owner", service().metadataAccess(eventId, listOf(photo), ownerId).getValue(photo.id))
     }
 }

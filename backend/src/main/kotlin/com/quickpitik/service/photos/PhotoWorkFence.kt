@@ -2,6 +2,7 @@ package com.quickpitik.service.photos
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.quickpitik.config.*
+import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.RemovalState
 import com.quickpitik.repository.PhotoRepository
 import org.springframework.stereotype.Service
@@ -17,7 +18,8 @@ data class PhotoWorkClaim(val photoId: UUID, val generation: Long, val token: UU
     val expiresAt: Instant, val kind: PhotoWorkKind)
 
 /** A local expiry refuses settlement, but never proves a remote writer has ended.
- * Unfinished tokens cannot be stolen. TASK 9/10 must reconcile unknown operations.
+ * Watermark claims can be reclaimed past endedWatermarkCutoff (WM-1). The indexing sweep may
+ * release retryable Rekognition claims past endedIndexingCutoff after confirmed prior cleanup; ai-api and batch work stay held.
  */
 @Service
 @Transactional
@@ -30,11 +32,19 @@ class PhotoWorkFence(
     private val json: ObjectMapper,
     private val clock: Clock,
 ) {
+    private val log = org.slf4j.LoggerFactory.getLogger(javaClass)
+
     fun claim(photoId: UUID, kind: PhotoWorkKind): PhotoWorkClaim? {
         val photo = photos.findAllByIdForUpdate(listOf(photoId)).singleOrNull() ?: return null
         if (photo.removalState != RemovalState.NONE || photo.deletedAt != null || photo.deletionStartedAt != null) return null
         val token = if (kind == PhotoWorkKind.WATERMARK) photo.watermarkWorkToken else photo.indexingWorkToken
-        if (token != null) return null
+        if (token != null) {
+            if (kind != PhotoWorkKind.WATERMARK || photo.watermarkWorkExpiresAt?.isBefore(endedWatermarkCutoff()) != true) return null
+            log.warn("Watermark {}: releasing a work claim whose uploads have ended (expired {})", photoId, photo.watermarkWorkExpiresAt)
+            photos.finishWorkOutput(token, OffsetDateTime.now(clock))
+            photos.finishWork(photo.id, token)
+            return claim(photoId, kind) // finishWork cleared the token under this lock, so this recurses once
+        }
         if (photos.hasUnfinishedWork(photoId, kind.name)) return null
         val expires = OffsetDateTime.now(clock).plus(budget(kind))
         val claim = PhotoWorkClaim(photo.id, photo.workGeneration, UUID.randomUUID(), expires.toInstant(), kind)
@@ -66,12 +76,41 @@ class PhotoWorkFence(
         photos.finishWork(claim.photoId, claim.token)
     }
 
-    // A face write starts only while its claim is current (PhotoIndexingService). facesEnroll then makes at most
-    // four Rekognition calls (CreateCollection, IndexFaces, and both again on ResourceNotFound), each ended by
-    // apiCallTimeout within operationTimeout: four of them after expiry, the writer has ended.
+    // Four call deadlines after expiry is the accepted recovery window, not proof that every remote write ended:
+    // throttle retries and pacing can take longer. A stale writer cannot publish or clear a newer token;
+    // Rekognition retries use the same photo identity. An early release can cost another enroll and OCR call.
     fun finishEndedRekognitionWrite(claim: PhotoWorkClaim): Boolean {
         if (clock.instant().isBefore(claim.expiresAt.plus(rekognition.operationTimeout.multipliedBy(4)))) return false
         finish(claim)
+        return true
+    }
+
+    // A watermark writer checks its claim once, before expiry, then makes two PUTs (preview, grid), each a single
+    // attempt ended by operationTimeout: a claim that expired before this cutoff has no writer left on our side.
+    // Both PUTs write fixed keys on the erasure manifest, so a late remote write is overwritten by the retry.
+    fun endedWatermarkCutoff(): OffsetDateTime = OffsetDateTime.now(clock).minus(storage.operationTimeout.multipliedBy(2))
+
+    fun endedIndexingCutoff(): OffsetDateTime = OffsetDateTime.now(clock).minus(rekognition.operationTimeout.multipliedBy(4))
+
+    // Record only after the worker's last prior-face cleanup returned; expiry alone cannot prove this.
+    fun confirmPriorCleanup(claim: PhotoWorkClaim) {
+        photos.confirmPriorCleanup(claim.token, OffsetDateTime.now(clock))
+    }
+
+    fun releaseEndedIndexing(photoId: UUID): Boolean {
+        val photo = photos.findAllByIdForUpdate(listOf(photoId)).singleOrNull() ?: return false
+        if (ai.indexingMode == IndexingMode.BATCH || photo.deletedAt != null || photo.deletionStartedAt != null ||
+            photo.removalState != RemovalState.NONE || photo.indexingAttempts >= ai.maxIndexingAttempts ||
+            photo.indexingStatus !in setOf(IndexingStatus.PENDING, IndexingStatus.FAILED, IndexingStatus.PARTIAL)) return false
+        val token = photo.indexingWorkToken ?: return false
+        val expiry = photo.indexingWorkExpiresAt ?: return false
+        val output = photos.faceWorkForPhoto(photo.eventId, photo.id).singleOrNull { it.token == token } ?: return false
+        if (output.finishedAt != null || output.provider != "rekognition" || output.batchId != null ||
+            output.priorCleanupFinishedAt == null) return false
+        val claim = PhotoWorkClaim(photo.id, photo.workGeneration, token,
+            maxOf(expiry.toInstant(), output.expiresAt), PhotoWorkKind.INDEXING)
+        if (!finishEndedRekognitionWrite(claim)) return false
+        log.warn("Indexing {}: released a work claim whose writer ended (expired {})", photo.id, expiry)
         return true
     }
 

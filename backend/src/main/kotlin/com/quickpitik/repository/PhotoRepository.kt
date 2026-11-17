@@ -3,6 +3,7 @@ package com.quickpitik.repository
 import com.quickpitik.entity.IndexingStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotoStatus
+import com.quickpitik.entity.RemovalState
 import jakarta.persistence.LockModeType
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -12,6 +13,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -36,6 +38,8 @@ interface PhotoFaceWork {
     val priorPersonIds: String
     val jobIds: String
     val batchPhotoIds: String
+    val batchId: UUID?
+    val priorCleanupFinishedAt: java.time.Instant?
     val finishedAt: java.time.Instant?
     val facesErasedAt: java.time.Instant?
 }
@@ -46,6 +50,14 @@ interface PhotoFaceTarget {
 }
 
 interface PhotoRepository : JpaRepository<Photo, UUID> {
+    companion object {
+        // = PhotographerSuspension: a suspended photographer's photos leave the public read
+        // paths (AA-I12a). Photos alias `p`; a photo with no photographer stays visible.
+        const val OWNER_NOT_SUSPENDED_JPQL =
+            "NOT EXISTS (SELECT su.id FROM User su WHERE su.id = p.photographerId AND su.suspendedAt IS NOT NULL)"
+        const val OWNER_NOT_SUSPENDED_SQL =
+            "NOT EXISTS (SELECT 1 FROM users su WHERE su.id = p.photographer_id AND su.suspended_at IS NOT NULL)"
+    }
 
     @Query(value = """SELECT EXISTS (SELECT 1 FROM photos WHERE id <> :photoId
         AND (s3_key = :key OR thumbnail_s3_key = :key OR watermark_s3_key = :key))""", nativeQuery = true)
@@ -85,7 +97,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             WHERE p.id = :photoId AND p.event_id = :eventId AND p.status = 'LIVE'
             AND p.deleted_at IS NULL AND p.removal_state = 'NONE'
             AND p.deletion_started_at IS NULL AND p.purged_at IS NULL
-            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED'))
+            AND e.pricing_mode = 'FREE' AND e.status NOT IN ('DRAFT', 'ARCHIVED') AND e.deleted_at IS NULL
+            AND $OWNER_NOT_SUSPENDED_SQL)
     """, nativeQuery = true)
     fun isFreeDeliveryAvailable(eventId: UUID, photoId: UUID): Boolean
 
@@ -148,6 +161,9 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         """, nativeQuery = true)
     fun refreshRemovalState(@Param("ids") ids: Collection<UUID>): Int
 
+    // RD-8: which of these photos the database now holds in the given removal state.
+    fun findAllByIdInAndRemovalState(ids: Collection<UUID>, removalState: RemovalState): List<Photo>
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE Photo p SET p.removalState = com.quickpitik.entity.RemovalState.REMOVED, p.workGeneration = p.workGeneration + 1 " +
         "WHERE p.id = :id AND p.removalState <> com.quickpitik.entity.RemovalState.REMOVED")
@@ -179,7 +195,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         w.prior_provider AS "priorProvider", w.prior_person_ids::text AS "priorPersonIds", w.job_ids::text AS "jobIds",
         COALESCE((SELECT jsonb_agg(bp.photo_id ORDER BY bp.idx)::text FROM ai_index_batch_photos bp
             WHERE bp.batch_id = w.batch_id), '[]') AS "batchPhotoIds",
-        w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
+        w.prior_cleanup_finished_at AS "priorCleanupFinishedAt", w.batch_id AS "batchId", w.finished_at AS "finishedAt", w.faces_erased_at AS "facesErasedAt"
         FROM photo_work_outputs w WHERE w.event_id = :eventId AND w.photo_id = :photoId AND w.kind = 'INDEXING'
         ORDER BY w.created_at, w.token""", nativeQuery = true)
     fun faceWorkForPhoto(eventId: UUID, photoId: UUID): List<PhotoFaceWork>
@@ -230,6 +246,10 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun renewIndexingWork(photoId: UUID, token: UUID, expiry: OffsetDateTime): Int
 
     @Modifying
+    @Query(value = "UPDATE photo_work_outputs SET prior_cleanup_finished_at = :now WHERE token = :token AND kind = 'INDEXING' AND prior_cleanup_finished_at IS NULL", nativeQuery = true)
+    fun confirmPriorCleanup(token: UUID, now: OffsetDateTime): Int
+
+    @Modifying
     @Query(value = "UPDATE photo_work_outputs SET finished_at = :now WHERE token = :token AND finished_at IS NULL", nativeQuery = true)
     fun finishWorkOutput(token: UUID, now: OffsetDateTime): Int
 
@@ -273,12 +293,6 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         "AND p.indexingStatus <> com.quickpitik.entity.IndexingStatus.INDEXED")
     fun skipIndexing(@Param("id") id: UUID): Int
 
-    // Bulk re-prices every photo under the event. Used by admin event PATCH
-    // when the operator changes events.price_per_photo so existing photos
-    // pick up the new price across runner-facing galleries. Carts follow
-    // automatically: CartService renders the live photos.price_php and
-    // OrderService.create charges it, so cart_items.price_php_at_add is
-    // deliberately left alone — nothing displays or bills off that column.
     // V46: an approved watermark-policy change makes every LIVE preview stale.
     // Back to PROCESSING with a fresh budget; PhotoWatermarkTrigger.reconcile
     // re-renders them under the new policy within a sweep. Runners lose the
@@ -298,6 +312,51 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("eventId") eventId: UUID,
         @Param("price") price: BigDecimal,
     ): Int
+
+    // RacePriceService clamps coverage prices first. Missing coverage (including a NULL
+    // photographer) follows the floor; cart snapshots and purchase prices stay untouched.
+    @Modifying
+    @Query(value = """
+        UPDATE photos p SET price_php = prices.price
+        FROM (
+            SELECT photo.id, COALESCE(ep.price_php, :floor) AS price
+            FROM photos photo LEFT JOIN event_photographer ep
+              ON ep.event_id = photo.event_id AND ep.photographer_id = photo.photographer_id
+            WHERE photo.event_id = :eventId
+        ) prices WHERE p.id = prices.id
+    """, nativeQuery = true)
+    fun updateRacePricesByEventId(@Param("eventId") eventId: UUID, @Param("floor") floor: BigDecimal): Int
+
+    // AA-R11: one photographer's photos in a race, locked in id order before their coverage row
+    // (the price writers' one lock order: photos, then event_photographer, then events).
+    @Query(
+        value = "SELECT id FROM photos WHERE event_id = :eventId AND photographer_id = :photographerId ORDER BY id FOR NO KEY UPDATE",
+        nativeQuery = true,
+    )
+    fun lockIdsByEventIdAndPhotographerIdForUpdate(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+    ): List<UUID>
+
+    @Modifying
+    @Query("UPDATE Photo p SET p.pricePhp = :price WHERE p.eventId = :eventId AND p.photographerId = :photographerId")
+    fun updatePriceByEventIdAndPhotographerId(
+        @Param("eventId") eventId: UUID,
+        @Param("photographerId") photographerId: UUID,
+        @Param("price") price: BigDecimal,
+    ): Int
+
+    // AA-R13: a race photo takes its photographer's race price (else the floor). Runs after
+    // upsertOnUpload in the persist transaction, so a price change that commits mid-upload is seen.
+    @Modifying
+    @Query(
+        value = """UPDATE photos p SET price_php = COALESCE(ep.price_php, e.price_per_photo)
+        FROM event_photographer ep, events e
+        WHERE p.id = :photoId AND ep.event_id = p.event_id AND ep.photographer_id = p.photographer_id
+          AND e.id = p.event_id AND p.price_php IS DISTINCT FROM COALESCE(ep.price_php, e.price_per_photo)""",
+        nativeQuery = true,
+    )
+    fun reseedRacePrice(@Param("photoId") photoId: UUID): Int
 
     // Bulk re-queue for AI indexing (admin reindex endpoint). Resets the
     // attempt budget so the reconcile sweep actually picks the rows up —
@@ -328,7 +387,8 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
 
     // Async-watermark reconcile sweep (V36): PROCESSING rows the AFTER_COMMIT
     // hot path missed (app crash, storage outage), oldest first. Mirrors
-    // findIndexingBacklog.
+    // findIndexingBacklog. A claim that expired before endedClaimCutoff is one
+    // PhotoWorkFence.claim releases (a failed PUT never finishes it, WM-1).
     @Query(
         """
         SELECT p FROM Photo p
@@ -336,7 +396,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.deletionStartedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
-          AND p.watermarkWorkToken IS NULL
+          AND (p.watermarkWorkToken IS NULL OR p.watermarkWorkExpiresAt < :endedClaimCutoff)
           AND p.processingAttempts < :maxAttempts
           AND p.uploadedAt < :cutoff
         ORDER BY p.uploadedAt ASC
@@ -345,6 +405,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     fun findWatermarkBacklog(
         @Param("maxAttempts") maxAttempts: Int,
         @Param("cutoff") cutoff: OffsetDateTime,
+        @Param("endedClaimCutoff") endedClaimCutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Photo>
 
@@ -395,6 +456,21 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     @Query("UPDATE Photo p SET p.processingAttempts = p.processingAttempts + 1 WHERE p.id = :id")
     fun incrementProcessingAttempts(@Param("id") id: UUID): Int
 
+    // A run that threw still costs one attempt, so the sweep cannot re-run paid calls without end; the
+    // last one sets FAILED so the admin reindex route finds it. Settled or removed rows are left alone.
+    @Modifying
+    @Query(
+        """
+        UPDATE Photo p SET p.indexingAttempts = p.indexingAttempts + 1, p.indexingError = :error,
+            p.indexingStatus = CASE WHEN p.indexingAttempts + 1 >= :maxAttempts
+                THEN com.quickpitik.entity.IndexingStatus.FAILED ELSE p.indexingStatus END
+        WHERE p.id = :id AND p.deletedAt IS NULL AND p.deletionStartedAt IS NULL
+          AND p.removalState = com.quickpitik.entity.RemovalState.NONE
+          AND p.indexingStatus NOT IN (com.quickpitik.entity.IndexingStatus.INDEXED, com.quickpitik.entity.IndexingStatus.SKIPPED)
+        """,
+    )
+    fun failIndexingAttempt(@Param("id") id: UUID, @Param("error") error: String, @Param("maxAttempts") maxAttempts: Int): Int
+
     // Admin flag queue. Conditional for the same reason as publishWatermarked:
     // the watermark pipeline writes this row concurrently, so a load-modify-save
     // from the flag queue would clobber the columns it just set. Already-HIDDEN
@@ -417,6 +493,38 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
             "WHERE p.id = :id AND p.status = com.quickpitik.entity.PhotoStatus.HIDDEN",
     )
     fun unhideForFlag(@Param("id") id: UUID, @Param("target") target: PhotoStatus): Int
+
+    // PE-2.4: the whole-batch hide. The ids are the flag's recorded, un-restored photos. Conditional like
+    // hideForFlag, so a row the pipeline is writing is not clobbered.
+    @Modifying
+    @Query(
+        value = """
+        UPDATE photos SET status = 'HIDDEN'
+        WHERE status IN ('LIVE', 'PROCESSING')
+          AND id IN (SELECT photo_id FROM flag_hidden_photos WHERE flag_id = :flagId AND restored_at IS NULL)
+        """,
+        nativeQuery = true,
+    )
+    fun hideRecordedForFlag(@Param("flagId") flagId: UUID): Int
+
+    // PE-2.4: the bulk restore (a dismissed relevance flag). Same target split as unhideForFlag. The last two
+    // conditions = AdminFlagService.stillHeldHidden: another hidden photo flag or another hold row (a flag's
+    // batch hide, or a V106 batch hold with a NULL flag_id, hence IS DISTINCT FROM) keeps the photo hidden.
+    @Modifying
+    @Query(
+        value = """
+        UPDATE photos p
+        SET status = CASE WHEN p.watermark_s3_key IS NULL THEN 'PROCESSING' ELSE 'LIVE' END, processing_attempts = 0
+        WHERE p.status = 'HIDDEN'
+          AND p.id IN (SELECT photo_id FROM flag_hidden_photos WHERE flag_id = :flagId AND restored_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM flags f WHERE f.target_kind = 'photo' AND f.target_id = p.id
+                          AND f.status = 'hidden' AND f.id <> :flagId)
+          AND NOT EXISTS (SELECT 1 FROM flag_hidden_photos o WHERE o.photo_id = p.id
+                          AND o.flag_id IS DISTINCT FROM :flagId AND o.restored_at IS NULL)
+        """,
+        nativeQuery = true,
+    )
+    fun unhideRecordedForFlag(@Param("flagId") flagId: UUID): Int
 
     // Nearest stored fingerprint by Hamming distance, for POST
     // /public/photos/verify. The upload is compared against all three
@@ -470,6 +578,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
               AND p.deleted_at IS NULL
               AND p.removal_state = 'NONE'
               AND p.published_at <= :snapshotAt
+              AND $OWNER_NOT_SUSPENDED_SQL
         )
         SELECT p.*
         FROM ranked r
@@ -489,6 +598,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deleted_at IS NULL
           AND p.removal_state = 'NONE'
           AND p.published_at <= :snapshotAt
+          AND $OWNER_NOT_SUSPENDED_SQL
         """,
         nativeQuery = true,
     )
@@ -513,6 +623,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+          AND $OWNER_NOT_SUSPENDED_JPQL
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
         countQuery = """
@@ -523,6 +634,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND (:bib = '' OR UPPER(b.bibNumber) LIKE CONCAT('%', UPPER(:bib), '%'))
+          AND $OWNER_NOT_SUSPENDED_JPQL
         """,
     )
     fun searchForEvent(
@@ -541,6 +653,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
+          AND $OWNER_NOT_SUSPENDED_JPQL
         ORDER BY p.capturedAt DESC NULLS LAST, p.uploadedAt DESC, p.id ASC
         """,
         countQuery = """
@@ -551,6 +664,7 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
           AND p.deletedAt IS NULL
           AND p.removalState = com.quickpitik.entity.RemovalState.NONE
           AND fp.aiPersonId IN :aiPersonIds
+          AND $OWNER_NOT_SUSPENDED_JPQL
         """,
     )
     fun findByEventAndPersonIds(
@@ -674,12 +788,13 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
     // upload/owner/admin counters retain their existing meaning.
     @Query("SELECT COUNT(p) FROM Photo p WHERE p.eventId = :eventId " +
         "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
-        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE")
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE AND " + OWNER_NOT_SUSPENDED_JPQL)
     fun countPublicForEvent(@Param("eventId") eventId: UUID): Long
 
     @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
         "AND p.status = com.quickpitik.entity.PhotoStatus.LIVE AND p.deletedAt IS NULL " +
-        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE GROUP BY p.eventId")
+        "AND p.removalState = com.quickpitik.entity.RemovalState.NONE AND " + OWNER_NOT_SUSPENDED_JPQL +
+        " GROUP BY p.eventId")
     fun countPublicByEventIds(@Param("eventIds") eventIds: Collection<UUID>): List<PublicEventPhotoCount>
 
     @Query("SELECT p.eventId AS eventId, COUNT(p) AS photoCount FROM Photo p WHERE p.eventId IN :eventIds " +
@@ -747,6 +862,19 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         photographerId: UUID,
         contentHashes: Collection<String>,
     ): List<Photo>
+
+    // Only the sweep may release held indexing work; the fence rechecks under the photo lock.
+    @Query(value = """
+        SELECT p.id FROM photos p
+        JOIN photo_work_outputs w ON w.token = p.indexing_work_token AND w.photo_id = p.id
+        WHERE p.indexing_work_expires_at < :cutoff
+          AND p.deleted_at IS NULL AND p.deletion_started_at IS NULL AND p.removal_state = 'NONE'
+          AND p.indexing_status IN ('PENDING', 'FAILED', 'PARTIAL') AND p.indexing_attempts < :maxAttempts
+          AND w.kind = 'INDEXING' AND w.provider = 'rekognition' AND w.finished_at IS NULL AND w.batch_id IS NULL
+          AND w.prior_cleanup_finished_at IS NOT NULL
+        ORDER BY p.indexing_work_expires_at, p.id
+        """, nativeQuery = true)
+    fun findEndedIndexingClaims(@Param("cutoff") cutoff: OffsetDateTime, @Param("maxAttempts") maxAttempts: Int, pageable: Pageable): List<UUID>
 
     // Reconciliation backlog: photos whose async indexing hasn't settled. The
     // cutoff skips photos the AFTER_COMMIT hot path is probably still handling,
@@ -843,6 +971,50 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("cutoff") cutoff: OffsetDateTime,
         pageable: Pageable,
     ): List<Photo>
+
+    // AA-R8 race proof: who and what a race's non-deleted photos show. HIDDEN (an admin hid it for a flag) proves nothing.
+    @Query(value = """
+        SELECT COUNT(DISTINCT p.photographer_id) AS "photographers", COUNT(*) AS "total",
+               COUNT(*) FILTER (WHERE p.indexing_status = 'INDEXED') AS "indexed",
+               COUNT(*) FILTER (WHERE p.indexing_status = 'INDEXED'
+                   AND EXISTS (SELECT 1 FROM photo_bibs b WHERE b.photo_id = p.id)) AS "withBib"
+        FROM photos p WHERE p.event_id = :eventId AND p.deleted_at IS NULL AND p.status <> 'HIDDEN'
+    """, nativeQuery = true)
+    fun raceProofCounts(@Param("eventId") eventId: UUID): RaceProofCounts
+
+    // AA-R8 same-bib check: other live events dated in [from, to] sharing at least :min bib numbers
+    // with this one, most shared first. Bib text only; no face data crosses events.
+    @Query(value = """
+        SELECT e.id AS "eventId", e.name AS "name", COUNT(DISTINCT mine.bib_number) AS "shared"
+        FROM photo_bibs mine
+        JOIN photos mp ON mp.id = mine.photo_id AND mp.event_id = :eventId AND mp.deleted_at IS NULL
+        JOIN photo_bibs theirs ON theirs.bib_number = mine.bib_number
+        JOIN photos tp ON tp.id = theirs.photo_id AND tp.event_id <> :eventId AND tp.deleted_at IS NULL
+        JOIN events e ON e.id = tp.event_id AND e.deleted_at IS NULL AND e.status <> 'DRAFT'
+            AND e.date BETWEEN :from AND :to
+        GROUP BY e.id, e.name
+        HAVING COUNT(DISTINCT mine.bib_number) >= :min
+        ORDER BY 3 DESC, e.id
+    """, nativeQuery = true)
+    fun eventsSharingBibs(
+        @Param("eventId") eventId: UUID,
+        @Param("from") from: LocalDate,
+        @Param("to") to: LocalDate,
+        @Param("min") min: Int,
+    ): List<SharedBibEvent>
+}
+
+interface RaceProofCounts {
+    val photographers: Long
+    val total: Long
+    val indexed: Long
+    val withBib: Long
+}
+
+interface SharedBibEvent {
+    val eventId: UUID
+    val name: String
+    val shared: Long
 }
 
 // Projection for the photographer "Download All" ZIP — see findActiveBundleRows.

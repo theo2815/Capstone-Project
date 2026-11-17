@@ -219,6 +219,8 @@ class StudioEarningsViewModel(application: Application) : AndroidViewModel(appli
                 if (!currentPayout(request, generation)) return@launch
                 val err = RetrofitClient.parseHttpError(e)
                 _payoutActionState.value = "Error: ${err?.message ?: RetrofitClient.parseError(e)}"
+                // A hold placed after the wallet loaded: refresh so the banner shows (as the website does).
+                if (err?.code == "PAYOUT_ON_HOLD") fetchEarningsAndTransactions()
             }
         }
     }

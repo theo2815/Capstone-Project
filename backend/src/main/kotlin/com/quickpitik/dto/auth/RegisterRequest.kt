@@ -21,4 +21,7 @@ data class RegisterRequest(
     val password: String,
 
     val role: Role,
+
+    // Optional and never required: old app builds omit it (C20).
+    val termsAccepted: Boolean? = null,
 )

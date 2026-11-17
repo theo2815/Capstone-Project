@@ -5,7 +5,7 @@ import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { AdminPayoutRow } from "@/components/admin/admin-payout-row";
+import { AdminPayoutRow, PayoutFlagLine } from "@/components/admin/admin-payout-row";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
 import { AdminPayoutBulkApproveModal } from "@/components/admin/admin-payout-bulk-approve-modal";
 import { AdminPayoutHoldModal } from "@/components/admin/admin-payout-hold-modal";
@@ -28,6 +28,7 @@ import {
 } from "@/hooks/use-admin-keyboard";
 import {
   payoutMethodLabel,
+  payoutActionsBlockedByHold,
   ADMIN_PAYOUT_STATUS_LABEL,
   type AdminPayoutCycle,
   type AdminPayoutStatus,
@@ -240,13 +241,15 @@ export function PayoutsQueue() {
   const totalSelected = selectedCycles.reduce((acc, c) => acc + c.amount, 0);
   const approveDisabled =
     selectedCycles.length === 0 ||
-    selectedCycles.some((c) => c.status === "approved");
+    selectedCycles.some((c) => c.status === "approved" || payoutActionsBlockedByHold(c));
   const approveDisabledReason =
     selectedCycles.length === 0
       ? null
       : selectedCycles.some((c) => c.status === "approved")
         ? "Some selected payouts are already approved"
-        : null;
+        : selectedCycles.some(payoutActionsBlockedByHold)
+          ? "Some selected payouts are on hold: open relevance flag"
+          : null;
 
   const selectionActive = selected.size > 0;
   const drawerEscDisabled =
@@ -496,7 +499,8 @@ export function PayoutsQueue() {
     verbs: openRow
       ? {
           E:
-            openRow.status === "pending_review" || openRow.status === "held"
+            (openRow.status === "pending_review" || openRow.status === "held") &&
+            !payoutActionsBlockedByHold(openRow)
               ? handleDrawerApprove
               : undefined,
           H:
@@ -853,7 +857,8 @@ function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
 }
 
 // Full per-status action matrix — mirrors AdminPayoutService.ensureFrom so a
-// shown button never 409s:
+// shown button never 409s (Approve, Mark processing and Mark paid also go grey
+// while the photographer's relevance hold is on; Hold and Reject stay):
 //   pending_review → Hold, Reject, Approve      approved → Hold, Reject, Mark processing, Mark paid
 //   processing     → Hold, Mark failed, Mark paid   held → Reject, Approve
 //   paid           → Mark returned               failed/returned/rejected/cancelled → none
@@ -886,6 +891,7 @@ function PayoutDrawerActions({
     "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
 
   const s = cycle.status;
+  const blocked = submitting || payoutActionsBlockedByHold(cycle);
 
   if (cycle.provider && cycle.provider !== "manual") {
     return <p className="font-sans text-sm text-slate-soft">Payment provider manages this transfer.</p>;
@@ -916,7 +922,7 @@ function PayoutDrawerActions({
         </button>
       )}
       {s === "approved" && (
-        <button type="button" disabled={submitting} onClick={onMarkProcessing} className={PILL}>
+        <button type="button" disabled={blocked} onClick={onMarkProcessing} className={PILL}>
           Mark processing
         </button>
       )}
@@ -926,12 +932,12 @@ function PayoutDrawerActions({
         </button>
       )}
       {(s === "approved" || s === "processing") && (
-        <button type="button" disabled={submitting} onClick={onMarkPaid} className={PILL}>
+        <button type="button" disabled={blocked} onClick={onMarkPaid} className={PILL}>
           Mark paid…
         </button>
       )}
       {(s === "pending_review" || s === "held") && (
-        <button type="button" disabled={submitting} onClick={onApprove} className={PRIMARY}>
+        <button type="button" disabled={blocked} onClick={onApprove} className={PRIMARY}>
           Approve
         </button>
       )}
@@ -948,6 +954,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
 
   return (
     <div className="space-y-10">
+      <PayoutFlagLine cycle={cycle} />
       {isReadyToSend && <ReadyToSendCard cycle={cycle} />}
       <section>
         <Kicker as="p" tone="soft" className="mb-3">

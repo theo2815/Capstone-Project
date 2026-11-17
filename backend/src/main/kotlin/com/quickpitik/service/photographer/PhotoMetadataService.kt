@@ -2,6 +2,8 @@ package com.quickpitik.service.photographer
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.PhotoMetadataProperties
+import com.quickpitik.config.RelevanceMode
+import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.dto.photos.PhotoMetadataDto
 import com.quickpitik.dto.photos.toDto
 import com.quickpitik.entity.Photo
@@ -13,6 +15,7 @@ import com.quickpitik.repository.PhotoMetadataRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.service.image.PhotoMetadataExtractor
 import com.quickpitik.service.image.hasRecordedTags
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
@@ -40,6 +43,8 @@ class PhotoMetadataService(
     private val transactions: TransactionTemplate,
     private val clock: Clock,
     @Qualifier("metadataProcessing") private val metadataPool: ThreadPoolTaskExecutor,
+    private val photographerSuspension: PhotographerSuspension,
+    private val relevance: RelevanceProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -63,8 +68,11 @@ class PhotoMetadataService(
     @Transactional(readOnly = true)
     fun metadataAccess(eventId: UUID, photos: Collection<Photo>, requesterUserId: UUID?): Map<UUID, String> {
         val photographerIds = photos.mapNotNullTo(mutableSetOf()) { it.photographerId }
-        val publicIds = if (photographerIds.isEmpty()) emptySet()
+        val sharing = if (photographerIds.isEmpty()) emptySet()
         else coverage.findPublicMetadataPhotographerIds(eventId, photographerIds).toSet()
+        // A suspended photographer's photos are off sale, so their metadata is not public (AA-I12b).
+        val publicIds = if (sharing.isEmpty()) sharing
+        else sharing - photographerSuspension.suspendedOwnerIds(photos.filter { it.photographerId in sharing })
         return photos.associate { photo ->
             photo.id to when {
                 photo.removalState == RemovalState.REMOVED || photo.deletionStartedAt != null -> "none"
@@ -181,19 +189,22 @@ class PhotoMetadataService(
     private fun extractClaimed(photoId: UUID, token: UUID, originalBytes: ByteArray, verifiedSizeBytes: Long? = null) {
         // Only parsing failures are terminal. A database outage leaves the
         // committed lease for recovery instead of mislabelling the bytes.
-        val fields = try {
-            originalBytes.inputStream().use(extractor::extract)
+        val extracted = try {
+            originalBytes.inputStream().use(extractor::extractWithMarker)
         } catch (ex: Exception) {
             log.warn("Metadata parsing failed for photo {} ({})", photoId, ex.javaClass.simpleName)
             null
         }
+        val fields = extracted?.fields
+        // R2-02: no marker is kept until relevance runs (notice before collection).
+        val marker = extracted?.xmpPhotoId?.takeIf { relevance.mode != RelevanceMode.OFF }
         val state = when {
             fields == null -> PhotoMetadataState.FAILED
             fields.hasRecordedTags() -> PhotoMetadataState.READY
             else -> PhotoMetadataState.EMPTY
         }
         transactions.executeWithoutResult {
-            repository.settle(photoId, token, EXTRACTOR_VERSION, state, fields, OffsetDateTime.now(clock), verifiedSizeBytes)
+            repository.settle(photoId, token, EXTRACTOR_VERSION, state, fields, OffsetDateTime.now(clock), verifiedSizeBytes, marker)
         }
     }
 

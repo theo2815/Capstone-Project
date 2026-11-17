@@ -12,10 +12,16 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.UUID
 
 interface EventRepository : JpaRepository<Event, UUID> {
     fun findBySlugAndDeletedAtIsNull(slug: String): Event?
+
+    // EventFaceExpiry: events whose face templates are still held and are due
+    // for deletion (dated on or before the cutoff, or deleted).
+    fun findByFacesDeletedAtIsNullAndDateLessThanEqual(cutoff: LocalDate): List<Event>
+    fun findByFacesDeletedAtIsNullAndDeletedAtIsNotNull(): List<Event>
 
     // Public read of one event (V46): a DRAFT — a pending or rejected
     // photographer submission — is not a public page. An UNLISTED live event
@@ -58,14 +64,18 @@ interface EventRepository : JpaRepository<Event, UUID> {
     // pickers (website, mobile, desktop) use this same query and rely on that,
     // so a foreign photographer never sees another's event there.
     // includeListed=true (sent only by the /events catalog and mobile runner
-    // discovery) also returns photographer events an admin listed (V89).
+    // discovery) also returns photographer events an admin listed (V89), unless
+    // that photographer is suspended (AA-I12a, = PhotographerSuspension).
+    // A hidden shared race (V96 hidden_at, AA-R1) leaves both; its slug still resolves.
     // Sentinel values keep every named parameter typed (Postgres rejects nullable
     // unknown-typed parameters with "function lower(bytea) does not exist").
     @Query(
         """
         SELECT e FROM Event e
         WHERE e.deletedAt IS NULL
-          AND (e.createdBy IS NULL OR (:includeListed = TRUE AND e.listedOnEvents = TRUE))
+          AND e.hiddenAt IS NULL
+          AND (e.createdBy IS NULL OR (:includeListed = TRUE AND e.listedOnEvents = TRUE
+               AND NOT EXISTS (SELECT su.id FROM User su WHERE su.id = e.createdBy AND su.suspendedAt IS NOT NULL)))
           AND e.status IN :statuses
           AND e.visibility = com.quickpitik.entity.EventVisibility.PUBLIC
           AND (:search = '' OR
@@ -131,4 +141,85 @@ interface EventRepository : JpaRepository<Event, UUID> {
     @Modifying
     @Query("UPDATE Event e SET e.photoCount = GREATEST(0, e.photoCount + :delta) WHERE e.id = :id")
     fun adjustPhotoCount(@Param("id") id: UUID, @Param("delta") delta: Int): Int
+
+    // AA-R8 race proof sweep: typed races whose upload window closed and that were never checked.
+    @Query(
+        """
+        SELECT e FROM Event e
+        WHERE e.eventType IS NOT NULL AND e.deletedAt IS NULL
+          AND e.status <> com.quickpitik.entity.EventStatus.DRAFT
+          AND e.proofCheckedAt IS NULL AND e.date <= :closedOnOrBefore
+        ORDER BY e.date, e.id
+        """,
+    )
+    fun findRacesDueForProof(@Param("closedOnOrBefore") closedOnOrBefore: LocalDate, pageable: Pageable): List<Event>
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Event e SET e.proofCheckedAt = :now WHERE e.id = :id AND e.proofCheckedAt IS NULL")
+    fun claimProofCheck(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // An admin approval or relist (admin_approved_at) always wins over a hide.
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+        """
+        UPDATE Event e SET e.hiddenAt = :now
+        WHERE e.id = :id AND e.eventType IS NOT NULL AND e.hiddenAt IS NULL AND e.adminApprovedAt IS NULL
+        """,
+    )
+    fun hideUnprovenRace(@Param("id") id: UUID, @Param("now") now: OffsetDateTime): Int
+
+    // AA-R3: every race create (and R5's edit) runs "lock, re-check, insert" under this one
+    // transaction-scoped lock, so two simultaneous creates cannot both miss each other.
+    @Query(value = "SELECT CAST(pg_advisory_xact_lock($RACE_CREATION_LOCK_KEY) AS text)", nativeQuery = true)
+    fun lockRaceCreation(): String?
+
+    // Duplicate candidates: live shared events in a date range, legacy admin events included.
+    @Query(
+        """
+        SELECT e FROM Event e
+        WHERE e.date BETWEEN :from AND :to AND e.deletedAt IS NULL AND e.createdBy IS NULL
+          AND e.reviewStatus <> com.quickpitik.entity.EventReviewStatus.REJECTED
+        """,
+    )
+    fun findRaceCandidates(@Param("from") from: LocalDate, @Param("to") to: LocalDate): List<Event>
+
+    @Query(
+        value = "SELECT event_id AS eventId, name_key AS nameKey FROM event_name_aliases WHERE event_id IN (:eventIds)",
+        nativeQuery = true,
+    )
+    fun findAliasKeys(@Param("eventIds") eventIds: Collection<UUID>): List<AliasKeyRow>
+
+    @Modifying
+    @Query(
+        value = """
+        INSERT INTO event_name_aliases (event_id, name_key, added_by) VALUES (:eventId, :nameKey, :addedBy)
+        ON CONFLICT (event_id, name_key) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertAlias(@Param("eventId") eventId: UUID, @Param("nameKey") nameKey: String, @Param("addedBy") addedBy: UUID): Int
+
+    // AA-R5: the submitter's race, locked for an edit. Rejected and deleted races are not editable.
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+        "SELECT e FROM Event e WHERE e.id = :id AND e.submittedBy = :submittedBy AND e.eventType IS NOT NULL " +
+            "AND e.deletedAt IS NULL AND e.reviewStatus <> com.quickpitik.entity.EventReviewStatus.REJECTED",
+    )
+    fun findRaceForSubmitterForUpdate(@Param("id") id: UUID, @Param("submittedBy") submittedBy: UUID): Event?
+
+    // AA-R4's daily create cap reads this.
+    @Query("SELECT COUNT(e) FROM Event e WHERE e.submittedBy = :submittedBy AND e.createdAt >= :since")
+    fun countRacesSubmittedSince(@Param("submittedBy") submittedBy: UUID, @Param("since") since: OffsetDateTime): Long
+
+    // AA-R11: the race price read fresh after the price locks, never from an entity loaded earlier.
+    @Query("SELECT e.pricePerPhoto FROM Event e WHERE e.id = :id")
+    fun findPricePerPhoto(@Param("id") id: UUID): java.math.BigDecimal?
+}
+
+// Not 78202: AdminTransitionConcurrencyIntegrationTest uses that key.
+const val RACE_CREATION_LOCK_KEY = 78301L
+
+interface AliasKeyRow {
+    fun getEventId(): UUID
+    fun getNameKey(): String
 }

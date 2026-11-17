@@ -27,10 +27,17 @@ import {
   type FlagStatus,
   canDismiss,
   canEscalate,
+  canConfirmHold,
   canHide,
+  canResolve,
   flagEventName,
   flagReasonLabel,
+  isRelevanceFlag,
+  relevanceConfirmText,
+  serverMessage,
+  type FlagConfirmKind,
 } from "@/lib/admin-flags";
+import { FlagRelevanceEvidence } from "@/components/admin/flag-relevance-evidence";
 import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
 import { formatLongDate } from "@/lib/format";
 
@@ -38,6 +45,8 @@ const DONE_LABEL = {
   hide: "Hidden",
   dismiss: "Dismissed",
   escalate: "Escalated",
+  hold: "Payouts on hold",
+  resolve: "Resolved",
 } as const;
 
 const STATUS_LABEL: Record<FlagStatus, string> = {
@@ -80,7 +89,7 @@ export function FlagsQueue() {
   // pushed off the end of the newest-first 200-row page by closed history.
   const openPage = useAdminFlags({ status: "open" });
   const allPage = useAdminFlags();
-  const { hide, dismiss, escalate, isPending, pendingAction } = useFlagActions();
+  const { hide, dismiss, escalate, resolve, confirmHold, isPending, pendingAction } = useFlagActions();
   const { showToast } = useToast();
 
   const [query, setQuery] = useState("");
@@ -88,7 +97,7 @@ export function FlagsQueue() {
   const submitting = isPending(rowId);
   const [drawerHideOpen, setDrawerHideOpen] = useState(false);
   const [drawerEscalateOpen, setDrawerEscalateOpen] = useState(false);
-  const [drawerConfirmDismiss, setDrawerConfirmDismiss] = useState(false);
+  const [drawerConfirm, setDrawerConfirm] = useState<FlagConfirmKind | null>(null);
 
   const effective = useMemo(() => {
     const openItems = openPage?.items ?? EMPTY_FLAGS;
@@ -121,7 +130,7 @@ export function FlagsQueue() {
   // closes), so a stale "Confirm dismiss" label never carries over to a
   // different flag.
   useEffect(() => {
-    setDrawerConfirmDismiss(false);
+    setDrawerConfirm(null);
   }, [rowId]);
 
   const filtered = useMemo(() => {
@@ -235,7 +244,7 @@ export function FlagsQueue() {
   });
 
   async function runDrawerAction(
-    verb: "hide" | "dismiss" | "escalate",
+    verb: keyof typeof DONE_LABEL,
     action: (id: string) => Promise<boolean>,
   ) {
     if (!openRow) return;
@@ -243,12 +252,15 @@ export function FlagsQueue() {
     try {
       if (!(await action(id))) return false;
       showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${id}` });
-      setRowId("");
+      // A hold leaves the flag open: stay on it to hide the batch next.
+      if (verb !== "hold") setRowId("");
       return true;
-    } catch {
+    } catch (error) {
       showToast({
         kind: "error",
-        message: `Could not ${verb} ${id} — check the current status before retrying.`,
+        message:
+          serverMessage(error) ??
+          `Could not ${verb} ${id} — check the current status before retrying.`,
       });
     }
   }
@@ -258,7 +270,17 @@ export function FlagsQueue() {
   }
 
   async function handleDrawerDismissConfirm() {
-    if (await runDrawerAction("dismiss", (id) => dismiss(id))) setDrawerConfirmDismiss(false);
+    if (await runDrawerAction("dismiss", (id) => dismiss(id))) setDrawerConfirm(null);
+  }
+
+  async function handleDrawerConfirm() {
+    if (drawerConfirm === "hold") {
+      if (await runDrawerAction("hold", (id) => confirmHold(id))) setDrawerConfirm(null);
+    } else if (drawerConfirm === "resolve") {
+      if (await runDrawerAction("resolve", (id) => resolve(id))) setDrawerConfirm(null);
+    } else {
+      await handleDrawerDismissConfirm();
+    }
   }
 
   async function handleDrawerEscalateSubmit(note: string | null) {
@@ -393,12 +415,12 @@ export function FlagsQueue() {
             <FlagDrawerActions
               submitting={submitting}
               flag={openRow}
-              confirmDismiss={drawerConfirmDismiss}
+              confirm={drawerConfirm}
               onHide={() => setDrawerHideOpen(true)}
-              onToggleConfirmDismiss={() =>
-                setDrawerConfirmDismiss((v) => !v)
+              onToggleConfirm={(kind) =>
+                setDrawerConfirm((c) => (c === kind ? null : kind))
               }
-              onConfirmDismiss={handleDrawerDismissConfirm}
+              onConfirm={handleDrawerConfirm}
               onEscalate={() => setDrawerEscalateOpen(true)}
             />
           }
@@ -526,20 +548,21 @@ function FlagSubtitle({ flag }: { flag: Flag }) {
 function FlagDrawerActions({
   submitting,
   flag,
-  confirmDismiss,
+  confirm,
   onHide,
-  onToggleConfirmDismiss,
-  onConfirmDismiss,
+  onToggleConfirm,
+  onConfirm,
   onEscalate,
 }: {
   submitting: boolean;
   flag: Flag;
-  confirmDismiss: boolean;
+  confirm: FlagConfirmKind | null;
   onHide: () => void;
-  onToggleConfirmDismiss: () => void;
-  onConfirmDismiss: () => void;
+  onToggleConfirm: (kind: FlagConfirmKind) => void;
+  onConfirm: () => void;
   onEscalate: () => void;
 }) {
+  const relevance = isRelevanceFlag(flag);
   if (!canDismiss(flag)) {
     return (
       <p className="font-sans text-sm text-slate-soft">
@@ -548,22 +571,33 @@ function FlagDrawerActions({
     );
   }
 
-  if (confirmDismiss) {
+  if (confirm) {
     return (
       <>
+        {(relevance || confirm === "hold") && (
+          <p className="basis-full text-right font-sans text-sm text-ink-soft">
+            {relevanceConfirmText(confirm)}
+          </p>
+        )}
         <button
           type="button" disabled={submitting}
-          onClick={onToggleConfirmDismiss}
+          onClick={() => onToggleConfirm(confirm)}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
         >
           Cancel
         </button>
         <button
           type="button" disabled={submitting}
-          onClick={onConfirmDismiss}
+          onClick={onConfirm}
           className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
         >
-          {flag.status === "hidden" ? "Confirm restore" : "Confirm dismiss"}
+          {confirm === "hold"
+            ? "Confirm hold"
+            : confirm === "resolve"
+              ? "Confirm resolve"
+              : flag.status === "hidden"
+                ? "Confirm restore"
+                : "Confirm dismiss"}
         </button>
       </>
     );
@@ -580,13 +614,31 @@ function FlagDrawerActions({
           Escalate…
         </button>
       )}
+      {canResolve(flag) && (
+        <button
+          type="button" disabled={submitting}
+          onClick={() => onToggleConfirm("resolve")}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+        >
+          Resolve
+        </button>
+      )}
       <button
         type="button" disabled={submitting}
-        onClick={onToggleConfirmDismiss}
+        onClick={() => onToggleConfirm("dismiss")}
         className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
       >
         {flag.status === "hidden" ? "Restore photo & dismiss" : "Dismiss"}
       </button>
+      {canConfirmHold(flag) && (
+        <button
+          type="button" disabled={submitting}
+          onClick={() => onToggleConfirm("hold")}
+          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+        >
+          Hold payouts
+        </button>
+      )}
       {canHide(flag) && (
         <button
           type="button" disabled={submitting}
@@ -675,6 +727,17 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
           )}
         </dl>
       </section>
+
+      {isRelevanceFlag(flag) && (
+        <>
+          {flag.payoutHoldAt && (
+            <p className="font-sans text-sm font-medium text-ink tnum">
+              Payouts on hold since {formatLongDate(flag.payoutHoldAt)}
+            </p>
+          )}
+          <FlagRelevanceEvidence flag={flag} />
+        </>
+      )}
 
       {flag.reviewerNote && (
         <section>

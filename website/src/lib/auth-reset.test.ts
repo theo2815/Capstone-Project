@@ -4,6 +4,8 @@ import { usePendingPaymentStore } from "@/store/pending-payment-store";
 import { useAuthStore } from "@/store/auth-store";
 import { useCartStore } from "@/store/cart-store";
 import { useSavedEventsStore } from "@/store/saved-events-store";
+import { api } from "@/lib/api";
+import { mergeCart } from "@/lib/api-cart";
 
 afterEach(() => { useAuthStore.getState().logout(); resetUserScopedStores(); });
 
@@ -19,6 +21,33 @@ it.each([false, true])("transfers only guest buffers across login (authenticated
   restore();
   expect(useCartStore.getState().items).toEqual(authenticated ? [] : [item]);
   expect(useSavedEventsStore.getState().ids).toEqual(authenticated ? [] : ["event"]);
+});
+
+it("after reset and sign-in hydrate, available comes from the server", async () => {
+  useCartStore.getState().setItems([{ photoId: "p1", eventId: "event", thumbnailUrl: "", price: 100 }]);
+  resetUserScopedStores();
+  expect(useCartStore.getState().items).toEqual([]);
+
+  const serverRow = { photoId: "p1", eventId: "event", thumbnailUrl: "", price: 100, available: false };
+  vi.spyOn(api, "post").mockResolvedValue([]);
+  vi.spyOn(api, "get").mockResolvedValue([serverRow]);
+  useCartStore.getState().setItems(await mergeCart([{ photoId: "p1", eventId: "event", thumbnailUrl: "", price: 100 }]));
+
+  expect(useCartStore.getState().items).toEqual([serverRow]);
+  vi.restoreAllMocks();
+});
+
+it("cart rows re-hydrate priceAtAdd from the server", async () => {
+  useCartStore.getState().setItems([{ photoId: "p1", eventId: "event", thumbnailUrl: "", price: 150, priceAtAdd: 150 }]);
+  resetUserScopedStores();
+
+  const serverRow = { photoId: "p1", eventId: "event", thumbnailUrl: "", price: 150, priceAtAdd: 125 };
+  vi.spyOn(api, "post").mockResolvedValue([]);
+  vi.spyOn(api, "get").mockResolvedValue([serverRow]);
+  useCartStore.getState().setItems(await mergeCart([{ photoId: "p1", eventId: "event", thumbnailUrl: "", price: 150, priceAtAdd: 150 }]));
+
+  expect(useCartStore.getState().items[0].priceAtAdd).toBe(125);
+  vi.restoreAllMocks();
 });
 
 it("clears the pending payment from memory and persistence on a session reset", async () => {

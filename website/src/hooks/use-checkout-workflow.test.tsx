@@ -72,8 +72,41 @@ it("creates a guest QR payment and persists the receipt context", async () => {
   expect(useCartStore.getState().items).toHaveLength(1);
   expect(api.post).toHaveBeenCalledWith("/orders", expect.objectContaining({
     recipientEmail: live.email, paymentMethod: "qrph",
-    items: [{ photoId: "photo-1", eventId: "event-1" }],
+    items: [{ photoId: "photo-1", eventId: "event-1", expectedPricePhp: 125 }],
   }), { headers: { "Idempotency-Key": expect.any(String) } });
+});
+
+it("order items carry the shown price as expectedPricePhp", async () => {
+  useCartStore.setState({ items: [
+    { photoId: "photo-1", eventId: "event-1", price: 125, thumbnailUrl: "" },
+    { photoId: "photo-2", eventId: "event-1", price: 150, thumbnailUrl: "" },
+  ] });
+  const { result } = await openPayment();
+  await act(async () => result.current.handlePay());
+
+  expect(api.post).toHaveBeenCalledWith("/orders", expect.objectContaining({
+    items: [
+      { photoId: "photo-1", eventId: "event-1", expectedPricePhp: 125 },
+      { photoId: "photo-2", eventId: "event-1", expectedPricePhp: 150 },
+    ],
+  }), expect.anything());
+});
+
+it("a price-changed answer refreshes the cart and opens no payment", async () => {
+  const message = "Photo price changed from ₱125.00 to ₱150. Refresh your cart and try again.";
+  vi.mocked(api.post).mockImplementation(async (path) => {
+    if (path === "/coupons/preview") {
+      return { code: null, discountTotal: 0, items: [], livePrices: [{ photoId: "photo-1", price: 150 }] } as never;
+    }
+    throw new ApiError([{ code: "CART_ITEM_PRICE_CHANGED", message }], 409);
+  });
+  const { result } = await openPayment();
+  await act(async () => result.current.handlePay());
+
+  expect(result.current.step).toBe("payment");
+  expect(result.current.outcome).toEqual({ kind: "error", message });
+  expect(usePendingPaymentStore.getState().pending).toBeNull();
+  expect(useCartStore.getState().items[0].price).toBe(150);
 });
 
 it("restores a pending guest payment with its original amount and recipient", async () => {

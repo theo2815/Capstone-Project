@@ -49,6 +49,7 @@ interface PhotoRemovalHistoryRepository : Repository<PhotoRemovalHistory, UUID> 
     fun countByRequestId(requestId: UUID): Long
     fun existsByRequestIdAndAction(requestId: UUID, action: String): Boolean
     fun existsByRequestIdAndItemIdAndReviewIdAndAction(requestId: UUID, itemId: UUID?, reviewId: UUID?, action: String): Boolean
+    fun existsByRequestIdAndItemIdAndActionAndOccurredAtAfter(requestId: UUID, itemId: UUID, action: String, after: Instant): Boolean
 
     @Modifying
     @Query(value = """

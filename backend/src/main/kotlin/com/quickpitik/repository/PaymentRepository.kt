@@ -22,6 +22,9 @@ interface PaymentRepository : JpaRepository<Payment, UUID> {
     // (multi-event cart split), so one cs_id maps to N Payment rows.
     fun findAllByProviderAndProviderRef(provider: String, providerRef: String): List<Payment>
 
+    // Batch of the above for one admin dispute page (DW-3).
+    fun findAllByProviderAndProviderRefIn(provider: String, providerRefs: Collection<String>): List<Payment>
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Payment p WHERE p.provider = :provider AND p.providerRef = :providerRef")
     fun findAllByProviderAndProviderRefForUpdate(

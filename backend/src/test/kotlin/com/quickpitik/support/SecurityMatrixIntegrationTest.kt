@@ -58,6 +58,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
     private lateinit var paymongoProperties: PaymongoProperties
 
     @Autowired
+    private lateinit var legalProperties: com.quickpitik.config.LegalProperties
+
+    @Autowired
     private lateinit var authService: AuthService
 
     @Autowired
@@ -80,12 +83,17 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(200, get("/actuator/health").statusCode())
         assertEquals(200, get("/api/v1/events").statusCode())
         assertEquals(200, get("/api/v1/regions").statusCode())
+        assertEquals(200, get("/api/v1/race-types").statusCode())
         // Guest checkout is permitAll: an empty body reaches the controller and
         // fails validation — it is not bounced by the filter chain.
         assertEquals(400, post("/api/v1/orders", "{}").statusCode())
 
         assertEquals(401, get("/actuator/metrics").statusCode())
         assertEquals(401, get("/api/v1/me/cart").statusCode())
+        // Reports need an account (AA-R9): one open report per account is the abuse limit.
+        val reportBody = """{"note":"This event never took place at all."}"""
+        assertEquals(401, post("/api/v1/me/reports/events/${UUID.randomUUID()}", reportBody).statusCode())
+        assertEquals(401, post("/api/v1/me/reports/photographers/some-handle", reportBody).statusCode())
         // Deliberately NOT in the permitAll list next to its /auth siblings.
         assertEquals(401, post("/api/v1/auth/resend-verification", "").statusCode())
         val me = get("/api/v1/auth/me")
@@ -161,6 +169,225 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals("FORBIDDEN", errorCode(forbidden))
         assertEquals(200, get("/api/v1/admin/users", admin).statusCode())
         assertEquals(200, get("/actuator/metrics", admin).statusCode())
+    }
+
+    // RV-L4: any signed-in user may accept the Terms; nobody else.
+    @Test
+    fun `terms acceptance needs a sign-in`() {
+        val body = """{"version":"${legalProperties.currentVersion}"}"""
+        assertEquals(401, post("/api/v1/me/terms-acceptance", body).statusCode())
+        val accepted = post("/api/v1/me/terms-acceptance", body, register(Role.PHOTOGRAPHER))
+        assertEquals(200, accepted.statusCode(), accepted.body())
+        assertEquals(legalProperties.currentVersion, json.readTree(accepted.body()).path("data").path("termsVersion").asText())
+        assertFalse(json.readTree(accepted.body()).path("data").path("termsAcceptanceRequired").asBoolean(true))
+    }
+
+    @Test
+    fun `another terms version is refused`() {
+        val refused = post("/api/v1/me/terms-acceptance", """{"version":"0.1"}""", register(Role.PHOTOGRAPHER))
+        assertEquals(409, refused.statusCode(), refused.body())
+        assertEquals("CONSENT_VERSION_MISMATCH", errorCode(refused))
+    }
+
+    @Test
+    fun `a missing terms version is a bad request`() {
+        val token = register(Role.PHOTOGRAPHER)
+        for (body in listOf("{}", """{"version":" "}""")) {
+            val response = post("/api/v1/me/terms-acceptance", body, token)
+            assertEquals(400, response.statusCode(), body)
+            assertEquals("VALIDATION_ERROR", errorCode(response), body)
+        }
+    }
+
+    // RV-3.2 part b: the admin's appeal routes are for admins only. The test app runs with the relevance mode off; since
+    // RVF-14 the evidence look and the decision answer in every mode.
+    @Test
+    fun `the relevance appeal admin routes are for admins only`() {
+        fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
+        val owner = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')",
+            "matrix-${UUID.randomUUID()}@test.local")
+        val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Rel Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
+            "matrix-${UUID.randomUUID()}")
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, owner)
+        val at = java.time.OffsetDateTime.parse("2003-03-04T05:06:07Z")
+        val case = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at, notice_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'JUNK_DUMP', 'AUTO_HIDE', 'HIDE_ALL', ?, ?, ?, ?)", batch, at, at, at, at, at)
+        val appeal = id("INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason) VALUES (?, ?, ?, 'mine')", case, batch, owner)
+        val list = "/api/v1/admin/relevance/appeals?status=OPEN"
+        val actions = listOf("/api/v1/admin/relevance/appeals/$appeal/evidence-opened" to "{}",
+            "/api/v1/admin/relevance/appeals/$appeal/decide" to """{"outcome":"LOST"}""")
+        val runner = register(Role.RUNNER)
+        val seller = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        assertEquals(401, get(list).statusCode())
+        for (token in listOf(runner, seller)) assertEquals(403, get(list, token).statusCode())
+        for ((path, body) in actions) {
+            assertEquals(401, post(path, body).statusCode(), path)
+            for (token in listOf(runner, seller)) assertEquals(403, post(path, body, token).statusCode(), path)
+        }
+        val listed = get(list, admin)
+        assertEquals(200, listed.statusCode())
+        assertTrue(appeal.toString() in listed.body())
+        for ((path, body) in actions) assertEquals(200, post(path, body, admin).statusCode(), path)
+        assertEquals("LOST", jdbc.queryForObject("SELECT status FROM relevance_appeals WHERE id = ?", String::class.java, appeal))
+    }
+
+    // RV-3.2a: a photographer's own relevance case and appeal, for photographers only. Another photographer's read and
+    // filing are 404, in every mode since RVF-14 (the test app runs with the mode off).
+    @Test
+    fun `the photographer relevance routes are for photographers only`() {
+        fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
+        val owner = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')",
+            "matrix-${UUID.randomUUID()}@test.local")
+        val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Rel Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
+            "matrix-${UUID.randomUUID()}")
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, owner)
+        val at = java.time.OffsetDateTime.parse("2003-03-04T05:06:07Z")
+        val case = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at, notice_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'JUNK_DUMP', 'AUTO_HIDE', 'HIDE_ALL', ?, ?, ?, ?)", batch, at, at, at, at, at)
+        val read = "/api/v1/me/photographer/relevance/cases/$case"
+        val appeal = "$read/appeal"
+        val body = """{"reason":"These are mine."}"""
+        val runner = register(Role.RUNNER)
+        val other = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        assertEquals(401, get(read).statusCode())
+        assertEquals(401, post(appeal, body).statusCode())
+        for (token in listOf(runner, admin)) {
+            assertEquals(403, get(read, token).statusCode())
+            assertEquals(403, post(appeal, body, token).statusCode())
+        }
+        val notOwn = get(read, other)
+        assertEquals(404 to "NOT_FOUND", notOwn.statusCode() to errorCode(notOwn))
+        val filed = post(appeal, body, other)
+        assertEquals(404 to "NOT_FOUND", filed.statusCode() to errorCode(filed))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM relevance_appeals WHERE case_id = ?", Int::class.java, case))
+    }
+
+    // RV-3.3: the photographer's blurry-photo list, hide and undo, for photographers only. An unknown case is 404 on every
+    // route, in every mode since RVF-14; the owner and case checks are RelevancePhotographerHideIntegrationTest.
+    @Test
+    fun `the photographer hide routes are for photographers only`() {
+        val base = "/api/v1/me/photographer/relevance/cases/${UUID.randomUUID()}"
+        val list = "$base/blurry?offset=0&limit=50"
+        // RV-3.4b: the photographer's own hides, read like the blurry list.
+        val hidden = "$base/hidden?offset=0&limit=50"
+        val writes = listOf("$base/hide", "$base/unhide")
+        val body = """{"photoIds":["${UUID.randomUUID()}"]}"""
+        val runner = register(Role.RUNNER)
+        val photographer = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        assertEquals(401, get(list).statusCode())
+        assertEquals(401, get(hidden).statusCode())
+        writes.forEach { assertEquals(401, post(it, body).statusCode(), it) }
+        for (token in listOf(runner, admin)) {
+            assertEquals(403, get(list, token).statusCode())
+            assertEquals(403, get(hidden, token).statusCode())
+            writes.forEach { assertEquals(403, post(it, body, token).statusCode(), it) }
+        }
+        val read = get(list, photographer)
+        assertEquals(404 to "NOT_FOUND", read.statusCode() to errorCode(read))
+        val hiddenRead = get(hidden, photographer)
+        assertEquals(404 to "NOT_FOUND", hiddenRead.statusCode() to errorCode(hiddenRead))
+        writes.forEach {
+            val refused = post(it, body, photographer)
+            assertEquals(404 to "NOT_FOUND", refused.statusCode() to errorCode(refused), it)
+        }
+    }
+
+    // RV-1.10: the Photo Relevance page's routes, with one real case and alert so the admin's answer is 200.
+    @Test
+    fun `the relevance admin routes are for admins only`() {
+        fun id(sql: String, vararg params: Any?): UUID = jdbc.queryForObject("$sql RETURNING id", UUID::class.java, *params)!!
+        val photographer = id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')",
+            "matrix-${UUID.randomUUID()}@test.local")
+        val event = id("INSERT INTO events (slug, name, date, location, status, visibility) VALUES (?, 'Rel Run', DATE '2003-03-04', 'Cebu', 'ACTIVE', 'PUBLIC')",
+            "matrix-${UUID.randomUUID()}")
+        val batch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event, photographer)
+        // Dated 2003 (test isolation): this current case must not look recent to other tests' queries.
+        val at = java.time.OffsetDateTime.parse("2003-03-04T05:06:07Z")
+        val case = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'COPIED', 'RECORD_ONLY', 'HIDE_ALL', ?, ?, ?)", batch, at, at, at, at)
+        val alert = id("INSERT INTO relevance_alerts (batch_id, case_id, kind, dedupe_key, would_have, photos, created_at) VALUES (?, ?, 'COPIED', ?, true, 40, ?)",
+            batch, case, "copied:$case", at)
+        val photo = id("INSERT INTO photos (event_id, photographer_id, s3_key, price_php, status) VALUES (?, ?, ?, 125, 'LIVE')",
+            event, photographer, "matrix/${UUID.randomUUID()}")
+        val reads = listOf("/api/v1/admin/relevance/cases?tab=hidden", "/api/v1/admin/relevance/cases/$case",
+            "/api/v1/admin/relevance/alerts?unseen=true", "/api/v1/admin/relevance/cases/$case/hidden-photos")
+        val seen = "/api/v1/admin/relevance/alerts/$alert/seen"
+        // RV-2.5a: the case actions, in an order the admin's calls all succeed (restore closes the case, so it is last).
+        // RV-2.5b: a current Can't tell case of a second batch for looks-fine and hide-batch.
+        val unsureBatch = id("INSERT INTO batch_relevance (event_id, photographer_id) VALUES (?, ?)", event,
+            id("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER')", "matrix-${UUID.randomUUID()}@test.local"))
+        val unsure = id("INSERT INTO relevance_cases (batch_id, trigger, upload_at, batch_photos, stage, verdict, applied_mode, action, created_at, decided_at, applied_at) " +
+            "VALUES (?, 'SEEDED', ?, 40, 'APPLIED', 'CANT_TELL', 'RECORD_ONLY', 'NONE', ?, ?, ?)", unsureBatch, at, at, at, at)
+        val hideBatch = "/api/v1/admin/relevance/cases/$unsure/hide-batch"
+        // RV-4.2: the case holds no payouts, so an admin is refused by its state check.
+        val endHold = "/api/v1/admin/relevance/cases/$case/end-hold"
+        // RV-4.5a: an admin reaches hold-payouts and is refused by its mode check, as on hide-batch.
+        val holdPayouts = "/api/v1/admin/relevance/cases/$case/hold-payouts"
+        val actions = listOf(seen, holdPayouts, "/api/v1/admin/relevance/cases/$case/keep-hidden",
+            "/api/v1/admin/relevance/cases/$case/photos/$photo/restore", "/api/v1/admin/relevance/cases/$case/restore",
+            hideBatch, "/api/v1/admin/relevance/cases/$unsure/looks-fine", endHold)
+        val runner = register(Role.RUNNER)
+        val seller = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        for (path in reads) {
+            assertEquals(401, get(path).statusCode(), path)
+            assertEquals(403, get(path, runner).statusCode(), path)
+            assertEquals(403, get(path, seller).statusCode(), path)
+        }
+        for (path in actions) {
+            assertEquals(401, post(path, "{}").statusCode(), path)
+            assertEquals(403, post(path, "{}", runner).statusCode(), path)
+            assertEquals(403, post(path, "{}", seller).statusCode(), path)
+        }
+        for (path in reads) assertEquals(200, get(path, admin).statusCode(), path)
+        for (path in actions) {
+            val response = post(path, "{}", admin)
+            // The test app runs with the relevance mode off, so an admin reaches hide-batch and is refused by its mode check.
+            if (path == hideBatch || path == holdPayouts) {
+                assertEquals(409, response.statusCode(), path)
+                assertTrue("RELEVANCE_ACTIONS_OFF" in response.body(), path)
+            } else if (path == endHold) {
+                assertEquals(409, response.statusCode(), path)
+                assertTrue("INVALID_STATE_TRANSITION" in response.body(), path)
+            } else assertEquals(200, response.statusCode(), path)
+        }
+    }
+
+    // RV-L7 part a: recording and clearing a photographer's withdrawal of the consent to automatic actions. The test app
+    // runs with the relevance mode off, which still stores and returns the date (rule 6).
+    @Test
+    fun `only an admin can set or clear the withdrawal`() {
+        val photographer = jdbc.queryForObject("INSERT INTO users (email, password_hash, name, role) VALUES (?, 'unused', 'Rel', 'PHOTOGRAPHER') RETURNING id",
+            UUID::class.java, "matrix-${UUID.randomUUID()}@test.local")!!
+        val path = "/api/v1/admin/relevance/photographers/$photographer/consent-withdrawal"
+        val runner = register(Role.RUNNER)
+        val seller = register(Role.PHOTOGRAPHER)
+        val admin = adminToken()
+
+        for (method in listOf("PUT", "DELETE")) {
+            assertEquals(401, call(method, path).statusCode(), method)
+            assertEquals(403, call(method, path, runner).statusCode(), method)
+            assertEquals(403, call(method, path, seller).statusCode(), method)
+        }
+        val withdrawal = jdbc.queryForObject("SELECT relevance_consent_withdrawn_at IS NULL FROM users WHERE id = ?", Boolean::class.java, photographer)
+        assertEquals(true, withdrawal, "a refused call stores nothing")
+        val set = call("PUT", path, admin)
+        assertEquals(200, set.statusCode())
+        val setData = json.readTree(set.body()).path("data")
+        assertEquals(photographer.toString(), setData.path("photographerId").asText())
+        assertTrue(setData.path("consentWithdrawnAt").isTextual, set.body())
+        val cleared = call("DELETE", path, admin)
+        assertEquals(200, cleared.statusCode())
+        val clearedAt = json.readTree(cleared.body()).path("data").path("consentWithdrawnAt")
+        assertTrue(clearedAt.isNull || clearedAt.isMissingNode, cleared.body())
+        assertEquals(404, call("PUT", "/api/v1/admin/relevance/photographers/${UUID.randomUUID()}/consent-withdrawal", admin).statusCode())
     }
 
     @Test
@@ -352,6 +579,18 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertTrue(responses.last().headers().firstValue("Retry-After").isPresent)
     }
 
+    // RD-6: admin only. (The admin bucket is the media-write one the intake test drains, so no admin row here.)
+    @Test
+    fun `runner suggestion review is admin only`() {
+        val path = "/api/v1/admin/photo-removal-requests/${UUID.randomUUID()}/suggestions"
+        val body = """{"commandId":"${UUID.randomUUID()}","expectedVersion":0,"dismiss":["${UUID.randomUUID()}"]}"""
+        assertEquals(401, post(path, body).statusCode())
+        for (t in listOf(register(Role.RUNNER), register(Role.PHOTOGRAPHER))) assertEquals(403, post(path, body, t).statusCode())
+        val list = "/api/v1/admin/photo-removal-requests?source=RUNNER"
+        assertEquals(401, get(list).statusCode())
+        assertEquals(403, get(list, register(Role.RUNNER)).statusCode())
+    }
+
     @Test
     fun `removal gallery browsing is not bound by the face-search policy`() {
         val token = adminToken()
@@ -402,6 +641,398 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
         assertEquals(404, post("$root/$id/responses", body, photographer).statusCode())
     }
 
+    @Test
+    fun `runner photo deletion routes are runner only and never cached`() {
+        val root = "/api/v1/me/runner/photo-removal-requests"
+        val eligibility = "$root/eligibility?eventId=${UUID.randomUUID()}"
+        val start = "$root/liveness-session"
+        val body = """{"eventId":"${UUID.randomUUID()}","biometricConsent":true,"consentVersion":"1.3"}"""
+        val runner = register(Role.RUNNER)
+        val others = listOf(register(Role.PHOTOGRAPHER), adminToken())
+        for (path in listOf("$root/reasons", eligibility)) {
+            assertEquals(401, get(path).statusCode())
+            for (t in others) assertEquals(403, get(path, t).statusCode())
+        }
+        assertEquals(401, post(start, body).statusCode())
+        for (t in others) assertEquals(403, post(start, body, t).statusCode())
+
+        val reasons = get("$root/reasons", runner)
+        assertEquals(200, reasons.statusCode())
+        assertTrue("no-store" in reasons.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(listOf("PRIVACY", "SAFETY", "NO_CONSENT", "OTHER"), json.readTree(reasons.body()).path("data").map { it.path("code").asText() })
+
+        // An unknown event is not eligible; the refusal comes before any AWS call.
+        val e = get(eligibility, runner)
+        assertEquals(200, e.statusCode())
+        assertEquals("EVENT_NOT_ELIGIBLE", json.readTree(e.body()).path("data").path("blockedReason").asText())
+        val started = post(start, body, runner)
+        assertEquals(404, started.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(started))
+        assertTrue("no-store" in started.headers().firstValue("Cache-Control").orElse(""))
+        // No consent tick: rejected at the edge.
+        assertEquals(400, post(start, body.replace("true", "false"), runner).statusCode())
+
+        // RD-4 submit: runner only, a required Idempotency-Key, never cached; an unknown event stops before any AWS call.
+        val submit = """{"sessionId":"sess","eventId":"${UUID.randomUUID()}","reasonCode":"PRIVACY"}"""
+        assertEquals(401, post(root, submit).statusCode())
+        for (t in others) assertEquals(403, post(root, submit, t).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(root, submit, runner)))
+        val filed = send(HttpRequest.newBuilder(uri(root)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(submit)), runner)
+        assertEquals(404, filed.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(filed))
+        assertTrue("no-store" in filed.headers().firstValue("Cache-Control").orElse(""))
+
+        // RD-5 list, detail and withdraw: runner only, never cached; an id that is not the runner's own is a 404.
+        val id = UUID.randomUUID()
+        val withdraw = "$root/$id/withdraw"
+        val version = """{"expectedVersion":0}"""
+        for (path in listOf(root, "$root/$id")) {
+            assertEquals(401, get(path).statusCode())
+            for (t in others) assertEquals(403, get(path, t).statusCode())
+        }
+        assertEquals(401, post(withdraw, version).statusCode())
+        for (t in others) assertEquals(403, post(withdraw, version, t).statusCode())
+        val mine = get(root, runner)
+        assertEquals(200, mine.statusCode())
+        assertTrue("no-store" in mine.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals(0, json.readTree(mine.body()).path("data").path("total").asInt(-1))
+        assertEquals(404, get("$root/$id", runner).statusCode())
+        assertEquals("INVALID_IDEMPOTENCY_KEY", errorCode(post(withdraw, version, runner)))
+        val notMine = send(HttpRequest.newBuilder(uri(withdraw)).header("Content-Type", "application/json")
+            .header("Idempotency-Key", UUID.randomUUID().toString()).POST(HttpRequest.BodyPublishers.ofString(version)), runner)
+        assertEquals(404, notMine.statusCode())
+        assertTrue("no-store" in notMine.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
+    fun `seller details routes are photographer only and private to their owner`() {
+        val path = "/api/v1/me/photographer/seller-details"
+        val form = multipart(mapOf("legalName" to "Juan Dela Cruz"))
+        assertEquals(401, get(path).statusCode())
+        assertEquals(401, form(path, null).statusCode())
+        for (token in listOf(register(Role.RUNNER), adminToken())) {
+            assertEquals(403, get(path, token).statusCode())
+            assertEquals(403, form(path, token).statusCode())
+        }
+
+        val (ownerToken, ownerId) = registerPhotographerWithId()
+        val other = register(Role.PHOTOGRAPHER)
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at, id_number_hmac) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now(), ?)",
+            ownerId, "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "seller-details/$ownerId/${UUID.randomUUID()}.jpg", "ab".repeat(32),
+        )
+        val mine = get(path, ownerToken)
+        assertEquals(200, mine.statusCode())
+        assertTrue("no-store" in mine.headers().firstValue("Cache-Control").orElse(""))
+        assertEquals("Juan Dela Cruz", json.readTree(mine.body()).path("data").path("legalName").asText())
+        // Old clients keep reading "submitted"; new clients read the detailed reviewState.
+        assertEquals("submitted", json.readTree(mine.body()).path("data").path("status").asText())
+        assertEquals("manual_review", json.readTree(mine.body()).path("data").path("reviewState").asText())
+        assertFalse("seller-details/" in mine.body(), "E1 must never carry a storage key")
+        assertFalse("ab".repeat(32) in mine.body() || "idNumber" in mine.body(), "E1 must never carry the ID number or its hash")
+        // AA-I6: the server's upload answer (gate off by default: manual review may upload), never the scores.
+        jdbc.update(
+            "UPDATE photographer_seller_details SET liveness_confidence = 71.40, face_similarity = 98.10, reason_codes = '[\"LIVENESS_LOW\"]'::jsonb WHERE user_id = ?",
+            ownerId,
+        )
+        val scored = get(path, ownerToken).body()
+        assertTrue(json.readTree(scored).path("data").path("uploadsAllowed").asBoolean())
+        assertTrue(json.readTree(scored).path("data").has("identityGateStartsOn"))
+        for (secret in listOf("reasonCodes", "livenessConfidence", "faceSimilarity", "LIVENESS_LOW", "71.4", "98.1")) {
+            assertFalse(secret in scored, "C3 must never carry $secret")
+        }
+        val theirs = get(path, other)
+        assertEquals(200, theirs.statusCode())
+        assertEquals("missing", json.readTree(theirs.body()).path("data").path("status").asText())
+        assertFalse(json.readTree(theirs.body()).path("data").path("uploadsAllowed").asBoolean(true))
+        assertFalse("Juan" in theirs.body())
+
+        // A photographer's incomplete form reaches the service and names the missing part.
+        val incomplete = form(path, other)
+        assertEquals(400, incomplete.statusCode())
+        assertEquals("VALIDATION_ERROR", errorCode(incomplete))
+    }
+
+    @Test
+    fun `race create, join and edit are photographer only and refused while self-serve races are off`() {
+        val create = "/api/v1/me/photographer/races"
+        val join = "/api/v1/me/photographer/races/${UUID.randomUUID()}/join"
+        val edit = "/api/v1/me/photographer/races/${UUID.randomUUID()}"
+        val form = multipart(mapOf("title" to "Cebu City Marathon", "date" to "2026-12-06", "location" to "Cebu",
+            "regionCode" to "region-7", "provinceCode" to "cebu", "eventType" to "ROAD_RACE"))
+        val patch = multipart(mapOf("title" to "Cebu South Marathon"), method = "PATCH")
+        assertEquals(401, form(create, null).statusCode())
+        assertEquals(401, post(join, "{}").statusCode())
+        assertEquals(401, patch(edit, null).statusCode())
+        val runner = register(Role.RUNNER)
+        assertEquals(403, form(create, runner).statusCode())
+        assertEquals(403, post(join, "{}", runner).statusCode())
+        assertEquals(403, patch(edit, runner).statusCode())
+
+        // The test profile keeps SELF_SERVE_RACES_ENABLED off: a photographer reaches the service and is refused.
+        val photographer = register(Role.PHOTOGRAPHER)
+        for (response in listOf(form(create, photographer), post(join, "{}", photographer), patch(edit, photographer))) {
+            assertEquals(403, response.statusCode())
+            assertEquals("SELF_SERVE_RACES_DISABLED", errorCode(response))
+        }
+    }
+
+    @Test
+    fun `the race price route is photographer only and refused while self-serve races are off`() {
+        val path = "/api/v1/me/photographer/events/${UUID.randomUUID()}/price"
+        val put = { token: String? ->
+            send(HttpRequest.newBuilder(uri(path)).header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("""{"pricePhp":150}""")), token)
+        }
+        assertEquals(401, put(null).statusCode())
+        assertEquals(403, put(register(Role.RUNNER)).statusCode())
+
+        val refused = put(register(Role.PHOTOGRAPHER))
+        assertEquals(409, refused.statusCode())
+        assertEquals("RACE_PRICE_NOT_ALLOWED", errorCode(refused))
+    }
+
+    @Test
+    fun `the live selfie session route is photographer only, needs consent and answers 503 with AI off`() {
+        val path = "/api/v1/me/photographer/seller-details/liveness-session"
+        val consent = """{"biometricConsent":true}"""
+        assertEquals(401, post(path, consent).statusCode())
+        assertEquals(403, post(path, consent, register(Role.RUNNER)).statusCode())
+
+        val photographer = register(Role.PHOTOGRAPHER)
+        for (body in listOf("""{"biometricConsent":false}""", "{}")) {
+            val refused = post(path, body, photographer)
+            assertEquals(400, refused.statusCode(), body)
+            assertEquals("VALIDATION_ERROR", errorCode(refused))
+            assertEquals("biometricConsent", json.readTree(refused.body()).path("errors").path(0).path("field").asText())
+        }
+        // The test profile runs AI off: the client offers "Have an admin check instead".
+        val off = post(path, consent, photographer)
+        assertEquals(503, off.statusCode())
+        assertEquals("LIVENESS_UNAVAILABLE", errorCode(off))
+        assertTrue("no-store" in off.headers().firstValue("Cache-Control").orElse(""))
+    }
+
+    @Test
+    fun `the live check route is photographer only, needs a manual review record, and shows no score or reason`() {
+        val path = "/api/v1/me/photographer/seller-details/live-check"
+        val session = "lv-${UUID.randomUUID()}"
+        // Own number and phone: the database is shared, and another test's would add REPEAT_ACCOUNT_MATCH (AA-I5).
+        val idNumber = "N01-12-${(100_000..999_999).random()}"
+        val phoneKey = "9${(100_000_000..999_999_999).random()}"
+        val body = """{"livenessSessionId":"$session","idNumber":"$idNumber"}"""
+        assertEquals(401, post(path, body).statusCode())
+        assertEquals(403, post(path, body, register(Role.RUNNER)).statusCode())
+
+        val (token, userId) = registerPhotographerWithId()
+        val noRecord = post(path, body, token)
+        assertEquals(409, noRecord.statusCode())
+        assertEquals("INVALID_STATE_TRANSITION", errorCode(noRecord))
+        assertEquals(400, post(path, """{"livenessSessionId":" ","idNumber":"N01-12-345678"}""", token).statusCode())
+        assertEquals(400, post(path, """{"livenessSessionId":"$session"}""", token).statusCode())
+
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', ?, ?, 'MANUAL_REVIEW', 1, now())",
+            userId, "seller-details/$userId/${UUID.randomUUID()}.jpg", "seller-details/$userId/${UUID.randomUUID()}.jpg",
+            "0$phoneKey", phoneKey,
+        )
+        jdbc.update(
+            "INSERT INTO liveness_sessions (session_id, user_id, purpose, consent_version, created_at) VALUES (?, ?, 'PHOTOGRAPHER_IDENTITY', '1.2', now())",
+            session, userId,
+        )
+        // The test profile runs AI off: the session is used up and the record stays with an admin.
+        val checked = post(path, body, token)
+        assertEquals(200, checked.statusCode(), checked.body())
+        val data = json.readTree(checked.body()).path("data")
+        assertEquals("manual_review", data.path("reviewState").asText())
+        assertEquals("submitted", data.path("status").asText())
+        val fields = data.fieldNames().asSequence().map { it.lowercase() }.toList()
+        assertTrue(fields.none { "reason" in it && it != "rejectionreason" || "score" in it || "confidence" in it || "similarity" in it }, fields.toString())
+        // The typed number is stored only as its keyed hash, and neither ever goes back on the wire.
+        val hash = jdbc.queryForObject("SELECT id_number_hmac FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId)
+        assertTrue(Regex("[0-9a-f]{64}").matches(hash.orEmpty()), hash)
+        assertFalse(idNumber in checked.body() || idNumber.replace("-", "") in checked.body() || hash!! in checked.body())
+        assertEquals("[\"AI_DISABLED\"]", jdbc.queryForObject(
+            "SELECT reason_codes::text FROM photographer_seller_details WHERE user_id = ?", String::class.java, userId,
+        )?.replace(" ", ""))
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM liveness_sessions WHERE session_id = ? AND consumed_at IS NOT NULL", Int::class.java, session,
+        ))
+        val again = post(path, body, token)
+        assertEquals(409, again.statusCode())
+        assertEquals("LIVENESS_SESSION_INVALID", errorCode(again))
+    }
+
+    @Test
+    fun `the admin profile approve route is admin only and answers 409 on a profile that is not held`() {
+        // R-10: the route came back for profiles an admin reset or rejected; any other profile is a 409.
+        val (photographerToken, photographerId) = registerPhotographerWithId()
+        val path = "/api/v1/admin/users/$photographerId/approve"
+        assertEquals(401, post(path, """{"expectedRevision":0}""").statusCode())
+        assertEquals(403, post(path, """{"expectedRevision":0}""", register(Role.RUNNER)).statusCode())
+        assertEquals(403, post(path, """{"expectedRevision":0}""", photographerToken).statusCode())
+        val notHeld = post(path, """{"expectedRevision":0}""", adminToken())
+        assertEquals(409, notHeld.statusCode())
+        assertEquals("CONFLICT", errorCode(notHeld))
+    }
+
+    @Test
+    fun `the admin same-race route is admin only`() {
+        // AA-R6: an admin folds a pending duplicate race into the race it repeats.
+        val path = "/api/v1/admin/events/${UUID.randomUUID()}/same-race"
+        assertEquals(401, post(path, "{}").statusCode())
+        assertEquals(403, post(path, "{}", register(Role.RUNNER)).statusCode())
+        assertEquals(403, post(path, "{}", register(Role.PHOTOGRAPHER)).statusCode())
+        val missing = post(path, "{}", adminToken())
+        assertEquals(404, missing.statusCode())
+        assertEquals("EVENT_NOT_FOUND", errorCode(missing))
+    }
+
+    @Test
+    fun `the admin duplicate-candidates route is admin only`() {
+        // AA-R7: the admin create form warns about races that look the same before creating one.
+        val path = "/api/v1/admin/events/duplicate-candidates?name=Cebu%20City%20Marathon&date=2026-12-06"
+        assertEquals(401, get(path).statusCode())
+        assertEquals(403, get(path, register(Role.RUNNER)).statusCode())
+        assertEquals(403, get(path, register(Role.PHOTOGRAPHER)).statusCode())
+        val ok = get(path, adminToken())
+        assertEquals(200, ok.statusCode(), ok.body())
+    }
+
+    @Test
+    fun `admin seller details routes are admin only`() {
+        val root = "/api/v1/admin/seller-details"
+        val (_, sellerId) = registerPhotographerWithId()
+        jdbc.update(
+            "INSERT INTO photographer_seller_details (user_id, legal_name, id_type, id_front_key, selfie_key, address, phone, phone_key, status, revision, submitted_at) " +
+                "VALUES (?, 'Juan Dela Cruz', 'PASSPORT', ?, ?, 'Cebu', '09171234567', '9171234567', 'MANUAL_REVIEW', 1, now())",
+            sellerId, "seller-details/$sellerId/${UUID.randomUUID()}.jpg", "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
+        )
+        val approve = """{"revision":1}"""
+        val reject = """{"revision":1,"reason":"blurry"}"""
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            val expected = if (token == null) 401 else 403
+            assertEquals(expected, get(root, token).statusCode())
+            assertEquals(expected, get("$root/$sellerId", token).statusCode())
+            assertEquals(expected, post("$root/$sellerId/approve", approve, token).statusCode())
+            assertEquals(expected, post("$root/$sellerId/reject", reject, token).statusCode())
+        }
+
+        val admin = adminToken()
+        val list = get("$root?status=submitted", admin)
+        assertEquals(200, list.statusCode())
+        assertTrue(sellerId.toString() in list.body())
+        assertFalse("seller-details/" in list.body(), "E3 must never carry a storage key")
+        val view = get("$root/$sellerId", admin)
+        assertEquals(200, view.statusCode())
+        assertTrue("no-store" in view.headers().firstValue("Cache-Control").orElse(""))
+        assertTrue(json.readTree(view.body()).path("data").path("files").path("idFront").asText().isNotBlank())
+        // E4 (AA-I8): the scores, reasons, reference link and repeat matches; never a storage key outside the links or the ID-number hash.
+        val (_, otherId) = registerPhotographerWithId()
+        jdbc.update(
+            "UPDATE photographer_seller_details SET id_number_hmac = ?, liveness_reference_key = ?, reason_codes = '[\"REPEAT_ACCOUNT_MATCH\"]'::jsonb, " +
+                "repeat_matches = ?::jsonb WHERE user_id = ?",
+            "cd".repeat(32), "seller-details/$sellerId/${UUID.randomUUID()}.jpg",
+            """[{"userId":"$otherId","matchedOn":["PHONE"]}]""", sellerId,
+        )
+        val rich = json.readTree(get("$root/$sellerId", admin).body()).path("data")
+        assertTrue(rich.path("files").path("livenessReference").asText().isNotBlank())
+        assertEquals(otherId.toString(), rich.path("repeatMatches").path(0).path("userId").asText())
+        assertEquals("PHONE", rich.path("repeatMatches").path(0).path("matchedOn").path(0).asText())
+        assertTrue(rich.path("hasIdNumber").asBoolean())
+        val outsideLinks = (rich.deepCopy<com.fasterxml.jackson.databind.node.ObjectNode>()).apply { remove("files") }.toString()
+        assertFalse("seller-details/" in outsideLinks, "E4 must carry storage keys only inside its signed links")
+        assertFalse("cd".repeat(32) in rich.toString() || "idNumberHmac" in rich.toString(), "E4 must never carry the ID-number hash")
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM admin_decision_log WHERE target_user_id = ? AND decision = 'seller_details_viewed'", Int::class.java, sellerId,
+        ))
+        assertEquals(400, post("$root/$sellerId/reject", """{"revision":1,"reason":"  "}""", admin).statusCode())
+        assertEquals(404, get("$root/${UUID.randomUUID()}", admin).statusCode())
+    }
+
+    @Test
+    fun `the payout hold confirm is admin only`() {
+        val route = "/api/v1/admin/flags/${UUID.randomUUID()}/payout-hold"
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            assertEquals(if (token == null) 401 else 403, post(route, "", token).statusCode())
+        }
+        val missing = post(route, "", adminToken())
+        assertEquals(404, missing.statusCode())
+        assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+    }
+
+    @Test
+    fun `the batch hide, its list and the single restore are admin only`() {
+        val flag = UUID.randomUUID()
+        val routes = listOf(
+            "POST" to "/api/v1/admin/flags/$flag/hide-batch",
+            "GET" to "/api/v1/admin/flags/$flag/hidden-photos",
+            "POST" to "/api/v1/admin/flags/$flag/hidden-photos/${UUID.randomUUID()}/restore",
+        )
+        for ((method, route) in routes) {
+            for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+                val response = if (method == "GET") get(route, token) else post(route, """{"eventId":"${UUID.randomUUID()}"}""", token)
+                assertEquals(if (token == null) 401 else 403, response.statusCode(), "$method $route")
+            }
+            val missing = if (method == "GET") get(route, adminToken()) else post(route, """{"eventId":"${UUID.randomUUID()}"}""", adminToken())
+            assertEquals(404, missing.statusCode(), "$method $route")
+            assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+        }
+    }
+
+    @Test
+    fun `the relevance evidence read is admin only`() {
+        val route = "/api/v1/admin/flags/${UUID.randomUUID()}/relevance"
+        for (token in listOf(null, register(Role.RUNNER), register(Role.PHOTOGRAPHER))) {
+            assertEquals(if (token == null) 401 else 403, get(route, token).statusCode())
+        }
+        val missing = get(route, adminToken())
+        assertEquals(404, missing.statusCode())
+        assertTrue("FLAG_NOT_FOUND" in missing.body(), missing.body())
+    }
+
+    @Test
+    fun `a known seller-details storage key is never served from local storage`() {
+        val key = "seller-details/${UUID.randomUUID()}/${UUID.randomUUID()}.jpg"
+        val path = Path.of("build/test-storage", key)
+        Files.createDirectories(path.parent)
+        Files.writeString(path, "synthetic ID photo")
+        try {
+            for (token in listOf(null, register(Role.PHOTOGRAPHER), adminToken())) {
+                assertTrue(get("/storage/$key", token).statusCode() in setOf(401, 403, 404), "token=$token")
+            }
+            assertTrue(get("/storage/SELLER-DETAILS/${key.substringAfter('/')}").statusCode() in setOf(401, 403, 404))
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Autowired
+    private lateinit var jdbc: org.springframework.jdbc.core.JdbcTemplate
+
+    private fun registerPhotographerWithId(): Pair<String, UUID> {
+        val email = "matrix-${UUID.randomUUID()}@test.local"
+        val token = authService.register(
+            RegisterRequest(name = "Matrix seller", email = email, password = "correct-horse-battery-staple-42", role = Role.PHOTOGRAPHER),
+        ).accessToken
+        return token to jdbc.queryForObject("SELECT id FROM users WHERE email = ?", UUID::class.java, email)!!
+    }
+
+    /** A real multipart body (text parts only): the role check must refuse it, not the binder. */
+    private fun multipart(fields: Map<String, String>, method: String = "POST"): (String, String?) -> HttpResponse<String> = { path, token ->
+        val boundary = "matrix-${UUID.randomUUID()}"
+        val body = fields.entries.joinToString("") { (name, value) ->
+            "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n"
+        } + "--$boundary--\r\n"
+        send(
+            HttpRequest.newBuilder(uri(path))
+                .header("Content-Type", "multipart/form-data; boundary=$boundary")
+                .method(method, HttpRequest.BodyPublishers.ofString(body)),
+            token,
+        )
+    }
+
     private fun adminToken(): String {
         val response = authService.login(LoginRequest(email = adminEmail, password = adminPassword))
         assertFalse(response.mfaRequired, "the bootstrap admin has no MFA enrolled")
@@ -418,6 +1049,9 @@ class SecurityMatrixIntegrationTest : PostgresIntegrationTest() {
                 .POST(HttpRequest.BodyPublishers.ofString(body)),
             token,
         )
+
+    private fun call(method: String, path: String, token: String? = null): HttpResponse<String> =
+        send(HttpRequest.newBuilder(uri(path)).method(method, HttpRequest.BodyPublishers.noBody()), token)
 
     private fun send(builder: HttpRequest.Builder, token: String?): HttpResponse<String> {
         token?.let { builder.header("Authorization", "Bearer $it") }

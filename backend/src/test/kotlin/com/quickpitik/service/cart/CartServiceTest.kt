@@ -2,6 +2,7 @@ package com.quickpitik.service.cart
 
 import com.quickpitik.common.ErrorCodes
 import com.quickpitik.config.StorageProperties
+import com.quickpitik.dto.cart.MergeCartItem
 import com.quickpitik.entity.CartItemEntity
 import com.quickpitik.entity.CartItemId
 import com.quickpitik.entity.Event
@@ -13,6 +14,7 @@ import com.quickpitik.exception.ValidationException
 import com.quickpitik.repository.CartItemRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.PhotoRepository
+import com.quickpitik.service.photos.PhotographerSuspension
 import com.quickpitik.service.storage.StorageService
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -38,6 +40,7 @@ class CartServiceTest {
     private lateinit var photoRepository: PhotoRepository
     private lateinit var eventRepository: EventRepository
     private lateinit var storageService: StorageService
+    private lateinit var suspension: PhotographerSuspension
     private lateinit var service: CartService
 
     private val userId = UUID.randomUUID()
@@ -49,12 +52,14 @@ class CartServiceTest {
         photoRepository = Mockito.mock(PhotoRepository::class.java)
         eventRepository = Mockito.mock(EventRepository::class.java)
         storageService = Mockito.mock(StorageService::class.java)
+        suspension = Mockito.mock(PhotographerSuspension::class.java)
         service = CartService(
             cartItemRepository,
             photoRepository,
             eventRepository,
             storageService,
             StorageProperties(),
+            suspension,
         )
 
         written.clear()
@@ -75,7 +80,7 @@ class CartServiceTest {
         val hidden = photo(event.id, status = PhotoStatus.HIDDEN)
         stub(listOf(hidden), listOf(event))
 
-        service.merge(userId, listOf(hidden.id to event.id))
+        service.merge(userId, items(hidden.id to event.id))
 
         assertEquals(emptyList(), written)
     }
@@ -86,7 +91,7 @@ class CartServiceTest {
         val live = photo(archived.id)
         stub(listOf(live), listOf(archived))
 
-        service.merge(userId, listOf(live.id to archived.id))
+        service.merge(userId, items(live.id to archived.id))
 
         assertEquals(emptyList(), written)
     }
@@ -102,7 +107,7 @@ class CartServiceTest {
 
         service.merge(
             userId,
-            listOf(good.id to open.id, hidden.id to open.id, fromArchived.id to archived.id),
+            items(good.id to open.id, hidden.id to open.id, fromArchived.id to archived.id),
         )
 
         assertEquals(listOf(good.id), written.map { it.id.photoId })
@@ -114,7 +119,7 @@ class CartServiceTest {
         val good = photo(open.id, price = BigDecimal("150.00"))
         stub(listOf(good), listOf(open))
 
-        service.merge(userId, listOf(good.id to open.id))
+        service.merge(userId, items(good.id to open.id))
 
         assertEquals(BigDecimal("150.00"), written.single().pricePhpAtAdd)
     }
@@ -172,10 +177,177 @@ class CartServiceTest {
         val free = photo(event.id, price = BigDecimal.ZERO)
         stub(listOf(free), listOf(event))
 
-        service.merge(userId, listOf(free.id to event.id))
+        service.merge(userId, items(free.id to event.id))
 
         assertEquals(emptyList(), written)
     }
+
+    // ─── AA-I12b: a suspended photographer's photos are not for sale ─────
+
+    private val suspended = UUID.randomUUID()
+
+    private fun suspendOwner() {
+        Mockito.`when`(suspension.suspendedOwnerIds(anyArg())).thenAnswer { inv ->
+            (inv.arguments[0] as Collection<*>).filterIsInstance<Photo>()
+                .mapNotNullTo(mutableSetOf()) { it.photographerId }.filterTo(mutableSetOf()) { it == suspended }
+        }
+    }
+
+    private fun cartRows(vararg photos: Photo) {
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(
+            photos.map { CartItemEntity(id = CartItemId(userId, it.id), eventId = it.eventId, pricePhpAtAdd = it.pricePhp) },
+        )
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+    }
+
+    @Test
+    fun `add refuses a suspended photographer's photo as not found`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        Mockito.`when`(photoRepository.findById(theirs.id)).thenReturn(Optional.of(theirs))
+
+        val ex = assertFailsWith<NotFoundException> { service.add(userId, theirs.id, event.id) }
+
+        assertEquals(ErrorCodes.PHOTO_NOT_FOUND, ex.code)
+        assertEquals(emptyList(), written)
+    }
+
+    @Test
+    fun `list drops a suspended photographer's photo by default and never deletes the row`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        val other = photo(event.id, photographer = UUID.randomUUID())
+        cartRows(theirs, other)
+        stub(listOf(theirs, other), listOf(event))
+
+        assertEquals(listOf(other.id), service.list(userId).map { it.photoId })
+        Mockito.verify(cartItemRepository, Mockito.never()).deleteByUserIdAndPhotoId(anyArg(), anyArg())
+    }
+
+    @Test
+    fun `list with includeUnavailable marks a suspended photographer's photo unavailable`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        val other = photo(event.id, photographer = UUID.randomUUID())
+        cartRows(theirs, other)
+        stub(listOf(theirs, other), listOf(event))
+
+        val items = service.list(userId, includeUnavailable = true).associateBy { it.photoId }
+
+        assertEquals(false, items.getValue(theirs.id).available)
+        assertEquals(true, items.getValue(other.id).available)
+    }
+
+    @Test
+    fun `merge skips a suspended photographer's photo`() {
+        suspendOwner()
+        val event = event(EventStatus.ACTIVE)
+        val theirs = photo(event.id, photographer = suspended)
+        val other = photo(event.id, photographer = UUID.randomUUID())
+        stub(listOf(theirs, other), listOf(event))
+
+        service.merge(userId, items(theirs.id to event.id, other.id to event.id))
+
+        assertEquals(listOf(other.id), written.map { it.id.photoId })
+    }
+
+    // ─── AA-R14: the add-time price is kept and shown beside the live price ─────
+
+    @Test
+    fun `merge keeps an existing row's snapshot`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        val row = CartItemEntity(id = CartItemId(userId, raised.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(raised), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        service.merge(userId, listOf(MergeCartItem(raised.id, open.id, priceAtAdd = BigDecimal("150.00"))))
+
+        assertEquals(BigDecimal("125.00"), written.single().pricePhpAtAdd)
+    }
+
+    @Test
+    fun `merge takes a valid guest snapshot`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        stub(listOf(raised), listOf(open))
+
+        service.merge(userId, listOf(MergeCartItem(raised.id, open.id, priceAtAdd = BigDecimal("125"))))
+
+        assertEquals(BigDecimal("125.00"), written.single().pricePhpAtAdd)
+    }
+
+    @Test
+    fun `merge ignores a guest snapshot above the live price`() {
+        val open = event(EventStatus.ACTIVE)
+        val above = photo(open.id, price = BigDecimal("150.00"))
+        val zero = photo(open.id, price = BigDecimal("150.00"))
+        stub(listOf(above, zero), listOf(open))
+
+        service.merge(
+            userId,
+            listOf(
+                MergeCartItem(above.id, open.id, priceAtAdd = BigDecimal("150.01")),
+                MergeCartItem(zero.id, open.id, priceAtAdd = BigDecimal.ZERO),
+            ),
+        )
+
+        assertEquals(listOf(BigDecimal("150.00"), BigDecimal("150.00")), written.map { it.pricePhpAtAdd })
+    }
+
+    @Test
+    fun `cart item carries priceAtAdd and the live price`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        val row = CartItemEntity(id = CartItemId(userId, raised.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(raised), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        val item = service.list(userId).single()
+
+        assertEquals(BigDecimal("125.00"), item.priceAtAdd)
+        assertEquals(BigDecimal("150.00"), item.price)
+    }
+
+    // AF-18 F5: an old app shows the live price; a drop it was shown becomes the stored price.
+    @Test
+    fun `list lowers a stored price above the live price and answers the lowered one`() {
+        val open = event(EventStatus.ACTIVE)
+        val dropped = photo(open.id, price = BigDecimal("80.00"))
+        val row = CartItemEntity(id = CartItemId(userId, dropped.id), eventId = open.id, pricePhpAtAdd = BigDecimal("100.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(row))
+        stub(listOf(dropped), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        val item = service.list(userId).single()
+
+        Mockito.verify(cartItemRepository).lowerPriceAtAdd(userId, dropped.id, BigDecimal("80.00"))
+        assertEquals(BigDecimal("80.00"), item.priceAtAdd)
+    }
+
+    @Test
+    fun `list never touches a stored price at or below the live price`() {
+        val open = event(EventStatus.ACTIVE)
+        val raised = photo(open.id, price = BigDecimal("150.00"))
+        val same = photo(open.id, price = BigDecimal("125.00"))
+        Mockito.`when`(cartItemRepository.findByUserId(userId)).thenReturn(listOf(
+            CartItemEntity(id = CartItemId(userId, raised.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00")),
+            CartItemEntity(id = CartItemId(userId, same.id), eventId = open.id, pricePhpAtAdd = BigDecimal("125.00")),
+        ))
+        stub(listOf(raised, same), listOf(open))
+        Mockito.`when`(storageService.presignedGetUrl(anyArg(), anyArg())).thenReturn("https://cdn/x.jpg")
+
+        service.list(userId)
+
+        Mockito.verify(cartItemRepository, Mockito.never()).lowerPriceAtAdd(anyArg(), anyArg(), anyArg())
+    }
+
+    private fun items(vararg pairs: Pair<UUID, UUID>) = pairs.map { (photoId, eventId) -> MergeCartItem(photoId, eventId) }
 
     private fun stub(photos: List<Photo>, events: List<Event>) {
         Mockito.`when`(photoRepository.findAllById(anyArg<Iterable<UUID>>())).thenReturn(photos)
@@ -194,11 +366,13 @@ class CartServiceTest {
         eventId: UUID,
         status: PhotoStatus = PhotoStatus.LIVE,
         price: BigDecimal = BigDecimal("125.00"),
+        photographer: UUID? = null,
     ): Photo = Photo(
         eventId = eventId,
         s3Key = "photos/${UUID.randomUUID()}.jpg",
         status = status,
         pricePhp = price,
+        photographerId = photographer,
     )
 
     private fun <T> anyArg(): T = Mockito.any()

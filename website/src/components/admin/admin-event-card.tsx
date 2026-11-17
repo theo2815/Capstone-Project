@@ -40,6 +40,9 @@ interface AdminEventCardProps {
   onEdit: (event: ListEvent) => void;
   onDelete: (event: ListEvent) => void;
   onSetListing?: (event: ListEvent, listed: boolean) => void;
+  /** AA-R17b shared race: whether it is hidden from /events. Undefined = not a race. */
+  raceHidden?: boolean;
+  onRaceListing?: (event: ListEvent, listed: boolean) => void;
 }
 
 export function AdminEventCard({
@@ -50,6 +53,8 @@ export function AdminEventCard({
   onEdit,
   onDelete,
   onSetListing,
+  raceHidden,
+  onRaceListing,
 }: AdminEventCardProps) {
   const dateLabel = formatShortDate(event.date);
   const cityUpper = event.city.toUpperCase();
@@ -101,6 +106,17 @@ export function AdminEventCard({
             Photographer event · {review.owner} · {REVIEW_LABEL[review.status]}
           </p>
         )}
+        {raceHidden && (
+          <div className="mt-3 space-y-2">
+            <span className="inline-block rounded-full border border-line-strong bg-bone-deep px-3 py-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink">
+              Hidden
+            </span>
+            {/* Review F36: say what hiding does and does not do. */}
+            <p className="font-sans text-sm text-ink-soft">
+              Off /events and the upload pickers. Its link still opens, and it still shows on its photographers&apos; public profiles.
+            </p>
+          </div>
+        )}
 
         <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-4 flex-wrap">
@@ -132,6 +148,16 @@ export function AdminEventCard({
                 />
                 Show on /events
               </label>
+            )}
+            {raceHidden !== undefined && onRaceListing && (
+              <button
+                type="button"
+                onClick={() => onRaceListing(event, raceHidden)}
+                disabled={!!pendingLabel}
+                className={actionBtn}
+              >
+                {raceHidden ? "Relist" : "Hide"}
+              </button>
             )}
           </div>
           {pendingLabel && <p role="status" className="font-sans text-sm text-slate">{pendingLabel}</p>}

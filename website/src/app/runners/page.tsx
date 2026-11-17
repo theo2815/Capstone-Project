@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ROUTES } from "@/lib/constants";
 import { SiteHeader } from "@/components/layout/site-header";
+import { LegalLinks } from "@/components/legal/legal-links";
 
 export const metadata: Metadata = {
   title: "QuickPitik — Find your race photos",
@@ -436,6 +437,7 @@ function Footer() {
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         QuickPitik &middot; Cebu, Philippines
       </p>
+      <LegalLinks />
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
         © 2026
       </p>
