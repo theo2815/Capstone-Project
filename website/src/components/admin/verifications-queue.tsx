@@ -353,6 +353,7 @@ export function VerificationsQueue() {
         title="Incomplete"
         caption="Settings still missing fields"
         trailing={`${incomplete.length} stuck`}
+        collapsed={incomplete.length === 0}
       >
         {incomplete.length === 0 ? (
           <p className="font-sans text-sm text-slate-soft">

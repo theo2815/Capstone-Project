@@ -7,12 +7,12 @@ import { AdminShellKeyboard } from "@/components/admin/admin-shell-keyboard";
 // Persistent shell for every /admin/* page. Diverges from <DashboardShell>
 // on layout width: admin goes full-bleed (no max-w-7xl) because queue +
 // table + photographer-list surfaces benefit from the extra real estate.
-// SiteHeader keeps its own max-w-7xl so the brand bar stays centered;
-// only the admin body fills the viewport.
+// The header goes full-bleed too, so the logo lines up with the rail on wide
+// screens (a centered brand bar sat ~90px right of the rail at 1440px).
 export function AdminShell({ children }: { children: ReactNode }) {
   return (
     <main className="bg-bone text-ink min-h-screen flex flex-col scroll-smooth">
-      <SiteHeader />
+      <SiteHeader fullWidth />
       <div className="md:hidden sticky top-[var(--site-header-h)] z-20">
         <AdminMobileStrip />
       </div>

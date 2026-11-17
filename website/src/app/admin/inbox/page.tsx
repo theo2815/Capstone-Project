@@ -64,11 +64,9 @@ function Header({ pendingCount }: { pendingCount: number }) {
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Today.
       </h1>
-      {/* Hidden on phones: it points at the desktop rail, and the chips explain themselves. */}
+      {/* Hidden on phones so the queue starts on the first screen. */}
       <p className="hidden md:block font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        {ADMIN_FLAGS_ENABLED
-          ? "Switch between Verifications, Event requests, Disputes, Flags, Payouts, and Relevance alerts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."
-          : "Switch between Verifications, Event requests, Disputes, Payouts, and Relevance alerts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."}
+        Everything waiting on an admin today, one queue at a time.
       </p>
     </header>
   );

@@ -15,12 +15,15 @@ type RightLink = { label: string; href: string };
 
 interface SiteHeaderProps {
   rightLink?: RightLink | null;
+  /** Span the full width instead of max-w-7xl, so the logo lines up with a full-bleed shell's rail. */
+  fullWidth?: boolean;
 }
 
 const DEFAULT_RIGHT_LINK: RightLink = { label: "Sign in", href: ROUTES.LOGIN };
 
 export function SiteHeader({
   rightLink = DEFAULT_RIGHT_LINK,
+  fullWidth = false,
 }: SiteHeaderProps) {
   const pathname = usePathname();
   const { user, isAuthenticated, isLoading } = useAuth();
@@ -45,7 +48,7 @@ export function SiteHeader({
     // size-9 bells/avatar are the tallest child, and guests don't get them),
     // so no single offset could sit flush in both states.
     <header className="sticky top-0 z-30 h-[var(--site-header-h)] bg-bone/85 backdrop-blur-md border-b border-line">
-      <div className="px-6 md:px-10 h-full flex items-center justify-between max-w-7xl mx-auto">
+      <div className={`px-6 md:px-10 h-full flex items-center justify-between ${fullWidth ? "" : "max-w-7xl mx-auto"}`}>
         <Link
           href={ROUTES.RUNNERS}
           className="flex items-center text-ink transition-opacity hover:opacity-75"

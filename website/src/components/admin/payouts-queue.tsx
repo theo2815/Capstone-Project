@@ -798,6 +798,7 @@ function PayoutSlab({
       title={title}
       caption={caption}
       trailing={`${totalCount} ${noun}`}
+      collapsed={totalCount === 0}
     >
       {totalCount === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{empty}</p>

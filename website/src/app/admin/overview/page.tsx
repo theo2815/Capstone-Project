@@ -194,8 +194,7 @@ function Header() {
         The week.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Eight metrics across every queue and the platform&apos;s last 30 days.
-        Open the Inbox for today&apos;s work.
+        Platform counts and the last 30 days. Today&apos;s work is in the Inbox.
       </p>
     </header>
   );

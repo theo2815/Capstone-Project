@@ -262,8 +262,7 @@ function Header({ total, pending }: { total: number; pending: number }) {
         Photographers.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Every photographer, every status. Click a row for the full profile
-        and admin actions.
+        Every photographer, by status.
       </p>
     </header>
   );
@@ -303,6 +302,7 @@ function DirectorySlab({
       title={title}
       caption={caption}
       trailing={`${totalCount} ${noun}`}
+      collapsed={totalCount === 0}
     >
       {totalCount === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{empty}</p>

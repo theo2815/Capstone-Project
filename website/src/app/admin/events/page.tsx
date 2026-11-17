@@ -257,6 +257,7 @@ export default function AdminEventsPage() {
             title={section.title}
             caption={section.caption}
             trailing={`${section.items.length} ${noun}`}
+            collapsed={section.items.length === 0}
           >
             {section.items.length === 0 ? (
               <p className="font-sans text-sm text-slate-soft">
@@ -336,9 +337,7 @@ function Header({
         </button>
       </div>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Lifecycle is derived from the date — set Title, Location, and Date and
-        the cards on /events plus the photographer upload picker update the
-        moment you save. Photographers have a 4-day upload window starting on
+        Every race on the platform. Photographers can upload for 4 days from
         race day.
       </p>
     </header>

@@ -21,7 +21,7 @@ export function AdminMobileStrip() {
   return (
     <div className="bg-bone/90 backdrop-blur-md border-b border-line">
       <nav aria-label="Admin sections" className="max-w-7xl mx-auto">
-        <ul className="flex gap-2 overflow-x-auto px-6 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <ul className="flex gap-2 overflow-x-auto px-6 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none]">
           {ADMIN_ROUTES.map((route) => {
             const isActive = isRouteActive(pathname, route);
             const isAttention =

@@ -11,6 +11,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Kicker } from "@/components/ui/kicker";
 import { RailTipPortal } from "@/components/ui/rail-tip-portal";
+import { KeyboardHintPill } from "@/components/admin/keyboard-hint-pill";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import type { SectionGuideEntry } from "@/lib/section-guide";
@@ -79,47 +80,47 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
   {
     href: ROUTES.ADMIN_RELEVANCE,
     label: "Photo Relevance",
-    number: "12",
+    number: "06",
     group: "queues",
     nestedPrefix: ROUTES.ADMIN_RELEVANCE,
   },
   {
     href: ROUTES.ADMIN_EVENTS,
     label: "Events",
-    number: "06",
+    number: "07",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_EVENTS,
   },
   {
     href: ROUTES.ADMIN_PHOTOGRAPHERS,
     label: "Photographers",
-    number: "07",
+    number: "08",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
   },
   {
     href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
     label: "Photo removals",
-    number: "11",
+    number: "09",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
   },
   {
     href: ROUTES.ADMIN_OVERVIEW,
     label: "Overview",
-    number: "08",
+    number: "10",
     group: "reports",
   },
   {
     href: ROUTES.ADMIN_SALES,
     label: "Sales",
-    number: "09",
+    number: "11",
     group: "reports",
   },
   {
     href: ROUTES.ADMIN_SECURITY,
     label: "Security",
-    number: "10",
+    number: "12",
     group: "reports",
     nestedPrefix: ROUTES.ADMIN_SECURITY,
   },
@@ -257,7 +258,7 @@ export function AdminRail() {
         </div>
       </nav>
 
-      <div className="mt-12 pt-6 border-t border-line">
+      <div className="mt-12 pt-6 border-t border-line flex items-center justify-between gap-3">
         <Kicker
           as="button"
           size="sm"
@@ -268,6 +269,7 @@ export function AdminRail() {
         >
           {tipsDisabled ? "Show tips" : "Hide tips"}
         </Kicker>
+        <KeyboardHintPill />
       </div>
     </aside>
   );

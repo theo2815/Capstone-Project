@@ -44,9 +44,8 @@ function Header({
         Payouts.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Photographer-requested payouts. Approve, hold with a reason, or mark a
-        payout paid after transferring manually. Tick checkboxes to act on
-        multiple at once.
+        Photographer payout requests. Approve, hold with a reason, or mark paid
+        after a manual transfer.
       </p>
     </header>
   );

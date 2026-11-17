@@ -124,6 +124,7 @@ export function PayoutReportsSection() {
           ? `${openCount} open · ${reports.length} total`
           : `${reports.length} total`
       }
+      collapsed={reportsQuery.isSuccess && reports.length === 0}
     >
       {reportsQuery.isPending ? <p role="status">Loading reports…</p> :
         reportsQuery.isError && !reportsQuery.data ? (
