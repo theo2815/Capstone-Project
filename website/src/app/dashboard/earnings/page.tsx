@@ -220,6 +220,7 @@ function PerEventSlab() {
       id="per-event"
       number="03"
       title="Per-event"
+      collapsed={!livePerEvent.error && !livePerEvent.isPaused && events.length === 0}
     >
       {livePerEvent.isPaused && events.length === 0 ? (
         <div role="alert" className="font-sans text-base text-slate">

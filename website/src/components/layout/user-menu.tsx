@@ -146,8 +146,9 @@ export function UserMenu({ user }: UserMenuProps) {
         onClick={() => setIsOpen((o) => !o)}
         className={cn(
           "size-9 rounded-full overflow-hidden",
-          // Admin pages spend their one fresh accent on queue signals, so the admin initials disc is ink.
-          !avatar && (user.role === "ADMIN" ? "bg-ink text-surface hover:bg-ink-soft" : "bg-fresh text-surface hover:bg-fresh-deep"),
+          // Admin and photographer pages spend their one fresh accent on their own
+          // signals (queue dot, Upload, LIVE), so those initials discs are ink.
+          !avatar && (user.role === "ADMIN" || user.role === "PHOTOGRAPHER" ? "bg-ink text-surface hover:bg-ink-soft" : "bg-fresh text-surface hover:bg-fresh-deep"),
           avatar && "bg-bone-deep",
           "font-mono uppercase tracking-[0.05em] text-[11px] font-semibold",
           "flex items-center justify-center",

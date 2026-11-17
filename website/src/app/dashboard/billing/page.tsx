@@ -40,16 +40,16 @@ import { cn, formatOrderRef, formatPrice } from "@/lib/utils";
 import { PAYOUT_METHOD_LABEL } from "@/store/photographer-settings-store";
 
 const STATUS_LABEL: Record<PayoutStatus, string> = {
-  paid: "PAID",
-  pending: "PENDING",
-  scheduled: "SCHEDULED",
-  held: "HELD",
-  approved: "APPROVED",
-  processing: "PROCESSING",
-  failed: "FAILED",
-  returned: "RETURNED",
-  rejected: "REJECTED",
-  cancelled: "CANCELLED",
+  paid: "Paid",
+  pending: "Pending",
+  scheduled: "Scheduled",
+  held: "Held",
+  approved: "Approved",
+  processing: "Processing",
+  failed: "Failed",
+  returned: "Returned",
+  rejected: "Rejected",
+  cancelled: "Cancelled",
 };
 
 const STATUS_TONE: Record<PayoutStatus, string> = {
@@ -597,13 +597,14 @@ function PayoutRow({
   return (
     <div className="py-5 md:py-6 flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
       <div className="flex-1 min-w-0">
-        <Kicker as="p" tnum className="flex items-center gap-2 flex-wrap">
-          <span>Payout of {formatLongDate(payout.requestedAt)}</span>
+        {/* Sentence case for row details; uppercase mono stays for labels. */}
+        <p className="font-sans text-base text-ink flex items-center gap-2 flex-wrap tnum">
+          <span>Payout of {sentenceCaseDate(formatLongDate(payout.requestedAt))}</span>
           <span className="text-slate-soft">·</span>
-          <span className={STATUS_TONE[payout.status]}>
+          <span className={cn("text-sm", STATUS_TONE[payout.status])}>
             {STATUS_LABEL[payout.status]}
           </span>
-        </Kicker>
+        </p>
         <p className="font-sans text-sm text-slate mt-2">
           {payout.status === "paid" ? (
             <>
@@ -712,6 +713,7 @@ function TransactionsSlab() {
           ? `${liveTx.total} · ${formatPrice(total)}`
           : undefined
       }
+      collapsed={!liveTx.error && !liveTx.isPaused && transactions.length === 0}
     >
       {liveTx.error && <div role="alert" aria-label="Transactions" className="mb-5 font-sans text-sm text-error">
         Couldn&apos;t load transactions. <button type="button" className="underline" onClick={liveTx.refetch}>Retry transactions</button>

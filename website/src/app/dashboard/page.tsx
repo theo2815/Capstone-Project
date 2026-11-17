@@ -14,7 +14,7 @@ import {
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import type {
   EventState,
@@ -331,8 +331,9 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
     >
       <div className="flex flex-col md:flex-row md:items-baseline md:justify-between gap-2 md:gap-6">
         <div className="flex-1 min-w-0">
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum flex items-center gap-2 flex-wrap">
-            <span>{formatLongDate(event.date, true)}</span>
+          {/* Sentence case for row details; uppercase mono stays for labels. */}
+          <p className="font-sans text-sm text-slate tnum flex items-center gap-2 flex-wrap">
+            <span>{sentenceCaseDate(formatLongDate(event.date, true))}</span>
             <span className="text-slate-soft">·</span>
             <StateChip state={event.state} />
           </p>
@@ -355,10 +356,10 @@ function FeaturedEventRow({ event }: { event: PhotographerEventSummary }) {
 }
 
 const STATE_LABEL: Record<EventState, string> = {
-  live: "LIVE",
-  open: "OPEN",
-  upcoming: "UPCOMING",
-  past: "ARCHIVED",
+  live: "Live now",
+  open: "Open for sale",
+  upcoming: "Upcoming",
+  past: "Archived",
 };
 
 function StateChip({ state }: { state: EventState }) {
@@ -369,7 +370,7 @@ function StateChip({ state }: { state: EventState }) {
           aria-hidden="true"
           className="size-1.5 rounded-full bg-fresh breathe"
         />
-        <span className="text-ink">LIVE</span>
+        <span className="text-ink">Live now</span>
       </span>
     );
   }
