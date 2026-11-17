@@ -1,0 +1,28 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { expect, it } from "vitest";
+
+// Every public page uses the one shared footer, not a private copy.
+const PAGES = [
+  "page.tsx",
+  "runners/page.tsx",
+  "photographers/page.tsx",
+  "events/page.tsx",
+  "events/[slug]/event-cockpit.tsx",
+  "verify/page.tsx",
+];
+
+it.each(PAGES)("%s mounts the shared footer", (page) => {
+  const source = readFileSync(path.join(__dirname, page), "utf8");
+  expect(source).toContain('from "@/components/layout/footer"');
+  expect(source).not.toMatch(/^function Footer\(/m);
+  expect(source).not.toContain("<footer");
+});
+
+it.each(["runners/page.tsx", "photographers/page.tsx"])(
+  "%s hides the footer CTA (it ends with its own)",
+  (page) => {
+    const source = readFileSync(path.join(__dirname, page), "utf8");
+    expect(source).toContain("showCta={false}");
+  },
+);

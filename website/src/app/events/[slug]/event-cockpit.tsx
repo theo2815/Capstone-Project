@@ -44,7 +44,7 @@ import { useSelfiesList } from "@/hooks/use-selfies";
 import { ApiError, searchRateLimitMessage } from "@/lib/api";
 import { PhotoAlertToggle } from "@/components/events/photo-alert-toggle";
 import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
-import { LegalLinks } from "@/components/legal/legal-links";
+import { Footer } from "@/components/layout/footer";
 import { BibNotice } from "@/components/legal/face-notice";
 import { useBibConsent, useTickRead } from "@/store/face-consent-store";
 
@@ -1161,22 +1161,6 @@ function PhotoPreviewMount({
       onBuyNow={handleBuyNow}
       onViewCart={handleViewCart}
     />
-  );
-}
-
-/* ─────────────── FOOTER ─────────────── */
-
-function Footer() {
-  return (
-    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-20 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <Kicker as="p" tone="soft">
-        QuickPitik · Cebu, Philippines
-      </Kicker>
-      <LegalLinks />
-      <Kicker as="p" tone="soft">
-        © 2026
-      </Kicker>
-    </footer>
   );
 }
 
