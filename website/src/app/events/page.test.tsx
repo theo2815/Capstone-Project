@@ -4,8 +4,10 @@ import { api } from "@/lib/api";
 import EventsPage from "./page";
 import type { ListEvent } from "@/types/event";
 
-function seed(page: ReactElement<{ children: ReactElement[] }>): ListEvent[] | undefined {
-  const suspense = page.props.children[1] as ReactElement<{ children: ReactElement<{ events?: ListEvent[] }> }>;
+function seed(root: ReactElement<{ children: ReactElement[] }>): ListEvent[] | undefined {
+  // root is a fragment: [<main>, <Footer>]; main holds [header, <Suspense>].
+  const main = root.props.children[0] as ReactElement<{ children: ReactElement[] }>;
+  const suspense = main.props.children[1] as ReactElement<{ children: ReactElement<{ events?: ListEvent[] }> }>;
   return suspense.props.children.props.events;
 }
 afterEach(() => vi.restoreAllMocks());
