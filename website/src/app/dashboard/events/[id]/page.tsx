@@ -261,17 +261,14 @@ export default function FocusedSharePage() {
         <Hero event={event} />
         {ownedUi}
         {raceUi}
-        {couponUi}
-        <RacePriceBand eventId={liveDetail.id} racePrice={liveDetail.racePrice} />
-        <EventMetadataVisibility event={liveDetail} />
+        {/* The photos lead (they were ~1,100px down, under the coupon, metadata
+            and share panels); event settings follow the gallery. */}
         {uploadsOpen && (
           <>
-            {liveDetail.photoCount > 0 && (
-              <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
-            )}
-            {/* Once photos exist the empty-state CTA is gone, so keep a way back to upload. */}
-            {liveDetail.photoCount > 0 && (
-              <div className="mt-8 flex justify-end">
+            <div className="mt-8 md:mt-10 mb-10 md:mb-12 flex flex-wrap items-end justify-between gap-6">
+              <Stats photographer={photographer} />
+              {/* Once photos exist the empty-state CTA is gone, so keep a way back to upload. */}
+              {liveDetail.photoCount > 0 && (
                 <Link
                   href={`${ROUTES.UPLOAD}/${liveDetail.id}`}
                   className={cn(BTN_SECONDARY, BTN_SIZE.sm, "inline-flex items-center gap-2")}
@@ -279,12 +276,19 @@ export default function FocusedSharePage() {
                   Upload more photos
                   <span aria-hidden="true">→</span>
                 </Link>
-              </div>
+              )}
+            </div>
+            {liveDetail.photoCount > 0 && (
+              <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
             )}
-            <Stats photographer={photographer} />
             <PhotoLibrary event={event} eventId={liveDetail.id} free={liveDetail.pricingMode === "free"} />
           </>
         )}
+        <div className="mt-12 md:mt-16">
+          {couponUi}
+          <RacePriceBand eventId={liveDetail.id} racePrice={liveDetail.racePrice} />
+          <EventMetadataVisibility event={liveDetail} />
+        </div>
       </div>
     </main>
   );
@@ -879,23 +883,24 @@ function ShareChip({
 
 function Stats({ photographer }: { photographer: PhotographerEventSummary }) {
   return (
-    <section className="mb-10 md:mb-12 flex flex-wrap items-baseline gap-x-8 gap-y-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+    // The event's three numbers, readable at a glance (they were small grey mono text).
+    <section aria-label="Event totals" className="flex flex-wrap items-baseline gap-x-8 gap-y-3 font-sans text-sm text-slate">
       <span>
-        <span className="text-ink">
+        <span className="block font-display text-2xl md:text-3xl font-semibold text-ink tnum">
           {photographer.photoCount.toLocaleString()}
-        </span>{" "}
+        </span>
         photos
       </span>
       <span>
-        <span className="text-ink">
+        <span className="block font-display text-2xl md:text-3xl font-semibold text-ink tnum">
           {photographer.salesCount.toLocaleString()}
-        </span>{" "}
+        </span>
         sold
       </span>
       <span>
-        <span className="text-ink">
+        <span className="block font-display text-2xl md:text-3xl font-semibold text-ink tnum">
           {formatPrice(photographer.revenueKept)}
-        </span>{" "}
+        </span>
         kept
       </span>
     </section>

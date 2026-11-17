@@ -117,11 +117,11 @@ function BreakdownSlab() {
   if (!e) {
     return (
       <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
-        <div className="grid grid-cols-3 gap-4 md:gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-8">
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0"
+              className="border-t border-line pt-4 first:border-0 first:pt-0 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4 md:pl-6 sm:first:border-0 sm:first:pl-0"
             >
               <Skeleton className="h-3 w-20" />
               <Skeleton className="h-8 md:h-10 w-24 mt-3" />
@@ -134,7 +134,7 @@ function BreakdownSlab() {
   }
   return (
     <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
-      <div className="grid grid-cols-3 gap-4 md:gap-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-8">
         <BreakdownStat
           kicker="This week"
           value={formatPrice(e.thisWeek)}
@@ -148,7 +148,7 @@ function BreakdownSlab() {
         <BreakdownStat
           kicker="Payout pending"
           value={formatPrice(e.payoutPending)}
-          caption={`Releases ${formatLongDate(e.payoutScheduledFor, true)}`}
+          caption={e.payoutScheduledFor ? `Releases ${formatLongDate(e.payoutScheduledFor, true)}` : "Not scheduled yet"}
         />
       </div>
 
@@ -172,6 +172,7 @@ function BreakdownSlab() {
   );
 }
 
+// Rows on phones (three ₱ amounts side by side overflowed a 375px screen), columns from sm.
 function BreakdownStat({
   kicker,
   value,
@@ -182,7 +183,7 @@ function BreakdownStat({
   caption: string;
 }) {
   return (
-    <div className="border-l border-line pl-4 md:pl-6 first:border-0 first:pl-0">
+    <div className="border-t border-line pt-4 first:border-0 first:pt-0 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4 md:pl-6 sm:first:border-0 sm:first:pl-0">
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
         {kicker}
       </p>

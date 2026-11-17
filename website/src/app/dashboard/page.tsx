@@ -233,18 +233,21 @@ function AvailableGlance({
 }
 
 function NextUpGlance() {
-  // Lists every upcoming event the photographer is assigned to, soonest
-  // first. Rows route into /upload/[eventId] which shows the "Uploads
-  // open on race day" panel until the event flips to live state.
-  // Live events are intentionally NOT surfaced here — the dashboard's
-  // action grid handles "happening now"; this section is forward-looking.
+  // Live races first (their row's button is "Upload"), then upcoming ones,
+  // soonest first. Live races used to be left out on the theory that the
+  // action grid covers "happening now", but its cards never name the race,
+  // so the one race a photographer should upload to today had no link here.
+  // Rows route into /upload/[eventId], which shows the "Uploads open on race
+  // day" panel until an upcoming event flips to live.
   const events = usePhotographerEvents();
   const isLoading = events === null;
   const upcoming = useMemo(
     () =>
       (events ?? [])
-        .filter((e) => e.state === "upcoming")
-        .sort((a, b) => a.date.localeCompare(b.date)),
+        .filter((e) => e.state === "live" || e.state === "upcoming")
+        .sort((a, b) =>
+          a.state === b.state ? a.date.localeCompare(b.date) : a.state === "live" ? -1 : 1,
+        ),
     [events],
   );
   const [shown, setShown] = useState(PAGE_SIZE.UPCOMING_INITIAL);

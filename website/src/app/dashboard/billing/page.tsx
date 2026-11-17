@@ -21,7 +21,7 @@ import {
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
-import { formatLongDate, formatSalesDate, salesMonthKey } from "@/lib/format";
+import { formatLongDate, formatSalesDate, salesMonthKey, sentenceCaseDate } from "@/lib/format";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import {
@@ -342,8 +342,8 @@ function RequestPayoutHero({
           </Kicker>
           <p className="font-sans text-sm text-ink-soft mt-2">
             After a recent payout-account change, new requests are paused until{" "}
-            <span className="font-mono tnum">
-              {formatLongDate(cooldownUntil)}
+            <span className="tnum">
+              {sentenceCaseDate(formatLongDate(cooldownUntil))}
             </span>
             . This protects your earnings if your account was compromised.
           </p>
@@ -493,8 +493,8 @@ function OpenRequestHero({
         {stage === "pending_review" && (
           <>
             Submitted{" "}
-            <span className="font-mono">
-              {formatLongDate(cycle.requestedAt)}
+            <span className="tnum">
+              {sentenceCaseDate(formatLongDate(cycle.requestedAt))}
             </span>{" "}
             · admin is reviewing
           </>
@@ -502,8 +502,8 @@ function OpenRequestHero({
         {stage === "approved" && (
           <>
             Approved{" "}
-            <span className="font-mono">
-              {formatLongDate(cycle.settledAt)}
+            <span className="tnum">
+              {sentenceCaseDate(formatLongDate(cycle.settledAt))}
             </span>{" "}
             · payment will be sent shortly
           </>
@@ -608,8 +608,8 @@ function PayoutRow({
           {payout.status === "paid" ? (
             <>
               Settled{" "}
-              <span className="font-mono tnum text-ink-soft">
-                {formatLongDate(payout.settledAt)}
+              <span className="tnum text-ink-soft">
+                {sentenceCaseDate(formatLongDate(payout.settledAt))}
               </span>
               <span className="text-slate-soft"> · </span>
               <span className="font-mono">{payout.reference}</span>

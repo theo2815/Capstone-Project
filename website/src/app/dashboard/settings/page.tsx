@@ -1044,8 +1044,11 @@ export default function SettingsPage() {
 
   return (
     <EditModeProvider key={sessionVersion}>
+      {/* Sections land below the sticky jump bar, not under it. */}
+      <div className="[&_section[id]]:scroll-mt-36">
       <PendingEditWatcher />
       <VerificationStatusPanel />
+      <SettingsJumpNav />
       <PublicProfileSlab />
       <WatermarkSlab />
       <HandleSlab />
@@ -1057,7 +1060,44 @@ export default function SettingsPage() {
       <SellerDetailsSlab />
       <ReadyToSubmitNudge />
       <EditModePill />
+      </div>
     </EditModeProvider>
+  );
+}
+
+const SETTINGS_SECTIONS: ReadonlyArray<[string, string]> = [
+  ["public-profile", "Profile"],
+  ["watermark", "Watermark"],
+  ["url", "Public URL"],
+  ["region", "Region"],
+  ["social", "Social"],
+  ["payout", "Payouts"],
+  ["coupon", "Coupons"],
+  ["metadata", "Metadata"],
+  ["seller-details", "Seller details"],
+];
+
+// Settings is one long page (~6,000px) of nine sections; this sticky bar
+// jumps straight to one instead of scrolling past the rest.
+function SettingsJumpNav() {
+  return (
+    <nav
+      aria-label="Settings sections"
+      className="sticky top-[var(--site-header-h)] z-20 -mx-1 mt-6 bg-bone border-b border-line"
+    >
+      <ul className="flex gap-1 overflow-x-auto px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_88%,transparent)] md:[mask-image:none] md:flex-wrap">
+        {SETTINGS_SECTIONS.map(([id, label]) => (
+          <li key={id} className="shrink-0">
+            <a
+              href={`#${id}`}
+              className="inline-flex items-center min-h-[44px] px-3 rounded-full font-sans text-sm text-slate hover:text-ink hover:bg-bone-deep transition-colors whitespace-nowrap"
+            >
+              {label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
 
@@ -2178,7 +2218,8 @@ function WatermarkSlab() {
             onChange={setWatermarkPlacement}
           />
         ) : (
-          <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative">
+          // Capped: at full width the empty sample took ~600px of the page.
+          <div className="rounded-2xl overflow-hidden bg-bone-deep border border-line aspect-[3/2] relative max-w-md">
             <SamplePhoto />
             <div className="absolute bottom-4 right-4 px-4 py-2 rounded-full border border-dashed border-line bg-bone/40 backdrop-blur-sm">
               <Kicker as="p">
