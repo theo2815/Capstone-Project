@@ -1026,6 +1026,8 @@ function UploadForm({
           done={accepted.length}
           inFlight={inFlight.length}
           validTotal={uploadBound.length}
+          failed={errored.length}
+          hidden={accepted.filter((e) => e.receiptStatus === "hidden").length}
           overallPct={overallPct}
           retryableErroredCount={retryableErroredCount}
           onClearAll={clearAll}
@@ -1047,6 +1049,8 @@ function StagedSection({
   done,
   inFlight,
   validTotal,
+  failed,
+  hidden,
   overallPct,
   retryableErroredCount,
   onClearAll,
@@ -1058,6 +1062,8 @@ function StagedSection({
   done: number;
   inFlight: number;
   validTotal: number;
+  failed: number;
+  hidden: number;
   overallPct: number;
   retryableErroredCount: number;
   onClearAll: () => void;
@@ -1106,6 +1112,8 @@ function StagedSection({
           done={done}
           inFlight={inFlight}
           validTotal={validTotal}
+          failed={failed}
+          hidden={hidden}
           pct={overallPct}
         />
       )}
@@ -1133,11 +1141,15 @@ function OverallProgress({
   done,
   inFlight,
   validTotal,
+  failed,
+  hidden,
   pct,
 }: {
   done: number;
   inFlight: number;
   validTotal: number;
+  failed: number;
+  hidden: number;
   pct: number;
 }) {
   const isComplete = pct >= 100 && validTotal > 0;
@@ -1164,6 +1176,8 @@ function OverallProgress({
               )}
             </span>
           )}
+          {failed > 0 && <span className="text-error"> · {failed.toLocaleString()} failed</span>}
+          {hidden > 0 && <span className="text-slate"> · {hidden.toLocaleString()} hidden</span>}
         </p>
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
           {pct}%

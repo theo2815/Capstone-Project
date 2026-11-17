@@ -383,6 +383,21 @@ it.each([
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("tells the batch's polite region how many uploads failed or are hidden", async () => {
+  upload.mockImplementation((_event, file: File) => {
+    if (file.name === "bad.jpg") return Promise.reject(new ApiError([{ code: "UPLOAD_CHECKSUM_MISMATCH", message: "Wrong bytes" }], 422));
+    if (file.name === "quiet.jpg") return Promise.resolve({ id: "photo-2", status: "hidden", uploadedAt: "now", thumbnailUrl: "", span: "default" });
+    return new Promise(() => {});
+  });
+  render(<FocusedUploadPage />);
+  const files = ["bad.jpg", "quiet.jpg", "wait.jpg"].map((name) => new File([name], name, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await screen.findByText("Hidden");
+  const polite = () => [...document.querySelectorAll('[aria-live="polite"]')].map((el) => el.textContent ?? "").join(" ");
+  await waitFor(() => expect(polite()).toMatch(/1 failed/));
+  expect(polite()).toMatch(/1 hidden/);
+});
+
 it("leaves an exhausted temporary 429 available for manual Retry", async () => {
   upload.mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Verification busy" }], 429, 1))
     .mockImplementation(() => new Promise(() => {}));

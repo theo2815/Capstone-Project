@@ -28,4 +28,22 @@ it("Next up lists the live race first, with an Upload link, then upcoming races 
   const rows = within(nextUp).getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
   expect(rows).toEqual(["Live Trail", "Soon Run", "Later Run"]);
   expect(within(nextUp).getByRole("link", { name: /Live Trail.*Upload/ })).toHaveAttribute("href", "/upload/live");
+  expect(await screen.findByText(/reach ₱500\.00 to request a payout/)).toBeInTheDocument();
+});
+
+it("Next up leaves out the photographer's own race that still waits for review", async () => {
+  useAuthStore.getState().setUser({ id: "p-1", role: "PHOTOGRAPHER", name: "Jessa", email: "p@example.test", createdAt: "2026-09-01" });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.spyOn(api, "get").mockImplementation((path) => {
+    if (path.includes("/payouts/balance")) return Promise.resolve({ unpaidBalance: 0, clearing: 0, reserved: 0, minimum: 500, hasOpenRequest: false, openRequest: null, accountCooldownUntil: null, primaryAccount: null });
+    return Promise.resolve({ items: [
+      { id: "waiting", name: "Waiting Run", date: "2026-11-18", state: "live", photoCount: 0, ownedByMe: true, reviewStatus: "pending" },
+      { id: "approved", name: "Approved Run", date: "2026-11-18", state: "live", photoCount: 0, ownedByMe: true, reviewStatus: "approved" },
+      { id: "live", name: "Live Trail", date: "2026-11-18", state: "live", photoCount: 4 },
+    ], total: 3, offset: 0, limit: 8 });
+  });
+  render(<QueryClientProvider client={client}><DashboardOverviewPage /></QueryClientProvider>);
+  const nextUp = (await screen.findByRole("heading", { name: "Next up" })).closest("section")!;
+  const rows = within(nextUp).getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+  expect(rows).toEqual(["Approved Run", "Live Trail"]);
 });

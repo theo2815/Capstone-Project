@@ -16,6 +16,7 @@ import { ROUTES } from "@/lib/constants";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { isOwnedEventLive } from "@/lib/photographer-events";
 import type {
   EventState,
   PhotographerEventSummary,
@@ -193,7 +194,7 @@ function AvailableGlance({
           No earnings yet.
         </p>
         <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-          Your first sale opens up the request flow — reach
+          Your first sale opens up the request flow — reach{" "}
           {formatPrice(minimum)} to request a payout.
         </p>
       </div>
@@ -244,7 +245,8 @@ function NextUpGlance() {
   const upcoming = useMemo(
     () =>
       (events ?? [])
-        .filter((e) => e.state === "live" || e.state === "upcoming")
+        // An owned race still waiting for review has nothing to upload to yet.
+        .filter((e) => (e.state === "live" || e.state === "upcoming") && (!e.ownedByMe || isOwnedEventLive(e)))
         .sort((a, b) =>
           a.state === b.state ? a.date.localeCompare(b.date) : a.state === "live" ? -1 : 1,
         ),
