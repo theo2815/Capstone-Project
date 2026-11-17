@@ -362,6 +362,20 @@ it("shows one status tab at a time with counts, and keeps the tab in the URL", a
   expect(navigation.replace).toHaveBeenLastCalledWith(expect.stringContaining("status=paid"), expect.anything());
 });
 
+it("clears the ticked payouts when the URL status changes (Back, Forward or a link)", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
+  const view = mount();
+  await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
+  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  const again = () => view.rerender(<QueryClientProvider client={client}><PayoutsQueue /><StepUpProvider /></QueryClientProvider>);
+  navigation.search = "status=held"; again();
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^Approve \d/ })).not.toBeInTheDocument();
+  navigation.search = ""; again();
+  expect(await screen.findByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeChecked();
+});
+
 it("clears the ticked payouts when the status tab changes", async () => {
   const user = userEvent.setup();
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);

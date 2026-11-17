@@ -155,6 +155,11 @@ export function PayoutsQueue() {
     });
   }, [byId]);
 
+  // Any tab change (buttons, Back/Forward, a ?status= link) drops the selection so bulk actions never reach off-screen rows.
+  useEffect(() => {
+    setSelected((prev) => (prev.size ? new Set() : prev));
+  }, [tab]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
@@ -540,7 +545,7 @@ export function PayoutsQueue() {
         label="Payout status"
         tabs={PAYOUT_TABS.map((key) => ({ key, label: PAYOUT_TAB_LABEL[key], count: tabCounts[key] }))}
         value={tab}
-        onChange={(next) => { setSelected(new Set()); setTab(next); }}
+        onChange={setTab}
       />
       {tab === "pending" && <PayoutSlab
         id="pending"
