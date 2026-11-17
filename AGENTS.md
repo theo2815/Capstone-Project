@@ -136,6 +136,7 @@ Project guides live in the vault under `Agent Skills/`. **Read the matching guid
 - **UI work on `mobile/`** → `Agent Skills/Mobile Design.md`.
 - **Apple-style motion/feel on any surface (`website/`, `desktop/`, `mobile/`)** → `Agent Skills/Apple Design.md`. **Opt-in only** — read it when the user explicitly asks for it; it does not replace the two defaults above.
 - **Capstone papers (SRS, SDD, SPMP, STD; live Google Docs)** — phrase-triggered ("the SRS", "the STD", "my paper", "review my section"): the work lives in the vault module `capstone-papers/` (index, tasks, decisions, registry) and follows `Agent Skills/Document Skill.md` in full (lanes: audit, plan, edit, verify, close; small-fix; run-logging; release). No paper source lives in this repo (the old `Papers-For-Capstone/SRS-QuickPitik.md`, v1.0 of May 2026, was removed on 2026-11-03; Document Skill hard rule 9).
+- **Unattended plan runs (a conductor session drives a worker session in an Orca tab)** — phrase-triggered ("you are the conductor", "conductor prompt", "run the plan through worker-1", "drive the worker") → `Agent Skills/Conductor.md`.
 
 (For Claude these auto-load via `.claude/rules/*`; other agents open the file by path. Same guide, either way.)
 
