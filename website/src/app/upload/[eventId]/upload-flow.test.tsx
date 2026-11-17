@@ -398,6 +398,16 @@ it("tells the batch's polite region how many uploads failed or are hidden", asyn
   expect(polite()).toMatch(/1 hidden/);
 });
 
+it("still announces failures when every upload of the batch fails", async () => {
+  upload.mockRejectedValue(new ApiError([{ code: "UPLOAD_CHECKSUM_MISMATCH", message: "Wrong bytes" }], 422));
+  render(<FocusedUploadPage />);
+  const files = ["a.jpg", "b.jpg"].map((name) => new File([name], name, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^2 failed$/));
+  expect(screen.getByRole("status")).not.toHaveTextContent(/confirmed/);
+  expect(screen.queryByText("0%")).not.toBeInTheDocument();
+});
+
 it("leaves an exhausted temporary 429 available for manual Retry", async () => {
   upload.mockRejectedValueOnce(new ApiError([{ code: "RATE_LIMITED", message: "Verification busy" }], 429, 1))
     .mockImplementation(() => new Promise(() => {}));

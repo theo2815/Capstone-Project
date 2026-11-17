@@ -1106,8 +1106,9 @@ function StagedSection({
       </div>
 
       {/* A batch can be entirely "already uploaded" (re-dragged folder) — then
-          nothing is upload-bound and a 0 / 0 bar would read as broken. */}
-      {validTotal > 0 && (
+          nothing is upload-bound and a 0 / 0 bar would read as broken. All-failed
+          batches still show the line, with only the failed count. */}
+      {(validTotal > 0 || failed > 0) && (
         <OverallProgress
           done={done}
           inFlight={inFlight}
@@ -1158,7 +1159,7 @@ function OverallProgress({
       <div className="flex items-baseline justify-between gap-4 mb-3">
         {/* The batch's single live region: per-row regions flooded screen readers on big batches. */}
         <p role="status" aria-live="polite" aria-atomic="true" className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
-          {isComplete ? (
+          {validTotal === 0 ? null : isComplete ? (
             <span className="text-fresh">
               All uploaded · {validTotal.toLocaleString()} confirmed
             </span>
@@ -1176,22 +1177,26 @@ function OverallProgress({
               )}
             </span>
           )}
-          {failed > 0 && <span className="text-error"> · {failed.toLocaleString()} failed</span>}
+          {failed > 0 && <span className="text-error">{validTotal > 0 && " · "}{failed.toLocaleString()} failed</span>}
           {hidden > 0 && <span className="text-slate"> · {hidden.toLocaleString()} hidden</span>}
         </p>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
-          {pct}%
-        </p>
+        {validTotal > 0 && (
+          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
+            {pct}%
+          </p>
+        )}
       </div>
-      <div className="h-1 bg-bone-deep rounded-full overflow-hidden">
-        <div
-          className={cn(
-            "h-full transition-[width] duration-300 ease-out",
-            isComplete ? "bg-fresh" : "bg-ink-soft",
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      {validTotal > 0 && (
+        <div className="h-1 bg-bone-deep rounded-full overflow-hidden">
+          <div
+            className={cn(
+              "h-full transition-[width] duration-300 ease-out",
+              isComplete ? "bg-fresh" : "bg-ink-soft",
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
