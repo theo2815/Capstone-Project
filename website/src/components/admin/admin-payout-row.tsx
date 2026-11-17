@@ -113,7 +113,8 @@ export function AdminPayoutRow({
           onClick={(e) => e.stopPropagation()}
           className="mt-1 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         />
-        <div className="min-w-0 flex-1">
+        {/* basis: on phones the name column keeps its line; amount + status wrap below. */}
+        <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] md:basis-0">
           <div className="flex items-baseline gap-3 flex-wrap">
             <h3 className="font-display text-lg md:text-xl font-medium text-ink truncate">
               {subjectLabel}
@@ -136,7 +137,7 @@ export function AdminPayoutRow({
           <PayoutFlagLine cycle={cycle} />
           {cycle.status === "held" && cycle.holdReason && (
             <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft mr-2">
                 Hold:
               </span>
               {cycle.holdReason}
@@ -144,7 +145,7 @@ export function AdminPayoutRow({
           )}
           {cycle.status === "rejected" && cycle.rejectedReason && (
             <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft mr-2">
                 Rejected:
               </span>
               {cycle.rejectedReason}
@@ -152,7 +153,7 @@ export function AdminPayoutRow({
           )}
           {cycle.status === "failed" && cycle.failedReason && (
             <p className="font-sans text-sm text-slate mt-2">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft mr-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft mr-2">
                 Failed:
               </span>
               {cycle.failedReason}
@@ -178,7 +179,7 @@ export function AdminPayoutRow({
           <p className="font-display text-lg text-ink tnum">
             {formatPrice(cycle.amount)}
           </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
+          <p className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft">
             {payoutMethodLabel(cycle.method)}
           </p>
         </div>

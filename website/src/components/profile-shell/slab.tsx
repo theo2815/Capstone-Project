@@ -31,11 +31,13 @@ export function Slab({
           <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum">
             {number}
           </span>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink shrink-0">
+          {/* A real h2 so screen readers get page h1 → section h2 → card h3. On
+              phones the title may wrap rather than run into the trailing count. */}
+          <h2 className="font-mono font-normal uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink min-w-0 md:shrink-0">
             {title}
-          </p>
+          </h2>
           {caption && (
-            <p className="hidden md:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
+            <p className="hidden md:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft min-w-0">
               {caption}
             </p>
           )}

@@ -132,7 +132,7 @@ export function AdminEventCard({
               type="button"
               onClick={() => onDelete(event)}
               disabled={!!pendingLabel}
-              className={actionBtn}
+              className={dangerBtn}
               aria-label={`Delete ${event.name}`}
             >
               Delete
@@ -164,7 +164,7 @@ export function AdminEventCard({
           {awaitingReview ? (
             <Link
               href={ROUTES.ADMIN_EVENT_REQUESTS}
-              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+              className="inline-flex items-center min-h-[44px] font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
               Review →
             </Link>
@@ -173,7 +173,7 @@ export function AdminEventCard({
               href={`/events/${event.slug}`}
               target="_blank"
               rel="noreferrer"
-              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
+              className="inline-flex items-center min-h-[44px] font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
               View ↗
             </Link>
@@ -184,8 +184,12 @@ export function AdminEventCard({
   );
 }
 
+// 44px tall so the row's actions are comfortable to tap (they were 20px).
 const actionBtn =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  "inline-flex items-center min-h-[44px] font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+
+// Delete is destructive, so it reads in the error colour (house BTN_DANGER tone).
+const dangerBtn = actionBtn.replace("text-ink hover:text-fresh", "text-error hover:text-error/80");
 
 function formatShortDate(iso: string) {
   const d = new Date(iso + "T00:00:00");

@@ -116,7 +116,7 @@ export function PayoutReportsSection() {
   return (
     <Slab
       id="reports"
-      number="05"
+      number="06"
       title="Reports from photographers"
       caption="Filed against payouts they didn't receive or expect"
       trailing={

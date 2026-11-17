@@ -1,6 +1,6 @@
 "use client";
 
-import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
+import { useAdminRouteCounts } from "@/components/admin/admin-rail";
 
 import { AdminKpiStrip } from "@/components/admin/admin-kpi-strip";
 import {
@@ -17,7 +17,6 @@ import { FlagsQueue } from "@/components/admin/flags-queue";
 import { PayoutsQueue } from "@/components/admin/payouts-queue";
 import { RelevanceAlertsInbox } from "@/components/admin/relevance/relevance-alerts-inbox";
 import { Kicker } from "@/components/ui/kicker";
-import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -35,11 +34,8 @@ export default function AdminInboxPage() {
   const active: InboxQueueType = isInboxQueueType(activeRaw)
     ? activeRaw
     : "verifications";
-  // "Waiting" = the two queues that block a photographer: verifications +
-  // event requests (V46). Disputes/payouts keep their own KPI-strip counts.
-  const pendingCount =
-    usePendingVerificationsCount() +
-    (useAdminKpis()?.pendingEventRequests ?? 0);
+  // The same total as the rail's "Queues · N open", so the two never disagree.
+  const pendingCount = useAdminRouteCounts().queueTotal;
 
   return (
     <>
@@ -63,12 +59,13 @@ function Header({ pendingCount }: { pendingCount: number }) {
   return (
     <header className="pb-6 md:pb-8">
       <Kicker as="p">
-        Inbox · <span className="tnum">{pendingCount}</span> waiting
+        Inbox · <span className="tnum">{pendingCount}</span> open
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Today.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
+      {/* Hidden on phones: it points at the desktop rail, and the chips explain themselves. */}
+      <p className="hidden md:block font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
         {ADMIN_FLAGS_ENABLED
           ? "Switch between Verifications, Event requests, Disputes, Flags, Payouts, and Relevance alerts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."
           : "Switch between Verifications, Event requests, Disputes, Payouts, and Relevance alerts with the chips below. Pick a metric to drill in, or use the rail for focus mode on a single queue."}
