@@ -356,7 +356,7 @@ function CockpitMode({
 
       <AboutStrip event={event} />
 
-      <Footer />
+      <Footer className="pb-24 md:pb-20" />
     </>
   );
 }
@@ -528,7 +528,7 @@ function EmptyCockpit({
 
       <AboutStrip event={event} />
 
-      <Footer />
+      <Footer className="pb-24 md:pb-20" />
     </>
   );
 }
@@ -1018,7 +1018,7 @@ function BrowseMode({
         />
       )}
 
-      <Footer />
+      <Footer className="pb-24 md:pb-20" />
     </section>
   );
 }

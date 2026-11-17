@@ -26,3 +26,8 @@ it.each(["runners/page.tsx", "photographers/page.tsx"])(
     expect(source).toContain("showCta={false}");
   },
 );
+
+it("event-cockpit keeps its footer clear of the sticky bars", () => {
+  const source = readFileSync(path.join(__dirname, "events/[slug]/event-cockpit.tsx"), "utf8");
+  expect(source.match(/<Footer className="pb-24 md:pb-20" \/>/g)).toHaveLength(3);
+});
