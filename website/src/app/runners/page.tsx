@@ -12,6 +12,7 @@ export const metadata: Metadata = {
 
 export default function RunnersPage() {
   return (
+    <>
     <main className="snap-y-mobile bg-paper text-ink relative">
       <SiteHeader />
 
@@ -46,10 +47,11 @@ export default function RunnersPage() {
 
       <FinalCta />
 
-      <Footer showCta={false} className="pb-24 md:pb-0" />
 
       <MobileStickyCta />
     </main>
+    <Footer showCta={false} className="pb-24 md:pb-0" />
+    </>
   );
 }
 

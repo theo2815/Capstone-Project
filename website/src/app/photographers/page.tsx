@@ -16,6 +16,7 @@ const BATCH_MY_PHOTOS_URL = "https://www.batchmyphotos.com/";
 
 export default function PhotographersPage() {
   return (
+    <>
     <main className="snap-y-mobile bg-paper text-ink relative">
       <SiteHeader />
 
@@ -104,10 +105,11 @@ export default function PhotographersPage() {
 
       <FinalCta />
 
-      <Footer showCta={false} className="pb-24 md:pb-0" />
 
       <MobileStickyCta />
     </main>
+    <Footer showCta={false} className="pb-24 md:pb-0" />
+    </>
   );
 }
 

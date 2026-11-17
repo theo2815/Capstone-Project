@@ -31,3 +31,17 @@ it("event-cockpit keeps its footer clear of the sticky bars", () => {
   const source = readFileSync(path.join(__dirname, "events/[slug]/event-cockpit.tsx"), "utf8");
   expect(source.match(/<Footer className="pb-24 md:pb-20" \/>/g)).toHaveLength(3);
 });
+
+// A footer inside <main> is not exposed as a footer landmark, so it goes after it.
+it.each(["page.tsx", "runners/page.tsx", "photographers/page.tsx", "events/page.tsx", "verify/page.tsx"])(
+  "%s renders the footer after </main>",
+  (page) => {
+    const source = readFileSync(path.join(__dirname, page), "utf8");
+    expect(source.indexOf("<Footer")).toBeGreaterThan(source.lastIndexOf("</main>"));
+  },
+);
+
+it("events/page.tsx hides the footer CTA (the visitor is already on /events)", () => {
+  const source = readFileSync(path.join(__dirname, "events/page.tsx"), "utf8");
+  expect(source).toContain("showCta={false}");
+});

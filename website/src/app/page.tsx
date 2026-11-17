@@ -38,6 +38,7 @@ export default function SplashPage() {
   if (!show) return <main className="min-h-screen bg-paper" />;
 
   return (
+    <>
     <main className="min-h-screen bg-paper flex flex-col">
       {/* ── Top bar ── */}
       <header className="border-b border-line">
@@ -95,8 +96,9 @@ export default function SplashPage() {
         </div>
       </section>
 
-      <Footer />
     </main>
+    <Footer />
+    </>
   );
 }
 

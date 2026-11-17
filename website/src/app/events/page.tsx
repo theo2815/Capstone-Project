@@ -20,6 +20,7 @@ export default async function EventsPage() {
   const events = await fetchPublicEventsCatalog().catch(() => undefined);
 
   return (
+    <>
     <main className="bg-bone text-ink relative">
       <SiteHeader />
 
@@ -27,8 +28,9 @@ export default async function EventsPage() {
         <EventsBrowser events={events} />
       </Suspense>
 
-      <Footer />
     </main>
+    <Footer showCta={false} />
+    </>
   );
 }
 
