@@ -6,6 +6,7 @@ import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import {
   BTN_PRIMARY,
   BTN_SECONDARY,
@@ -233,9 +234,7 @@ function RequestRow({
               className="w-full h-full object-cover"
             />
           ) : (
-            <p className="h-full flex items-center justify-center font-sans text-sm text-slate">
-              No cover photo
-            </p>
+            <LogoPlaceholder size="md" label="No cover photo yet" className="h-full" />
           )}
         </div>
         <Kicker as="p" tone="soft" tnum>

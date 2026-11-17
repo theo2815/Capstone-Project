@@ -26,7 +26,7 @@ import {
   disputeStatusTone,
 } from "@/lib/admin-disputes";
 import type { AdminDisputeView } from "@/lib/api-admin";
-import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { formatLongDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
 
@@ -328,7 +328,6 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <div className="grid grid-cols-1 sm:grid-cols-[10rem_1fr] gap-5 items-start">
           <DisputePhotoThumb
             thumbnailUrl={thumbnailUrl}
-            disputeId={dispute.id}
             alt={dispute.photoSnapshot.alt}
             onClick={() => setPreviewOpen(true)}
           />
@@ -479,12 +478,10 @@ function DecisionFacts({ dispute: d }: { dispute: Dispute }) {
 
 function DisputePhotoThumb({
   thumbnailUrl,
-  disputeId,
   alt,
   onClick,
 }: {
   thumbnailUrl: string | undefined;
-  disputeId: string;
   alt: string;
   onClick?: () => void;
 }) {
@@ -510,16 +507,7 @@ function DisputePhotoThumb({
     );
   }
   // Fallback for ghost rows (photo deleted, presigned URL not minted).
-  const cover = syntheticCoverGradient(disputeId);
-  return (
-    <div
-      className="aspect-[4/3] rounded-2xl border border-line"
-      style={{
-        background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-      }}
-      aria-label={alt}
-    />
-  );
+  return <LogoPlaceholder size="md" label={alt} className="aspect-[4/3] rounded-2xl border border-line" />;
 }
 
 function FieldRow({

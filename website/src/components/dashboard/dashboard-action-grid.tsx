@@ -11,6 +11,7 @@ import {
   usePhotographerEvents,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { formatPrice } from "@/lib/utils";
 import {
   BRAND_COLOR_HEX,
@@ -18,17 +19,10 @@ import {
 } from "@/store/photographer-settings-store";
 
 // 2×2 quick-action grid that anchors the dashboard overview. Each card
-// carries a visual signature drawn from real photographer data — photo-tone
+// carries a visual signature drawn from real photographer data — logo
 // strip / brand band + avatar / sparkline / event-state dot rows — so the
 // tile pays its own way without a heavy stat block. Replaces the prior
 // race-day cockpit hero.
-
-const PHOTO_TONE_VARS = [
-  "var(--ink)",
-  "var(--ink-soft)",
-  "var(--slate)",
-  "var(--slate-soft)",
-] as const;
 
 export function DashboardActionGrid() {
   const { user } = useAuth();
@@ -103,19 +97,12 @@ function CardCaption({
   );
 }
 
-// ─── Upload — photo-tone strip ────────────────────────────────────────────
+// ─── Upload — logo strip ────────────────────────────────────────────
 function UploadCard() {
   return (
     <CardShell href={ROUTES.DASHBOARD_UPLOAD}>
-      <div className="hidden sm:flex gap-1.5" aria-hidden="true">
-        {PHOTO_TONE_VARS.concat(PHOTO_TONE_VARS[0]).map((color, i) => (
-          <div
-            key={i}
-            className="flex-1 h-10 md:h-12 rounded-md"
-            style={{ backgroundColor: color }}
-          />
-        ))}
-      </div>
+      {/* The QuickPitik logo stands in for photos, like every "no picture yet" placeholder. */}
+      <LogoPlaceholder size="md" className="hidden sm:flex h-10 md:h-12 rounded-md" />
       <CardLabel>
         <span className="text-fresh">+</span> Upload photos
       </CardLabel>

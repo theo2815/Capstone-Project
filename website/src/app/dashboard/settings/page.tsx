@@ -22,6 +22,7 @@ import { Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { WatermarkPlacementEditor } from "@/components/dashboard/watermark-placement-editor";
 import { SellerDetailsSlab } from "@/components/dashboard/seller-details-slab";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { useSellerDetails } from "@/hooks/use-seller-details";
 import { reviewStateOf } from "@/lib/api-seller-details";
 import { CharCounter } from "@/components/ui/char-counter";
@@ -2289,18 +2290,9 @@ function WatermarkSlab() {
 }
 
 function SamplePhoto() {
-  // Bone-deep diagonal gradient as a stand-in for a real race photo. Backend
-  // will replace this preview with the photographer's most recent live photo.
-  return (
-    <div
-      className="size-full"
-      aria-hidden="true"
-      style={{
-        background:
-          "linear-gradient(135deg, var(--ink-soft) 0%, var(--slate) 45%, var(--bone-deep) 100%)",
-      }}
-    />
-  );
+  // Stand-in for a race photo until a watermark is uploaded: the QuickPitik
+  // logo, like every other "no picture yet" placeholder.
+  return <LogoPlaceholder size="lg" className="size-full" />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

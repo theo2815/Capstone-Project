@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import type { EventState, ListEvent } from "@/types/event";
 import { ROUTES } from "@/lib/constants";
 import type { EventReviewStatus } from "@/lib/photographer-mock";
@@ -78,9 +79,7 @@ export function AdminEventCard({
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : (
-          <span aria-hidden="true" className="font-mono text-[13px] tracking-[0.08em] text-slate">
-            {initials(event.name)}
-          </span>
+          <LogoPlaceholder size="sm" className="absolute inset-0" />
         )}
       </div>
       <div className="min-w-0 flex-1 basis-[240px]">
@@ -177,14 +176,6 @@ const STATE_TEXT: Record<EventState, string> = {
   past: "text-slate-soft",
 };
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter((w) => /^[A-Za-z0-9]/.test(w))
-    .slice(0, 3)
-    .map((w) => w[0].toUpperCase())
-    .join("");
-}
 
 // 44px tall so the row's actions are comfortable to tap (they were 20px).
 // Sentence case (proposal 11): mono uppercase is kept for labels only.
