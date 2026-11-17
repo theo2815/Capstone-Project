@@ -14,6 +14,25 @@ import { adminEventKeys } from "@/hooks/use-admin-events";
 import AdminEventsPage from "./page";
 import { useAdminEventActions } from "@/hooks/use-admin-events";
 
+// A tiny in-memory URL: the page keeps its status tab in ?status=.
+const nav = vi.hoisted(() => {
+  let search = "";
+  const listeners = new Set<() => void>();
+  return {
+    get: () => search,
+    set: (next: string) => { search = next; listeners.forEach((l) => l()); },
+    subscribe: (l: () => void) => { listeners.add(l); return () => listeners.delete(l); },
+  };
+});
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    usePathname: () => "/admin/events",
+    useSearchParams: () => new URLSearchParams(useSyncExternalStore(nav.subscribe, nav.get)),
+    useRouter: () => ({ replace: (url: string) => nav.set(url.split("?")[1] ?? ""), push: vi.fn() }),
+  };
+});
+
 let client: QueryClient;
 let rows = [adminEvent];
 const key = adminEventKeys.list(admin.id);
@@ -31,6 +50,7 @@ beforeEach(() => {
   vi.spyOn(api, "get").mockImplementation(async (path) => path === "/regions" ? eventRegions : { items: rows });
 });
 afterEach(() => {
+  nav.set("");
   clearAdminActionIntents(); vi.unstubAllGlobals();
   cleanup(); client.clear(); useAuthStore.getState().logout();
   useConfirmationStore.getState().close(useConfirmationStore.getState().active?.id ?? "", false); useToastStore.getState().clear(); vi.restoreAllMocks();

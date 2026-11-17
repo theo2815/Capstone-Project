@@ -189,13 +189,14 @@ it("the drawer subtitle has no empty place between two dots when region and city
 it("the list row has no leading dot when region and city are blank", async () => {
   rows = [{ ...adminUser, region: null, city: "" }]; client.setQueryData(key, rows);
   mount(true);
-  const line = (await screen.findByText(/^Joined/)).closest("p")!;
-  expect(line.textContent!.trim()).toMatch(/^Joined/);
+  // The details line now reads in sentence case: "joined Sep 2026 · …".
+  const line = (await screen.findByText(/^joined/)).parentElement!;
+  expect(line.textContent!.trim()).toMatch(/^joined/);
 });
 it("the list row keeps the city and its dot when the region is blank", async () => {
   rows = [{ ...adminUser, region: "", city: "Cebu" }]; client.setQueryData(key, rows);
   mount(true);
-  expect((await screen.findByText(/^Joined/)).closest("p")!.textContent!.trim()).toMatch(/^Cebu · Joined/);
+  expect((await screen.findByText(/^joined/)).parentElement!.textContent!.trim()).toMatch(/^Cebu ·\s*joined/);
 });
 it("the detail answer's hold wins over a stale list row", async () => {
   rows = [{ ...adminUser, adminHold: false }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
@@ -252,7 +253,7 @@ it("open-queue rows say they wait for the identity check and link to Seller deta
 });
 it("shows the join month for a backend timestamp instead of an invalid date", async () => {
   mount(true);
-  await waitFor(() => expect(document.body).toHaveTextContent("Joined SEP 2026"));
+  await waitFor(() => expect(document.body).toHaveTextContent("joined Sep 2026"));
   expect(document.body).not.toHaveTextContent(/invalid date/i);
 });
 it("does not send back a row ticked after the bulk rejection form opened", async () => {
