@@ -540,7 +540,7 @@ export function PayoutsQueue() {
         label="Payout status"
         tabs={PAYOUT_TABS.map((key) => ({ key, label: PAYOUT_TAB_LABEL[key], count: tabCounts[key] }))}
         value={tab}
-        onChange={setTab}
+        onChange={(next) => { setSelected(new Set()); setTab(next); }}
       />
       {tab === "pending" && <PayoutSlab
         id="pending"

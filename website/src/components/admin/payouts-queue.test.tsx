@@ -215,7 +215,10 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   rows = [{ ...payoutCycle, status: action === "hold" ? "held" : "pending_review", approvedBy: admin.id }];
   await act(async () => { request.resolve({ groupId: "batch", results: [{ id: payoutCycle.id, ok: true }] }); });
   await waitFor(() => expect(modal).not.toBeInTheDocument());
-  for (const box of screen.queryAllByRole("checkbox")) expect(box).not.toBeChecked();
+  // Approve leaves the row on this tab (unticked); hold moves it to the Held tab. Both fail if the row is wrong.
+  const box = screen.queryByRole("checkbox", { name: `Select payout ${payoutCycle.id}` });
+  if (action === "approve") expect(box).not.toBeChecked();
+  else expect(box).toBeNull();
   expect(screen.queryByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" })).not.toBeInTheDocument();
   expect(client.getQueryData(key)).toEqual(rows);
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain(action === "approve" ? "Approvals recorded" : "Held");
@@ -349,11 +352,25 @@ it("shows one status tab at a time with counts, and keeps the tab in the URL", a
   const user = userEvent.setup();
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "paid", paymentReference: "GC-1" }]; client.setQueryData(key, rows);
   mount();
-  const tabs = screen.getByRole("tablist", { name: "Payout status" });
-  expect(within(tabs).getByRole("tab", { name: /Pending review 1/ })).toHaveAttribute("aria-selected", "true");
-  expect(within(tabs).getByRole("tab", { name: /Paid 1/ })).toHaveAttribute("aria-selected", "false");
+  const tabs = screen.getByRole("group", { name: "Payout status" });
+  expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  expect(within(tabs).getByRole("button", { name: /Pending review 1/, pressed: true })).toBeInTheDocument();
+  expect(within(tabs).getByRole("button", { name: /Paid 1/, pressed: false })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select payout cycle-1" })).toBeInTheDocument();
   expect(screen.queryByRole("checkbox", { name: "Select payout cycle-2" })).not.toBeInTheDocument();
-  await user.click(within(tabs).getByRole("tab", { name: /Paid 1/ }));
+  await user.click(within(tabs).getByRole("button", { name: /Paid 1/ }));
   expect(navigation.replace).toHaveBeenLastCalledWith(expect.stringContaining("status=paid"), expect.anything());
+});
+
+it("clears the ticked payouts when the status tab changes", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
+  mount();
+  const tabs = screen.getByRole("group", { name: "Payout status" });
+  await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
+  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  await user.click(within(tabs).getByRole("button", { name: /Held 1/ }));
+  expect(screen.queryByRole("button", { name: /^Approve \d/ })).not.toBeInTheDocument();
+  await user.click(within(tabs).getByRole("button", { name: /Pending review 1/ }));
+  expect(screen.getByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeChecked();
 });
