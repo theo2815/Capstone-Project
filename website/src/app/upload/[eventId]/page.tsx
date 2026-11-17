@@ -390,6 +390,12 @@ function UploadGate({
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-3">
           Finish verification to start uploading.
         </p>
+        <Link
+          href={ROUTES.DASHBOARD_SETTINGS}
+          className="mt-4 inline-block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh"
+        >
+          Go to settings →
+        </Link>
       </div>
     );
   }
@@ -1029,7 +1035,9 @@ function UploadForm({
         />
       )}
 
-      {entries.length > 0 && <UploadMoreFooter href={newTabHref} />}
+      {entries.length > 0 && (
+        <UploadMoreFooter href={newTabHref} eventHref={`${ROUTES.DASHBOARD_EVENTS}/${event.id}`} />
+      )}
     </>
   );
 }
@@ -1136,7 +1144,8 @@ function OverallProgress({
   return (
     <div className="mb-8">
       <div className="flex items-baseline justify-between gap-4 mb-3">
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
+        {/* The batch's single live region: per-row regions flooded screen readers on big batches. */}
+        <p role="status" aria-live="polite" aria-atomic="true" className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
           {isComplete ? (
             <span className="text-fresh">
               All uploaded · {validTotal.toLocaleString()} confirmed
@@ -1173,7 +1182,7 @@ function OverallProgress({
   );
 }
 
-function UploadMoreFooter({ href }: { href: string }) {
+function UploadMoreFooter({ href, eventHref }: { href: string; eventHref: string }) {
   return (
     <section className="mt-12 md:mt-16 border-t border-line pt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
       <div className="max-w-md">
@@ -1184,6 +1193,12 @@ function UploadMoreFooter({ href }: { href: string }) {
           Open a fresh batch in a new tab — this tab keeps its history so you
           can track both at once.
         </p>
+        <Link
+          href={eventHref}
+          className="mt-3 inline-block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh"
+        >
+          See this event&apos;s photos →
+        </Link>
       </div>
       <a
         href={href}
@@ -1257,7 +1272,7 @@ const QueueRow = memo(function QueueRow({
           status === "checking") && (
           <span
             aria-hidden="true"
-            className="absolute inset-0 flex items-center justify-center bg-ink/30 font-mono text-[10px] tracking-[0.15em] uppercase text-bone tnum"
+            className="absolute inset-0 flex items-center justify-center bg-ink/30 font-mono text-[12px] tracking-[0.15em] uppercase text-bone tnum"
           >
             …
           </span>
@@ -1294,8 +1309,8 @@ const QueueRow = memo(function QueueRow({
         <p className="font-sans text-sm md:text-base text-ink truncate">
           {entry.file.name}
         </p>
-        <div className="mt-1 flex items-center gap-3" role="status" aria-live="polite">
-          <p className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum uppercase shrink-0">
+        <div className="mt-1 flex items-center gap-3">
+          <p className="font-mono text-[12px] tracking-[0.15em] text-slate-soft tnum uppercase shrink-0">
             {formatBytes(entry.file.size)}
           </p>
           {status === "uploading" ? (
@@ -1306,19 +1321,19 @@ const QueueRow = memo(function QueueRow({
               />
             </div>
           ) : status === "queued" || status === "checking" || status === "preparing" || status === "confirming" || status === "retry-wait" ? (
-            <p className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum uppercase">
+            <p className="font-mono text-[12px] tracking-[0.15em] text-slate-soft tnum uppercase">
               {status === "queued" ? "Queued" : status === "checking" ? "Checking…" : status === "preparing" ? "Preparing…" : status === "confirming" ? "Confirming…" : "Waiting for connection…"}
             </p>
           ) : status === "done" ? (
-            <p className={cn("font-mono text-[10px] tracking-[0.15em] tnum uppercase", entry.inTrash || entry.receiptStatus === "hidden" ? "text-slate" : "text-fresh")}>
+            <p className={cn("font-mono text-[12px] tracking-[0.15em] tnum uppercase", entry.inTrash || entry.receiptStatus === "hidden" ? "text-slate" : "text-fresh")}>
               {entry.inTrash ? "In your trash" : entry.receiptStatus === "processing" ? "Uploaded — preparing preview" : entry.receiptStatus === "hidden" ? "Hidden" : "Live"}
             </p>
           ) : status === "skipped" ? (
-            <p className="font-mono text-[10px] tracking-[0.15em] text-slate tnum uppercase">
+            <p className="font-mono text-[12px] tracking-[0.15em] text-slate tnum uppercase">
               {entry.inTrash ? "In your trash" : "Already uploaded"}
             </p>
           ) : (
-            <p className="font-mono text-[10px] tracking-[0.15em] text-error tnum uppercase truncate">
+            <p className="font-mono text-[12px] tracking-[0.15em] text-error tnum uppercase [overflow-wrap:anywhere]">
               {entry.error ?? "Failed"}
             </p>
           )}
@@ -1331,7 +1346,7 @@ const QueueRow = memo(function QueueRow({
             type="button"
             onClick={() => onRetry(entry.id)}
             aria-label={`Try uploading ${entry.file.name} again`}
-            className="font-mono text-[10px] tracking-[0.15em] uppercase text-slate hover:text-ink transition-colors px-2 py-1"
+            className="font-mono text-[12px] tracking-[0.15em] uppercase text-slate hover:text-ink transition-colors px-3 min-h-[44px]"
           >
             Try again
           </button>
@@ -1340,7 +1355,7 @@ const QueueRow = memo(function QueueRow({
           type="button"
           onClick={() => onRemove(entry.id)}
           aria-label={`Remove ${entry.file.name}`}
-          className="font-mono text-[10px] tracking-[0.15em] uppercase text-slate hover:text-error transition-colors px-2 py-1"
+          className="font-mono text-[12px] tracking-[0.15em] uppercase text-slate hover:text-error transition-colors px-3 min-h-[44px]"
         >
           Remove
         </button>

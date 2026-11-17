@@ -269,6 +269,18 @@ export default function FocusedSharePage() {
             {liveDetail.photoCount > 0 && (
               <ShareHeroBand event={event} handle={liveDetail.handle ?? null} />
             )}
+            {/* Once photos exist the empty-state CTA is gone, so keep a way back to upload. */}
+            {liveDetail.photoCount > 0 && (
+              <div className="mt-8 flex justify-end">
+                <Link
+                  href={`${ROUTES.UPLOAD}/${liveDetail.id}`}
+                  className={cn(BTN_SECONDARY, BTN_SIZE.sm, "inline-flex items-center gap-2")}
+                >
+                  Upload more photos
+                  <span aria-hidden="true">→</span>
+                </Link>
+              </div>
+            )}
             <Stats photographer={photographer} />
             <PhotoLibrary event={event} eventId={liveDetail.id} free={liveDetail.pricingMode === "free"} />
           </>

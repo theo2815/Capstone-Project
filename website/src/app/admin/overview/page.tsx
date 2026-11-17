@@ -5,7 +5,10 @@ import { Kicker } from "@/components/ui/kicker";
 import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminOverviewTrend } from "@/components/admin/admin-overview-trend";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
-import { useAdminKpis } from "@/hooks/use-admin-data";
+import { useAdminKpisQuery } from "@/hooks/use-admin-data";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { cn } from "@/lib/utils";
 import type { AdminKpis } from "@/lib/api-admin";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 
@@ -21,8 +24,8 @@ import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 // strip reads the same ["admin","kpis"] key (so the two surfaces agree),
 // and useAdminQueueRealtime already invalidates it on its tick.
 
-// Zero-filled placeholder while the KPI query loads — the tiles render 0,
-// the same first paint the old derivation produced from empty arrays.
+// Zero-filled placeholder so the tile expressions type-check; the tiles only
+// render once real data is in, so an admin never sees a fake 0.
 const EMPTY_KPIS: AdminKpis = {
   pendingVerifications: 0,
   approvedPhotographers: 0,
@@ -38,7 +41,8 @@ const EMPTY_KPIS: AdminKpis = {
 };
 
 export default function AdminOverviewPage() {
-  const kpis = useAdminKpis() ?? EMPTY_KPIS;
+  const kpisQuery = useAdminKpisQuery();
+  const kpis = kpisQuery.data ?? EMPTY_KPIS;
   const needingAdmin = kpis.disputesNeedingAdmin ?? kpis.openDisputes;
   const overdue = kpis.disputesOverdue ?? 0;
 
@@ -47,6 +51,30 @@ export default function AdminOverviewPage() {
       <Header />
 
       <Slab id="metrics" number="01" title="Key metrics" caption="Live counts">
+        {!kpisQuery.data && kpisQuery.isError ? (
+          <div role="alert" className="space-y-3">
+            <p className="font-sans text-sm text-error">
+              Couldn&apos;t load the metrics. Please try again.
+            </p>
+            <button
+              type="button"
+              onClick={() => void kpisQuery.refetch()}
+              disabled={kpisQuery.isFetching}
+              className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+            >
+              Retry
+            </button>
+          </div>
+        ) : !kpisQuery.data ? (
+          <div
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8"
+            aria-busy="true"
+          >
+            {Array.from({ length: ADMIN_FLAGS_ENABLED ? 8 : 7 }, (_, i) => (
+              <Skeleton key={i} className="h-40 w-full rounded-2xl" />
+            ))}
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
           <AdminStatTile
             number="01"
@@ -133,6 +161,7 @@ export default function AdminOverviewPage() {
             }
           />
         </div>
+        )}
       </Slab>
 
       <Slab

@@ -13,13 +13,14 @@ import {
   usePhotographerPayoutBalance,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import type {
   EventState,
   PhotographerEventSummary,
 } from "@/lib/photographer-mock";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 
 // Two modes:
 //  - Setup mode (first-timer): linear 3-step journey while the photographer
@@ -157,7 +158,7 @@ function OpenRequestGlance({
         <span className={stageTone[stage]}>{stageLabel[stage]}</span>
       </p>
       <p className="font-display text-5xl md:text-6xl font-extrabold tracking-tight text-ink tnum mt-3 leading-none">
-        ₱{request.amount.toLocaleString()}
+        {formatPrice(request.amount)}
       </p>
       {stage === "approved" && request.settledAt && (
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-4 tnum">
@@ -192,8 +193,8 @@ function AvailableGlance({
           No earnings yet.
         </p>
         <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-          Your first sale opens up the request flow — reach ₱
-          {minimum.toLocaleString()} to request a payout.
+          Your first sale opens up the request flow — reach
+          {formatPrice(minimum)} to request a payout.
         </p>
       </div>
     );
@@ -210,7 +211,7 @@ function AvailableGlance({
           eligible && !onHold ? "text-fresh" : "text-slate",
         )}
       >
-        ₱{unpaidBalance.toLocaleString()}
+        {formatPrice(unpaidBalance)}
       </p>
       <p className="font-sans text-sm text-ink-soft mt-4 max-w-md">
         {onHold ? (
@@ -222,7 +223,7 @@ function AvailableGlance({
         ) : (
           <>
             Reach{" "}
-            <span className="font-mono tnum">₱{minimum.toLocaleString()}</span>{" "}
+            <span className="font-mono tnum">{formatPrice(minimum)}</span>{" "}
             in unpaid earnings to request a payout.
           </>
         )}
@@ -283,8 +284,15 @@ function NextUpGlance() {
             No upcoming coverage.
           </p>
           <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-            Once organizers assign you to a future event, it shows up here.
+            Future events you cover show up here — ones an organizer assigns
+            you to, and ones you create yourself.
           </p>
+          <Link
+            href={`${ROUTES.DASHBOARD_EVENTS}/new`}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-6 inline-flex")}
+          >
+            + Create an event
+          </Link>
         </div>
       ) : (
         <>

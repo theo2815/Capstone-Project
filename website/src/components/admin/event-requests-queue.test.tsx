@@ -81,6 +81,10 @@ it("shows duplicate candidates and decides only after the API answers", async ()
   expect(screen.getByText("Ana Cruz · @anashoots")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Different race" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  // Joining merges and removes the request, so nothing is sent until the admin confirms.
+  expect(post).not.toHaveBeenCalled();
+  expect(screen.getByText(/will cover/)).toHaveTextContent("Ana Cruz will cover Cebu Marathon");
+  await user.click(screen.getByRole("button", { name: "Join race" }));
   expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 4 });
   expect(screen.getByRole("button", { name: "Different race" })).toBeDisabled();
   expect(client.getQueryData(key)).toEqual([race]); expect(useToastStore.getState().toasts).toEqual([]);

@@ -25,7 +25,7 @@ const RAIL_TIPS_STORAGE_KEY = "qp:admin:rail-tips-disabled";
 
 type AdminRouteGroup = "queues" | "catalog" | "reports";
 
-interface AdminRoute {
+export interface AdminRoute {
   readonly href: string;
   readonly label: string;
   readonly number: string;
@@ -128,7 +128,8 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
 // Filter out the Flags row when the v1 feature gate is off. Numbers stay
 // as authored (03 reserved for Flags) so reviving needs zero number churn
 // — accept the small visual gap (01 → 02 → 04…) as the honest signal.
-const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
+// Also read by <AdminMobileStrip> so the two navs never drift apart.
+export const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
   ? ADMIN_ROUTES_ALL
   : ADMIN_ROUTES_ALL.filter((r) => r.href !== ROUTES.ADMIN_FLAGS);
 
@@ -177,31 +178,8 @@ export function AdminRail() {
   }
 
   const attention = useAdminAttentionTarget();
-  const counts = useAdminQueueCounts();
-  // RV-3.5: Photo Relevance counts its open appeals (the server's list total).
-  const openAppeals = useOpenRelevanceAppealsCount();
-  // The total adds up the items that show a count here, so the open appeals join it.
-  const queueTotal = counts.total + openAppeals;
+  const { queueTotal, getCountForHref } = useAdminRouteCounts();
   const allClear = queueTotal === 0;
-
-  function getCountForHref(href: string): number | null {
-    switch (href) {
-      case ROUTES.ADMIN_INBOX:
-        return counts.inbox;
-      case ROUTES.ADMIN_DISPUTES:
-        return counts.disputes;
-      case ROUTES.ADMIN_FLAGS:
-        return counts.flags;
-      case ROUTES.ADMIN_PAYOUTS:
-        return counts.payouts;
-      case ROUTES.ADMIN_EVENT_REQUESTS:
-        return counts.events;
-      case ROUTES.ADMIN_RELEVANCE:
-        return openAppeals;
-      default:
-        return null;
-    }
-  }
 
   const queueRoutes = ADMIN_ROUTES.filter((r) => r.group === "queues");
   const catalogRoutes = ADMIN_ROUTES.filter((r) => r.group === "catalog");
@@ -437,7 +415,37 @@ function RailRow({
   );
 }
 
-function isRouteActive(
+// Live per-route queue counts, shared by the rail and the mobile strip.
+export function useAdminRouteCounts() {
+  const counts = useAdminQueueCounts();
+  // RV-3.5: Photo Relevance counts its open appeals (the server's list total).
+  const openAppeals = useOpenRelevanceAppealsCount();
+  // The total adds up the items that show a count here, so the open appeals join it.
+  const queueTotal = counts.total + openAppeals;
+
+  function getCountForHref(href: string): number | null {
+    switch (href) {
+      case ROUTES.ADMIN_INBOX:
+        return counts.inbox;
+      case ROUTES.ADMIN_DISPUTES:
+        return counts.disputes;
+      case ROUTES.ADMIN_FLAGS:
+        return counts.flags;
+      case ROUTES.ADMIN_PAYOUTS:
+        return counts.payouts;
+      case ROUTES.ADMIN_EVENT_REQUESTS:
+        return counts.events;
+      case ROUTES.ADMIN_RELEVANCE:
+        return openAppeals;
+      default:
+        return null;
+    }
+  }
+
+  return { queueTotal, getCountForHref };
+}
+
+export function isRouteActive(
   pathname: string | null,
   route: AdminRoute,
 ): boolean {

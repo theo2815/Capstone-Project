@@ -69,7 +69,7 @@ function LifetimeSlab() {
           Lifetime kept
         </p>
         <p className="font-display text-5xl md:text-7xl font-semibold tracking-tight text-fresh tnum mt-3 leading-none">
-          ₱{e.lifetimeKept.toLocaleString()}
+          {formatPrice(e.lifetimeKept)}
         </p>
         <button
           type="button"
@@ -137,17 +137,17 @@ function BreakdownSlab() {
       <div className="grid grid-cols-3 gap-4 md:gap-8">
         <BreakdownStat
           kicker="This week"
-          value={`₱${e.thisWeek.toLocaleString()}`}
+          value={formatPrice(e.thisWeek)}
           caption={`+${e.thisWeekSold} sold`}
         />
         <BreakdownStat
           kicker="This month"
-          value={`₱${e.thisMonth.toLocaleString()}`}
+          value={formatPrice(e.thisMonth)}
           caption={`+${e.thisMonthSold} sold`}
         />
         <BreakdownStat
           kicker="Payout pending"
-          value={`₱${e.payoutPending.toLocaleString()}`}
+          value={formatPrice(e.payoutPending)}
           caption={`Releases ${formatLongDate(e.payoutScheduledFor, true)}`}
         />
       </div>

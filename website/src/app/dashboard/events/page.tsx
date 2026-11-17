@@ -241,6 +241,9 @@ function CoveredEmpty() {
         Upload your first batch to a race from the Upload page, or create an
         event of your own — paid or free, public or link-only.
       </p>
+      <div className="mt-6">
+        <CreateEventLink />
+      </div>
     </div>
   );
 }

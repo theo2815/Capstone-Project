@@ -301,7 +301,7 @@ function RequestPayoutHero({
           eligible && !onHold ? "text-fresh" : "text-slate",
         )}
       >
-        ₱{balance.unpaidBalance.toLocaleString()}
+        {formatPrice(balance.unpaidBalance)}
       </p>
       <p className="font-sans text-sm md:text-base text-ink mt-4">
         {onHold ? (
@@ -312,7 +312,7 @@ function RequestPayoutHero({
           <>
             Reach{" "}
             <span className="font-mono tnum">
-              ₱{balance.minimum.toLocaleString()}
+              {formatPrice(balance.minimum)}
             </span>{" "}
             in unpaid earnings to request a payout.
           </>
@@ -324,7 +324,7 @@ function RequestPayoutHero({
           <Kicker as="p" tone="soft" className="flex items-baseline gap-2">
             <span>Clearing</span>
             <span className="font-mono tnum text-ink">
-              ₱{balance.clearing.toLocaleString()}
+              {formatPrice(balance.clearing)}
             </span>
           </Kicker>
           <p className="font-sans text-sm text-slate mt-2">
@@ -487,7 +487,7 @@ function OpenRequestHero({
         <span className={stageTone[stage]}>{stageLabel[stage]}</span>
       </Kicker>
       <p className="font-display text-5xl md:text-7xl font-semibold tracking-tight text-ink tnum mt-3 leading-none">
-        ₱{cycle.amount.toLocaleString()}
+        {formatPrice(cycle.amount)}
       </p>
       <p className="font-sans text-sm md:text-base text-ink mt-4 tnum">
         {stage === "pending_review" && (
@@ -642,7 +642,7 @@ function PayoutRow({
           payout.status === "paid" ? "text-ink-soft" : "text-ink",
         )}
       >
-        ₱{payout.amount.toLocaleString()}
+        {formatPrice(payout.amount)}
       </p>
     </div>
   );
