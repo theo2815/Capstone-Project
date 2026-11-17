@@ -27,8 +27,8 @@ export function RemovalRequestList() {
   const [needsRaw] = useUrlState<string>("needs", "");
   const [offsetRaw] = useUrlState<string>("offset", "");
   const writeUrl = useUrlStateBatch();
-  const status = (statusRaw in REMOVAL_STATUS_LABEL ? statusRaw : "") as RemovalRequestStatus | "";
-  const source = (sourceRaw in SOURCE_LABEL ? sourceRaw : "") as RemovalRequestSource | "";
+  const status = (Object.hasOwn(REMOVAL_STATUS_LABEL, statusRaw) ? statusRaw : "") as RemovalRequestStatus | "";
+  const source = (Object.hasOwn(SOURCE_LABEL, sourceRaw) ? sourceRaw : "") as RemovalRequestSource | "";
   const needsAction = needsRaw === "1";
   const offset = Math.max(0, Number.parseInt(offsetRaw, 10) || 0);
   const setOffset = (next: number) => writeUrl({ offset: next > 0 ? String(next) : null });

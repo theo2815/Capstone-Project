@@ -39,7 +39,10 @@ export function EventRequestsQueue() {
   const [rejecting, setRejecting] = useState<AdminEventRow | null>(null);
   const [reason, setReason] = useState("");
   // "Same race" merges and deletes a request, so it asks first.
-  const [joining, setJoining] = useState<{ row: AdminEventRow; target: RaceCandidate } | null>(null);
+  // Only the id is kept: confirm reads the row's current revision, so a change made meanwhile is not a conflict.
+  const [joiningState, setJoining] = useState<{ id: string; target: RaceCandidate } | null>(null);
+  const joiningRow = joiningState && rows?.find((r) => r.id === joiningState.id);
+  const joining = joiningState && joiningRow ? { row: joiningRow, target: joiningState.target } : null;
   async function run(action: () => Promise<boolean>, message: string) {
     try {
       const ok = await action();
@@ -125,7 +128,7 @@ export function EventRequestsQueue() {
                 )
               }
               onReject={() => setRejecting(row)}
-              onSameRace={(target) => setJoining({ row, target })}
+              onSameRace={(target) => setJoining({ id: row.id, target })}
             />
           ))}
         </ul>
