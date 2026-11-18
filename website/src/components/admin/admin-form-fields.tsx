@@ -9,14 +9,14 @@ import { cn } from "@/lib/utils";
 // hint styling can never drift between modals. Quiet Studio canonical:
 // mono uppercase labels at the readability floor, rounded-2xl line input
 // on bg-surface with fresh focus ring, mono tnum counter under each
-// length-capped field, amber-700 hint when input is invalid.
+// length-capped field, warning-text hint when input is invalid.
 
 const LABEL_CLS =
   "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft block";
 const COUNTER_CLS =
   "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-right tnum";
 const HINT_CLS =
-  "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-amber-700";
+  "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-warning-text";
 const INPUT_BASE =
   "w-full rounded-2xl border border-line bg-surface py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh";
 const INPUT_PADDING_DEFAULT = "px-4";
@@ -121,7 +121,7 @@ interface TextInputProps {
   step?: number | string;
   inputMode?: "text" | "numeric" | "decimal" | "none";
   autoFocus?: boolean;
-  /** Optional amber-700 hint message rendered under the input. */
+  /** Optional warning-text hint message rendered under the input. */
   hint?: ReactNode;
   /** Extra classes for the input element itself (e.g. "tnum" on numeric inputs). */
   inputClassName?: string;

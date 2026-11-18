@@ -46,6 +46,8 @@
   --success: var(--fresh);
   --error: #DC2626;
   --warning: #D97706;
+  /* Warning text: the lightest amber at 4.5:1 on surface, paper and paper-deep (app/globals-contrast.test.ts). */
+  --warning-text: #AC4F0A;
 
   /* Radii + elevation (athletic: crisp, confident lift) */
   --radius-chip: 6px;
@@ -103,6 +105,7 @@
   --color-success: var(--success);
   --color-error: var(--error);
   --color-warning: var(--warning);
+  --color-warning-text: var(--warning-text);
 
   /* Radii + elevation */
   --radius-chip: var(--radius-chip);

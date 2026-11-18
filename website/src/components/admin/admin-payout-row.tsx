@@ -203,7 +203,7 @@ function Cell({ label, className, children }: { label: string; className?: strin
 }
 
 const STATUS_TEXT: Record<AdminStatusPillTone, string> = {
-  amber: "text-amber-700",
+  amber: "text-warning-text",
   fresh: "text-fresh",
   ink: "text-ink",
   slate: "text-slate",
@@ -226,7 +226,7 @@ function StatusDot({ status }: { status: AdminPayoutStatus }) {
 export function PayoutFlagLine({ cycle }: { cycle: AdminPayoutCycle }) {
   if (!cycle.relevanceFlagId) return null;
   return (
-    <p className="font-sans text-sm text-amber-700 mt-2">
+    <p className="font-sans text-sm text-warning-text mt-2">
       <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} className="relative z-10 underline underline-offset-2 hover:text-ink">
         {cycle.relevanceHold ? PAYOUT_HOLD_REASON : PAYOUT_UNCONFIRMED_FLAG_NOTE}
       </Link>
