@@ -1,9 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import * as mfa from "@/lib/api-admin-mfa";
+import * as utils from "@/lib/utils";
 import Page from "./page";
 
 let client: QueryClient;
@@ -60,4 +62,69 @@ it.each(["confirm", "disable"])("%s keeps the code during failure and blocks edi
   await waitFor(() => expect(input).toBeEnabled());
   expect(input).toHaveValue("123456");
   expect(await screen.findByText("That code didn't work. Please try again.")).toBeInTheDocument();
+});
+
+it("shows an alert with Retry, not Off, when the status cannot load", async () => {
+  vi.mocked(mfa.fetchMfaStatus).mockRejectedValueOnce(new Error("down"));
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load your two-step verification status.");
+  expect(screen.queryByText(/Off/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Enable 2-step verification" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: "Enable 2-step verification" })).toBeInTheDocument();
+});
+
+it("submits the code with Enter from the labelled input", async () => {
+  vi.spyOn(mfa, "enrollMfa").mockResolvedValue({ secret: "local-secret", otpauthUri: "otpauth://test" });
+  const confirm = vi.spyOn(mfa, "confirmMfa").mockResolvedValue({ recoveryCodes: ["aaaa-1111"] });
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable 2-step verification" }));
+  const input = await screen.findByLabelText("6-digit code");
+  await userEvent.type(input, "123456{Enter}");
+  await waitFor(() => expect(confirm).toHaveBeenCalledWith("123456"));
+});
+
+it("copies the secret and the recovery codes, and downloads the codes", async () => {
+  const copy = vi.spyOn(utils, "copyToClipboard").mockResolvedValue(true);
+  vi.spyOn(mfa, "enrollMfa").mockResolvedValue({ secret: "local-secret", otpauthUri: "otpauth://test" });
+  vi.spyOn(mfa, "confirmMfa").mockResolvedValue({ recoveryCodes: ["aaaa-1111", "bbbb-2222"] });
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable 2-step verification" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy key" }));
+  await waitFor(() => expect(copy).toHaveBeenCalledWith("local-secret"));
+  fireEvent.change(screen.getByLabelText("6-digit code"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Turn on" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy codes" }));
+  await waitFor(() => expect(copy).toHaveBeenCalledWith("aaaa-1111\nbbbb-2222"));
+
+  let saved: Blob | undefined;
+  URL.createObjectURL = vi.fn((blob: Blob) => { saved = blob; return "blob:codes"; });
+  URL.revokeObjectURL = vi.fn();
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    expect(this.download).toBe("quickpitik-recovery-codes.txt");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Download codes" }));
+  expect(click).toHaveBeenCalledTimes(1);
+  // jsdom's Blob has no text(); FileReader reads it.
+  const reader = new FileReader();
+  const read = new Promise((done) => { reader.onload = () => done(reader.result); });
+  reader.readAsText(saved!);
+  expect(await read).toContain("aaaa-1111\nbbbb-2222");
+  await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:codes"));
+});
+
+it("selects the key for a manual copy when the clipboard refuses", async () => {
+  vi.spyOn(utils, "copyToClipboard").mockResolvedValue(false);
+  vi.spyOn(mfa, "enrollMfa").mockResolvedValue({ secret: "local-secret", otpauthUri: "otpauth://test" });
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable 2-step verification" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Copy key" }));
+  await waitFor(() => expect(window.getSelection()?.toString()).toBe("local-secret"));
+});
+
+it("treats an empty status reply as unknown, not off", async () => {
+  vi.mocked(mfa.fetchMfaStatus).mockResolvedValueOnce(null);
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load your two-step verification status.");
+  expect(screen.queryByRole("button", { name: "Enable 2-step verification" })).not.toBeInTheDocument();
 });
