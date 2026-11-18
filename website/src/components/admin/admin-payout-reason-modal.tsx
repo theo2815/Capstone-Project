@@ -73,6 +73,7 @@ export function AdminPayoutReasonModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel={kind === "reject" ? "Rejecting…" : kind === "failed" ? "Marking failed…" : "Marking returned…"}

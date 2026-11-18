@@ -56,6 +56,7 @@ export function AdminFlagHideModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel="Hiding…"

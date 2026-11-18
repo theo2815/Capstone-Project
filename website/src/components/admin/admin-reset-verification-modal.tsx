@@ -56,6 +56,7 @@ export function AdminResetVerificationModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel="Resetting verification…"

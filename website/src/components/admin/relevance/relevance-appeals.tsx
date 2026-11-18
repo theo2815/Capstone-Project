@@ -151,6 +151,7 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
               onConfirm={() => void run(confirming)}
               title={APPEAL_TEXT.confirm[confirming].title}
               confirmLabel={APPEAL_TEXT.confirm[confirming].confirmLabel}
+              tone={confirming === "LOST" ? "danger" : "primary"}
               submitting={decidePending}
             >
               <p className="font-sans text-sm text-ink-soft">

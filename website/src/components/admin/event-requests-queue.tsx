@@ -153,6 +153,7 @@ export function EventRequestsQueue() {
       </AdminConfirmModal>
 
       <AdminFormModal
+        tone="danger"
         open={rejecting !== null}
         onClose={() => {
           setRejecting(null);
