@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChangeEvent, type ReactNode } from "react";
+import { FieldError } from "@/components/ui/field-error";
 import { cn } from "@/lib/utils";
 
 // Phase 6 admin form-field primitives. Every form-bearing destructive
@@ -23,14 +24,17 @@ const INPUT_PADDING_PREFIX = "pl-9 pr-4";
 
 export function AdminFieldLabel({
   htmlFor,
+  required,
   children,
 }: {
   htmlFor?: string;
+  required?: boolean;
   children: ReactNode;
 }) {
   return htmlFor ? (
     <label htmlFor={htmlFor} className={LABEL_CLS}>
       {children}
+      {required && <span className="text-slate"> (required)</span>}
     </label>
   ) : (
     <p className={LABEL_CLS}>{children}</p>
@@ -41,23 +45,23 @@ export function AdminFieldCounter({ children }: { children: ReactNode }) {
   return <p className={COUNTER_CLS}>{children}</p>;
 }
 
-export function AdminFieldHint({ children }: { children: ReactNode }) {
-  return <p className={HINT_CLS}>{children}</p>;
+export function AdminFieldHint({ id, children }: { id?: string; children: ReactNode }) {
+  return <p id={id} className={HINT_CLS}>{children}</p>;
 }
 
 interface FormSectionProps {
   label: string;
   children: ReactNode;
 }
-// Section with a mono label heading above its content. Used for radio
-// groups (and any field cluster where the label can't be a proper
-// `<label htmlFor>`).
+// A fieldset whose legend names the cluster (radio groups, and any field
+// cluster where the label can't be a proper `<label htmlFor>`).
 export function AdminFormSection({ label, children }: FormSectionProps) {
   return (
-    <div className="space-y-3">
-      <AdminFieldLabel>{label}</AdminFieldLabel>
+    // No m-0: it would beat the parent's space-y gap; Tailwind's reset already zeroes fieldset margin, border and padding.
+    <fieldset className="min-w-0 space-y-3">
+      <legend className={LABEL_CLS}>{label}</legend>
       {children}
-    </div>
+    </fieldset>
   );
 }
 
@@ -78,11 +82,12 @@ export function AdminRadioGroup({
   onChange,
 }: RadioGroupProps) {
   return (
-    <div className="space-y-2">
+    <div>
       {options.map((opt) => (
+        // 44 px rows; first/last negative margins merge with the parent's gap (a -my-3 on the list would replace it).
         <label
           key={opt.value}
-          className="flex items-start gap-3 cursor-pointer"
+          className="flex min-h-[44px] items-start gap-3 py-3 first:-mt-3 last:-mb-3 cursor-pointer"
         >
           <input
             type="radio"
@@ -125,6 +130,9 @@ interface TextInputProps {
    * edit-photographer handle field which strips non-handle chars.
    */
   sanitize?: (raw: string) => string;
+  /** Inline error; pass it only after the field was left or a submit was tried. */
+  error?: string | null;
+  required?: boolean;
 }
 export function AdminTextInput({
   id,
@@ -144,7 +152,16 @@ export function AdminTextInput({
   hint,
   inputClassName,
   sanitize,
+  error,
+  required,
 }: TextInputProps) {
+  const hintId = hint ? `${id}-hint` : undefined;
+  const errorId = error ? `${id}-error` : undefined;
+  const a11y = {
+    required,
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": [hintId, errorId].filter(Boolean).join(" ") || undefined,
+  };
   const handle = (e: ChangeEvent<HTMLInputElement>) => {
     let next = e.target.value;
     if (sanitize) next = sanitize(next);
@@ -158,7 +175,7 @@ export function AdminTextInput({
   );
   return (
     <div className="space-y-2">
-      <AdminFieldLabel htmlFor={id}>{label}</AdminFieldLabel>
+      <AdminFieldLabel htmlFor={id} required={required}>{label}</AdminFieldLabel>
       {prefix ? (
         <div className="relative">
           <span
@@ -179,6 +196,7 @@ export function AdminTextInput({
             inputMode={inputMode}
             autoFocus={autoFocus}
             className={inputCls}
+            {...a11y}
           />
         </div>
       ) : (
@@ -194,9 +212,11 @@ export function AdminTextInput({
           inputMode={inputMode}
           autoFocus={autoFocus}
           className={inputCls}
+          {...a11y}
         />
       )}
-      {hint && <AdminFieldHint>{hint}</AdminFieldHint>}
+      {hint && <AdminFieldHint id={hintId}>{hint}</AdminFieldHint>}
+      <FieldError id={`${id}-error`} message={error} density="tight" />
       {showCounter && maxLength != null && (
         <AdminFieldCounter>
           {value.length}/{maxLength}
@@ -216,6 +236,9 @@ interface TextareaProps {
   rows?: number;
   /** Defaults to true — every length-capped textarea in admin shows its counter. */
   showCounter?: boolean;
+  /** Inline error; pass it only after the field was left or a submit was tried. */
+  error?: string | null;
+  required?: boolean;
 }
 export function AdminTextarea({
   id,
@@ -226,10 +249,12 @@ export function AdminTextarea({
   maxLength,
   rows = 3,
   showCounter = true,
+  error,
+  required,
 }: TextareaProps) {
   return (
     <div className="space-y-2">
-      <AdminFieldLabel htmlFor={id}>{label}</AdminFieldLabel>
+      <AdminFieldLabel htmlFor={id} required={required}>{label}</AdminFieldLabel>
       <textarea
         id={id}
         value={value}
@@ -237,7 +262,11 @@ export function AdminTextarea({
         rows={rows}
         placeholder={placeholder}
         className={cn(INPUT_BASE, INPUT_PADDING_DEFAULT, "resize-none")}
+        required={required}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
       />
+      <FieldError id={`${id}-error`} message={error} density="tight" />
       {showCounter && (
         <AdminFieldCounter>
           {value.length}/{maxLength}
