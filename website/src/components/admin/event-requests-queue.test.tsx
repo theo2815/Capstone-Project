@@ -7,7 +7,26 @@ import { admin, adminEvent } from "@/test/fixtures/admin";
 import { adminEventKeys } from "@/hooks/use-admin-events";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
+import { describePricing } from "@/lib/photographer-events";
 import { EventRequestsQueue } from "./event-requests-queue";
+// A tiny in-memory URL: the kind filter lives in ?kind=.
+const nav = vi.hoisted(() => {
+  let search = "";
+  const listeners = new Set<() => void>();
+  return {
+    get: () => search,
+    set: (next: string) => { search = next; listeners.forEach((l) => l()); },
+    subscribe: (l: () => void) => { listeners.add(l); return () => listeners.delete(l); },
+  };
+});
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    usePathname: () => "/admin/event-requests",
+    useSearchParams: () => new URLSearchParams(useSyncExternalStore(nav.subscribe, nav.get)),
+    useRouter: () => ({ replace: (url: string) => nav.set(url.split("?")[1] ?? ""), push: vi.fn() }),
+  };
+});
 let client: QueryClient;
 const key = adminEventKeys.list(admin.id, { review: "queue" });
 beforeEach(() => {
@@ -16,7 +35,7 @@ beforeEach(() => {
   client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByName: "Photographer" }]);
   vi.spyOn(api, "get").mockResolvedValue({ items: [] });
 });
-afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); nav.set(""); });
 it.each(["pending", "change_pending"] as const)("retains %s rejection input through failure and retries", async (reviewStatus) => {
   client.setQueryData(key, [{ ...adminEvent, reviewStatus }]);
   const user = userEvent.setup(); let fail!: (error: Error) => void;
@@ -41,12 +60,87 @@ it("awaits approval before success and prevents duplicate submission", async () 
   let confirm!: (value: unknown) => void;
   const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((resolve) => { confirm = resolve; }));
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  const submit = screen.getByRole("button", { name: "Approve" });
+  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  const submit = within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" });
   await userEvent.click(submit); await userEvent.click(submit);
   expect(submit).toBeDisabled(); expect(post).toHaveBeenCalledTimes(1); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => { confirm(adminEvent); });
   await waitFor(() => expect(client.getQueryData(key)).toEqual([]));
   expect(useToastStore.getState().toasts[0].kind).toBe("success");
+});
+// ER2: nothing goes public, and no price changes, in one unseen click.
+it("Approve asks first and says what goes public", async () => {
+  const post = vi.spyOn(api, "post").mockResolvedValue(adminEvent); const user = userEvent.setup();
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  expect(post).not.toHaveBeenCalled();
+  const dialog = screen.getByRole("dialog", { name: "Approve this event?" });
+  expect(dialog).toHaveTextContent("Cebu Race goes live and uploads open.");
+  expect(dialog).toHaveTextContent("Public · link and profile");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(post).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
+  expect(post).toHaveBeenCalledWith(`/admin/events/${adminEvent.id}/approve`, { expectedRevision: 4 });
+});
+it("approving a price change names the old and new pricing", async () => {
+  const change = { pricingMode: "paid" as const, pricePerPhoto: "120", watermarkPolicy: "own" as const, requestedAt: "2026-09-09T00:00:00Z" };
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "change_pending", pendingChange: change }]);
+  const post = vi.spyOn(api, "post"); const user = userEvent.setup();
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  const dialog = screen.getByRole("dialog", { name: "Apply this pricing change?" });
+  expect(dialog).toHaveTextContent(describePricing({ pricingMode: "paid", pricePerPhoto: 80, watermarkPolicy: "platform" }));
+  expect(dialog).toHaveTextContent(describePricing(change));
+  expect(post).not.toHaveBeenCalled();
+});
+// ER3: the queue arrives whole (one request, oldest first), so the kind filter is client-side.
+it("the kind filter splits new requests from changes and keeps it in the URL", async () => {
+  client.setQueryData(key, [
+    { ...adminEvent, id: "new-1", name: "New Race", status: "DRAFT", reviewStatus: "pending" },
+    { ...adminEvent, id: "chg-1", name: "Changed Race", reviewStatus: "change_pending",
+      pendingChange: { pricingMode: "free", pricePerPhoto: "0", watermarkPolicy: "platform", requestedAt: "2026-09-09T00:00:00Z" } },
+  ]);
+  const user = userEvent.setup();
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  const tabs = screen.getByRole("group", { name: "Request kind" });
+  expect(within(tabs).getByRole("button", { name: "All 2" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(within(tabs).getByRole("button", { name: "Changes 1" }));
+  expect(screen.queryByText("New Race")).not.toBeInTheDocument();
+  expect(screen.getByText("Changed Race")).toBeInTheDocument();
+  expect(nav.get()).toBe("kind=changes");
+  await user.click(within(tabs).getByRole("button", { name: "New 1" }));
+  expect(screen.getByText("New Race")).toBeInTheDocument();
+  expect(screen.queryByText("Changed Race")).not.toBeInTheDocument();
+});
+it.each([[3, /Waiting 3 days/], [1, /Waiting 1 day\b/], [0, /Waiting since today/]])("a change request %i days old says how long it has waited", (days, text) => {
+  const requestedAt = new Date(Date.now() - days * 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "change_pending",
+    pendingChange: { pricingMode: "free", pricePerPhoto: "0", watermarkPolicy: "platform", requestedAt } }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(text)).toBeInTheDocument();
+});
+it("a request time in the future or unreadable shows no age", () => {
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "change_pending",
+    pendingChange: { pricingMode: "free", pricePerPhoto: "0", watermarkPolicy: "platform", requestedAt: "not a date" } }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.queryByText(/Waiting/)).not.toBeInTheDocument();
+});
+it("approving a race edit names the changed fields", async () => {
+  client.setQueryData(key, [{ ...adminEvent, eventType: "ROAD_RACE", reviewStatus: "change_pending",
+    pendingChange: { kind: "race_edit", fields: { title: "Cebu City Marathon", date: "2026-09-11" }, coverS3Key: "events/x/cover.jpg", requestedBy: "u", requestedAt: "2026-09-09T00:00:00Z" } }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  expect(screen.getByRole("dialog", { name: "Apply this race edit?" })).toHaveTextContent("Cebu Race takes the new title, date, cover photo.");
+});
+it("a failed approve keeps the confirm open and lets the admin try again", async () => {
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Unavailable")); const user = userEvent.setup();
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  const dialog = screen.getByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Approve" })).toBeEnabled());
+  expect(dialog).toBeInTheDocument(); expect(post).toHaveBeenCalledTimes(1);
 });
 it("shows everything the photographer filled in", () => {
   client.setQueryData(key, [{
@@ -79,14 +173,18 @@ it("shows duplicate candidates and decides only after the API answers", async ()
   expect(screen.getByRole("link", { name: "Cebu Marathon" })).toHaveAttribute("href", "/events/cebu-marathon");
   expect(screen.getByText("It may be the same race as one already listed.")).toBeInTheDocument();
   expect(screen.getByText("Ana Cruz · @anashoots")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Different race" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Approve as a new race" }));
+  const approveDialog = screen.getByRole("dialog", { name: "Approve as a new race?" });
+  expect(approveDialog).toHaveTextContent("It stays its own race, apart from Cebu Marathon.");
+  await user.click(within(approveDialog).getByRole("button", { name: "Cancel" }));
+  expect(post).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Same race → join" }));
   // Joining merges and removes the request, so nothing is sent until the admin confirms.
   expect(post).not.toHaveBeenCalled();
   expect(screen.getByText(/will cover/)).toHaveTextContent("Ana Cruz will cover Cebu Marathon");
   await user.click(screen.getByRole("button", { name: "Join race" }));
   expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 4 });
-  expect(screen.getByRole("button", { name: "Different race" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approve as a new race" })).toBeDisabled();
   expect(client.getQueryData(key)).toEqual([race]); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => { confirm(target); });
   await waitFor(() => expect(client.getQueryData(key)).toEqual([]));
