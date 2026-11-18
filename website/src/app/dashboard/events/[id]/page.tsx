@@ -48,6 +48,7 @@ import {
 import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { canOwnerUploadToEvent, canUploadToEvent } from "@/lib/event-catalog";
 import { describePricing, isOwnedEventLive, raceCheckReasonLine } from "@/lib/photographer-events";
 import type {
   PhotographerEventSummary,
@@ -268,7 +269,8 @@ export default function FocusedSharePage() {
             <div className="mt-8 md:mt-10 mb-10 md:mb-12 flex flex-wrap items-end justify-between gap-6">
               <Stats photographer={photographer} />
               {/* Once photos exist the empty-state CTA is gone, so keep a way back to upload. */}
-              {liveDetail.photoCount > 0 && (
+              {liveDetail.photoCount > 0 &&
+                (owned ? canOwnerUploadToEvent(event.date) : canUploadToEvent(event.date)) && (
                 <Link
                   href={`${ROUTES.UPLOAD}/${liveDetail.id}`}
                   className={cn(BTN_SECONDARY, BTN_SIZE.sm, "inline-flex items-center gap-2")}

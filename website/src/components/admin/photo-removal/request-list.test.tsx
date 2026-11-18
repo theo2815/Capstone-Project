@@ -75,3 +75,11 @@ it("keeps filters in the URL across a remount and explains an empty filtered lis
   expect(await screen.findByText("No removal cases yet.")).toBeVisible();
   expect(nav.get()).toBe("");
 });
+
+it("ignores inherited object keys in the status and source filters", async () => {
+  nav.set("status=constructor&source=toString");
+  vi.mocked(removalApi.listAdminRemovalRequests).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  render(<QueryClientProvider client={client}><RemovalRequestList /></QueryClientProvider>);
+  expect(await screen.findByText("No removal cases yet.")).toBeVisible();
+  expect(removalApi.listAdminRemovalRequests).toHaveBeenLastCalledWith({ offset: 0, limit: 20 }, expect.anything());
+});

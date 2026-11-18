@@ -22,15 +22,14 @@ export function AdminStatusTabs<K extends string>({
   onChange: (next: K) => void;
 }) {
   return (
-    <div role="tablist" aria-label={label} className="flex flex-wrap gap-1 border-b border-line mt-8 md:mt-10">
+    <div role="group" aria-label={label} className="flex flex-wrap gap-1 border-b border-line mt-8 md:mt-10">
       {tabs.map((t) => {
         const active = t.key === value;
         return (
           <button
             key={t.key}
             type="button"
-            role="tab"
-            aria-selected={active}
+            aria-pressed={active}
             onClick={() => onChange(t.key)}
             className={cn(
               "-mb-px border-b-2 px-3.5 min-h-[44px] font-sans text-sm transition-colors",

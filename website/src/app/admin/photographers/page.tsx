@@ -28,7 +28,8 @@ export default function AdminPhotographersPage() {
   const users = useAdminUsers();
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch, isFetching } = users;
-  const error = users.error?.message;
+  // A failed background refresh keeps the loaded list; the error shows only with nothing to show.
+  const failed = users.isError && !users.data;
   // In the URL so the search survives opening a profile and pressing Back.
   const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
   const router = useRouter();
@@ -162,7 +163,7 @@ export default function AdminPhotographersPage() {
         )}
       </div>
 
-      {error ? (
+      {failed ? (
         <div role="alert" className="mt-10 space-y-3">
           <p className="font-sans text-sm text-error">
             Couldn&apos;t load photographers. Please try again.

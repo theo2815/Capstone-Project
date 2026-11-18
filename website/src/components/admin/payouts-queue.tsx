@@ -155,6 +155,11 @@ export function PayoutsQueue() {
     });
   }, [byId]);
 
+  // Any tab change (buttons, Back/Forward, a ?status= link) drops the selection so bulk actions never reach off-screen rows.
+  useEffect(() => {
+    setSelected((prev) => (prev.size ? new Set() : prev));
+  }, [tab]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;

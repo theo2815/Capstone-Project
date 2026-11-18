@@ -56,7 +56,7 @@ export function AdminInboxFilterChips({
       role="tablist"
       aria-label="Inbox queue filter"
       // One scrolling row on phones, faded at the right edge so it reads as scrollable; wraps from md up.
-      className="flex flex-nowrap md:flex-wrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden gap-2 pt-6 md:pt-8 [&>button]:shrink-0 [&>button]:whitespace-nowrap [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none]"
+      className="flex flex-nowrap md:flex-wrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden gap-2 pt-6 md:pt-8 [&>button]:shrink-0 [&>button]:whitespace-nowrap [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none] after:content-[''] after:w-[15%] after:shrink-0 md:after:hidden"
     >
       {INBOX_QUEUE_TYPES.map((type) => {
         const active = value === type;
