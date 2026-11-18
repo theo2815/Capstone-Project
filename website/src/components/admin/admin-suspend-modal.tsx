@@ -12,7 +12,8 @@ interface AdminSuspendModalProps {
   open: boolean;
   submitting?: boolean;
   onClose: () => void;
-  onSubmit: (reason: string) => void;
+  /** Resolves false when the request failed, so the modal keeps its input and shows why. */
+  onSubmit: (reason: string) => Promise<boolean | void>;
   photographerName: string;
 }
 
@@ -36,23 +37,28 @@ export function AdminSuspendModal({
   onSubmit,
   photographerName,
 }: AdminSuspendModalProps) {
-  const [selectedReason, setSelectedReason] = useState<string>(
-    SUSPEND_REASONS[0]!.value,
-  );
+  // AX-28: no reason starts picked, so a quick Enter never records one the admin did not choose.
+  const [selectedReason, setSelectedReason] = useState("");
   const [note, setNote] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!open) { setNote(""); setSelectedReason(SUSPEND_REASONS[0]!.value); }
+    if (!open) { setNote(""); setSelectedReason(""); setAttempted(false); setFailed(false); }
   }, [open]);
 
-  function handleSubmit() {
+  const noteMissing = selectedReason === "other" && note.trim().length === 0;
+
+  async function handleSubmit() {
     if (submitting) return;
+    if (noteMissing) { setAttempted(true); return; }
     const label =
       SUSPEND_REASONS.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
-    onSubmit(composed);
+    setFailed(false);
+    setFailed((await onSubmit(composed)) === false);
   }
 
   return (
@@ -66,6 +72,8 @@ export function AdminSuspendModal({
       title="Suspend account"
       intro={`${photographerName} will be hidden from public listings and unable to upload until you unsuspend. The reason is logged.`}
       submitLabel="Suspend"
+      submitDisabled={!selectedReason}
+      error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
     >
       <AdminFormSection label="Reason">
         <AdminRadioGroup
@@ -77,7 +85,8 @@ export function AdminSuspendModal({
       </AdminFormSection>
       <AdminTextarea
         id="suspend-note"
-        label="Note (optional, max 280)"
+        label={selectedReason === "other" ? "Note (required, max 280)" : "Note (optional, max 280)"}
+        error={attempted && noteMissing ? "Add a note: Other needs one." : null}
         value={note}
         onChange={setNote}
         maxLength={280}

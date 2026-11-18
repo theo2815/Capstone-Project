@@ -60,7 +60,7 @@ it("does not rebase an open rejection onto a replacement verification after a re
   });
   render(<QueryClientProvider client={client}><LiveAside /></QueryClientProvider>);
   const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Reject…" }));
-  const dialog = screen.getByRole("dialog");
+  const dialog = screen.getByRole("dialog"); await user.click(within(dialog).getAllByRole("radio")[0]!); 
   await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   await waitFor(() => expect(client.getQueryData(key)).toEqual(rows));
   await waitFor(() => expect(within(dialog).getByRole("button", { name: "Send back" })).toBeEnabled());
@@ -78,10 +78,10 @@ it.each(["drawer", "bulk"])("keeps the reviewed revision in an open %s rejection
   mount(true); const user = userEvent.setup();
   if (surface === "bulk") await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
   await user.click(await screen.findByRole("button", { name: surface === "bulk" ? "Reject 1…" : "Reject…" }));
-  const submit = screen.getByRole("button", { name: "Send back" });
+  const submit = screen.getByRole("button", { name: "Send back" }); const dialog = screen.getAllByRole("dialog").at(-1)!; await user.click(within(dialog).getAllByRole("radio")[0]!); 
   await user.click(submit);
   await waitFor(() => expect(client.getQueryData(key)).toEqual(rows));
-  await waitFor(() => expect(submit).toBeEnabled());
+  await waitFor(() => expect(submit).toBeEnabled()); expect(within(dialog).getByRole("alert")).toHaveTextContent(/Couldn.t finish/); 
   await user.click(submit);
   await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
   expect(post.mock.calls.map((call) => call[1])).toEqual([expect.objectContaining({ expectedRevision: 7 }), expect.objectContaining({ expectedRevision: 7 })]);
@@ -91,12 +91,12 @@ it.each([
 ])("%s preserves reason on failure and prevents repeat submission", async (openLabel, submitLabel, endpoint) => {
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise); const user = userEvent.setup(); mount();
   await user.click(screen.getByRole("button", { name: openLabel })); const dialog = screen.getByRole("dialog");
-  const note = within(dialog).getByLabelText("Note (optional, max 280)"); await user.type(note, "Keep this reason");
+  await user.click(within(dialog).getAllByRole("radio")[0]!); const note = within(dialog).getByLabelText("Note (optional, max 280)"); await user.type(note, "Keep this reason");
   await user.click(within(dialog).getByRole("button", { name: submitLabel }));
   expect(note).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1); expect(dialog).toBeInTheDocument();
   expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => request.reject(new Error("Unavailable")));
-  expect(note).toHaveValue("Keep this reason"); await waitFor(() => expect(note).toBeEnabled()); expect(dialog).toBeInTheDocument();
+  expect(note).toHaveValue("Keep this reason"); await waitFor(() => expect(note).toBeEnabled()); expect(dialog).toBeInTheDocument(); expect(within(dialog).getByRole("alert")).toHaveTextContent(/Couldn.t finish/); 
   post.mockResolvedValueOnce(adminUser); await user.click(within(dialog).getByRole("button", { name: submitLabel }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenLastCalledWith(`/admin/users/${adminUser.userId}/${endpoint}`, { reason: expect.stringContaining("Keep this reason"), ...(endpoint === "suspend" ? {} : { expectedRevision: 7 }) });
@@ -130,10 +130,10 @@ it("retains only failed bulk rejections, keeps their reason, and retries them on
   });
   mount(true); await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" })); await user.click(screen.getByRole("checkbox", { name: "Select Second Studio" }));
   await user.click(screen.getByRole("button", { name: "Reject 2…" })); const dialog = screen.getByRole("dialog"); const note = within(dialog).getByLabelText("Note (optional, max 280)");
-  await user.type(note, "Fix watermark"); await user.click(within(dialog).getByRole("button", { name: "Send back" }));
+  await user.click(within(dialog).getAllByRole("radio")[0]!); await user.type(note, "Fix watermark"); await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   expect(note).toBeDisabled(); await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(2);
   await act(async () => request.reject(new Error("Unavailable")));
-  expect(note).toHaveValue("Fix watermark"); expect(dialog).toHaveTextContent("1 photographer will see");
+  expect(note).toHaveValue("Fix watermark"); expect(dialog).toHaveTextContent("1 photographer will see"); expect(within(dialog).getByRole("alert")).toHaveTextContent(/Couldn.t finish/); 
   post.mockImplementationOnce(async () => { rows = rows.map((row) => ({ ...row, verificationStatus: "incomplete" })); return rows[1]; });
   await user.click(within(dialog).getByRole("button", { name: "Send back" })); await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenCalledTimes(3); expect(post.mock.calls[2][0]).toContain("photographer-2/reject");
@@ -142,8 +142,8 @@ it("names the pending bulk send back and blocks repeat Enter until it settles", 
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
   mount(true); const user = userEvent.setup();
   await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
-  await user.click(screen.getByRole("button", { name: "Reject 1…" }));
-  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Send back" }));
+  await user.click(screen.getByRole("button", { name: "Reject 1…" })); const dialog = screen.getByRole("dialog"); await user.click(within(dialog).getAllByRole("radio")[0]!); 
+  await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Sending back…" })).toHaveAttribute("aria-busy", "true");
   expect(screen.getByRole("button", { name: /Test Studio — toggle selection/, hidden: true })).toHaveAttribute("aria-busy", "true");
   await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
@@ -262,7 +262,7 @@ it("does not send back a row ticked after the bulk rejection form opened", async
   mount(true); await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
   await user.click(screen.getByRole("button", { name: "Reject 1…" })); const dialog = screen.getByRole("dialog");
   // Focus is not trapped in the form, so the keyboard can still tick a row whose revision was never captured.
-  await user.click(screen.getByRole("checkbox", { name: "Select Second Studio", hidden: true }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Second Studio", hidden: true })); await user.click(within(dialog).getAllByRole("radio")[0]!); 
   await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post.mock.calls.map((call) => call[0])).toEqual([`/admin/users/${adminUser.userId}/reject`]);
@@ -280,7 +280,7 @@ it("counts in the bulk rejection form only the rows that will be sent back", asy
 it("says so when no ticked row can be sent back", async () => {
   const post = vi.spyOn(api, "post").mockImplementation(async () => rows[0]); const user = userEvent.setup();
   const dialog = await lateTick(user);
-  await user.click(screen.getByRole("checkbox", { name: "Select Test Studio", hidden: true }));
+  await user.click(screen.getByRole("checkbox", { name: "Select Test Studio", hidden: true })); await user.click(within(dialog).getAllByRole("radio")[0]!); 
   await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ kind: "error",
     message: "These rows changed after this form opened. Close the form and tick them again." })]);

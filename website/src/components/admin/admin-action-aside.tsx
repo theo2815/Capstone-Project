@@ -61,6 +61,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       setRejectOpen(false);
       showToast({ kind: "info", message: `Sent back · ${displayName}` });
     }
+    return ok;
   }
 
   async function handleSuspend(reason: string) {
@@ -69,6 +70,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       setSuspendOpen(false);
       showToast({ kind: "info", message: `Suspended · ${displayName}` });
     }
+    return ok;
   }
 
   async function handleUnsuspend() {
@@ -87,6 +89,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         message: `Verification reset · ${displayName}`,
       });
     }
+    return ok;
   }
 
   async function handleMessage(payload: { subject: string; body: string }) {

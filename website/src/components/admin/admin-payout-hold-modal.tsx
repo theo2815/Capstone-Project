@@ -13,8 +13,9 @@ interface AdminPayoutHoldModalProps {
   open: boolean;
   submitting?: boolean;
   onClose: () => void;
-  onSubmit: (reason: string) => void;
-  /** Cycle ids being held (1 for single-row, n for bulk). */
+  /** Resolves false when the request failed, so the modal keeps its input and shows why. */
+  onSubmit: (reason: string) => Promise<boolean | void>;
+  /** Payout ids being held (1 for single-row, n for bulk). */
   payoutIds: string[];
   /** Sum of amounts being held — shown in copy. */
   totalAmount: number;
@@ -40,21 +41,27 @@ export function AdminPayoutHoldModal({
   payoutIds,
   totalAmount,
 }: AdminPayoutHoldModalProps) {
-  const [selectedReason, setSelectedReason] = useState<string>(
-    HOLD_REASONS[0]!.value,
-  );
+  // AX-28: no reason starts picked, so a quick Enter never sends the photographer one the admin did not choose.
+  // The caller mounts this modal only while a hold is open, so its state starts fresh each time.
+  const [selectedReason, setSelectedReason] = useState("");
   const [note, setNote] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const isBulk = payoutIds.length > 1;
   const titleSuffix = isBulk ? `${payoutIds.length} payouts` : payoutIds[0] ?? "";
+  const noteMissing = selectedReason === "other" && note.trim().length === 0;
 
-  function handleSubmit() {
+  async function handleSubmit() {
+    if (submitting) return;
+    if (noteMissing) { setAttempted(true); return; }
     const label =
       HOLD_REASONS.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
-    onSubmit(composed);
+    setFailed(false);
+    setFailed((await onSubmit(composed)) === false);
   }
 
   return (
@@ -69,14 +76,14 @@ export function AdminPayoutHoldModal({
       intro={
         isBulk ? (
           <>
-            <span className="text-ink tnum">{payoutIds.length}</span> cycles
+            <span className="text-ink tnum">{payoutIds.length}</span> payouts
             totaling{" "}
             <span className="text-ink tnum">{formatPrice(totalAmount)}</span>{" "}
             will be paused. Photographers are notified with the reason.
           </>
         ) : (
           <>
-            This cycle{" "}
+            This payout{" "}
             <span className="text-ink tnum">
               ({formatPrice(totalAmount)})
             </span>{" "}
@@ -85,6 +92,8 @@ export function AdminPayoutHoldModal({
         )
       }
       submitLabel={`Hold ${isBulk ? `${payoutIds.length} payouts` : "payout"}`}
+      submitDisabled={!selectedReason}
+      error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
     >
       <AdminFormSection label="Reason">
         <AdminRadioGroup
@@ -96,7 +105,8 @@ export function AdminPayoutHoldModal({
       </AdminFormSection>
       <AdminTextarea
         id="hold-note"
-        label="Note (optional, max 280)"
+        label={selectedReason === "other" ? "Note (required, max 280)" : "Note (optional, max 280)"}
+        error={attempted && noteMissing ? "Add a note: Other needs one." : null}
         value={note}
         onChange={setNote}
         maxLength={280}
