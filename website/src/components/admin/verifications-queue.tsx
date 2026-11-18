@@ -40,7 +40,7 @@ import {
   type EffectivePhotographerSettings,
 } from "@/lib/admin-photographer-view";
 import { formatPayoutNumber } from "@/lib/payout-format";
-import { formatMemberSince } from "@/lib/format";
+import { formatMemberSince, sentenceCaseDate } from "@/lib/format";
 import { formatRegionLabel } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
 
@@ -353,6 +353,7 @@ export function VerificationsQueue() {
         title="Incomplete"
         caption="Settings still missing fields"
         trailing={`${incomplete.length} stuck`}
+        collapsed={incomplete.length === 0}
       >
         {incomplete.length === 0 ? (
           <p className="font-sans text-sm text-slate-soft">
@@ -548,41 +549,29 @@ function PendingRow({
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-3 flex-wrap">
-                <h3 className="font-display text-xl md:text-2xl font-medium text-ink truncate">
+                {/* Proposal 11: name leads; details are sentence case, mono only for the handle and numbers. */}
+                <h3 className="font-display text-xl font-semibold text-ink truncate">
                   {row.brandName ?? row.name}
                 </h3>
-                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+                <p className="font-mono text-[13px] text-slate">
                   @{row.handle ?? "—"}
                 </p>
               </div>
-              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
-                {(row.region || row.city) && (
-                  <>
-                    {row.region || row.city}
-                    <span className="text-slate-soft"> · </span>
-                  </>
-                )}
-                <span className="tnum">
-                  Joined {formatMemberSince(row.createdAt)}
-                </span>
-              </p>
-
-              <div className="mt-5 flex items-center gap-3 flex-wrap">
+              <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap font-sans text-sm text-slate">
+                {(row.region || row.city) && <span>{row.region || row.city} ·</span>}
+                <span>joined {sentenceCaseDate(formatMemberSince(row.createdAt))} ·</span>
                 <CompletenessStrip snapshot={row.settingsSnapshot} />
-                <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
-                  {completeness.filled}/{completeness.total} fields
+                <span className="tnum">
+                  {completeness.filled} of {completeness.total} fields
                 </span>
                 {row.settingsSnapshot && (
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-                    ·{" "}
-                    <span className="tnum">{row.settingsSnapshot.socialCount}</span>{" "}
-                    social ·{" "}
-                    <span className="tnum">{row.settingsSnapshot.payoutCount}</span>{" "}
-                    payout
+                  <span>
+                    · <span className="tnum">{row.settingsSnapshot.socialCount}</span> social ·{" "}
+                    <span className="tnum">{row.settingsSnapshot.payoutCount}</span> payout
                   </span>
                 )}
               </div>
-              <p className="font-sans text-sm text-ink-soft mt-3">
+              <p className="font-sans text-sm text-ink-soft mt-2">
                 Waits for the identity check. Decide it under{" "}
                 <Link className="underline" href="/admin/verifications#seller-details" onClick={(e) => e.stopPropagation()}>Seller details</Link>.
               </p>

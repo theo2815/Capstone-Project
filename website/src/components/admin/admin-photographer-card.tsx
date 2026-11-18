@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AvatarDisc } from "@/components/account/avatar-disc";
+import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { ROUTES } from "@/lib/constants";
 import { formatMemberSince } from "@/lib/format";
 import type {
@@ -74,14 +75,17 @@ export function AdminPhotographerCard({
           </p>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
-          <StatusPill
+          {/* Same tone language as the other queues: amber = waiting on an admin. */}
+          <AdminStatusPill
             label={isSuspended ? "Suspended" : STATUS_LABEL[row.verificationStatus]}
             tone={
               isSuspended
                 ? "ink"
                 : row.verificationStatus === "approved"
                   ? "fresh"
-                  : "slate"
+                  : row.verificationStatus === "pending"
+                    ? "amber"
+                    : "slate"
             }
           />
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
@@ -99,31 +103,6 @@ export function AdminPhotographerCard({
     <Link href={handleHref} className="block">
       {inner}
     </Link>
-  );
-}
-
-function StatusPill({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: "fresh" | "slate" | "ink";
-}) {
-  const toneClass =
-    tone === "fresh"
-      ? "border-fresh/30 text-fresh"
-      : tone === "ink"
-        ? "border-ink text-ink"
-        : "border-line text-slate";
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5",
-        toneClass,
-      )}
-    >
-      {label}
-    </span>
   );
 }
 

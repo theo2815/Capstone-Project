@@ -2,15 +2,10 @@
 
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 
-// Bottom-right floating hint that lives on every /admin/* page. Click to
-// open the keyboard legend; pressing `?` from anywhere outside an input
-// does the same thing. Hidden below md because the keyboard layer is a
-// desktop-only affordance — phone keyboards don't make `?` reachable.
-//
-// z-40 sits above queue content but below the AdminDetailDrawer (z-50)
-// and the legend modal itself (z-60), so the pill auto-hides while the
-// user is in a focus surface. The Quiet Studio look — bone background,
-// line border, mono `?` keycap — matches the rest of the admin chrome.
+// Keyboard-legend hint in the admin rail's footer (it used to float
+// bottom-right and covered row content at the page edge). Click to open the
+// keyboard legend; pressing `?` from anywhere outside an input does the same.
+// Hidden below md because the keyboard layer is desktop-only, like the rail.
 export function KeyboardHintPill() {
   const setOpen = useAdminLegendStore((s) => s.setOpen);
   return (
@@ -18,7 +13,7 @@ export function KeyboardHintPill() {
       type="button"
       onClick={() => setOpen(true)}
       aria-label="Keyboard shortcuts (press ?)"
-      className="hidden md:inline-flex fixed bottom-5 right-5 z-40 items-center gap-2 rounded-full border border-line bg-bone hover:border-ink transition-colors px-3 py-1.5 shadow-sm group"
+      className="hidden md:inline-flex items-center gap-2 rounded-full border border-line bg-bone hover:border-ink transition-colors px-3 py-1.5 group"
     >
       <span
         aria-hidden="true"

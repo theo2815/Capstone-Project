@@ -136,7 +136,9 @@ it("keeps the row confirming after byte progress and shows the backend processin
   expect(screen.queryByText(/^Live$/)).not.toBeInTheDocument();
   await act(async () => { finish({ id: "photo-1", status: "processing", uploadedAt: "now", thumbnailUrl: "", span: "default" }); });
   expect(screen.getByText("Uploaded — preparing preview")).toBeInTheDocument();
-  expect(screen.getByText("Uploaded — preparing preview").closest('[role="status"]')).toHaveAttribute("aria-live", "polite");
+  // Rows are not live regions (a big batch would flood screen readers); the batch total is the one live region.
+  expect(screen.getByText("Uploaded — preparing preview").closest("[aria-live]")).toBeNull();
+  expect([...document.querySelectorAll('[aria-live="polite"]')].some((el) => /confirmed/i.test(el.textContent ?? ""))).toBe(true);
 });
 
 it.each(["offline", "429", "malformed"])("continues with server authority when duplicate preflight is %s", async (failure) => {
@@ -379,6 +381,31 @@ it.each([
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(5));
   expect(upload.mock.calls[4][1].name).toBe("file-4.jpg");
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("tells the batch's polite region how many uploads failed or are hidden", async () => {
+  upload.mockImplementation((_event, file: File) => {
+    if (file.name === "bad.jpg") return Promise.reject(new ApiError([{ code: "UPLOAD_CHECKSUM_MISMATCH", message: "Wrong bytes" }], 422));
+    if (file.name === "quiet.jpg") return Promise.resolve({ id: "photo-2", status: "hidden", uploadedAt: "now", thumbnailUrl: "", span: "default" });
+    return new Promise(() => {});
+  });
+  render(<FocusedUploadPage />);
+  const files = ["bad.jpg", "quiet.jpg", "wait.jpg"].map((name) => new File([name], name, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await screen.findByText("Hidden");
+  const polite = () => [...document.querySelectorAll('[aria-live="polite"]')].map((el) => el.textContent ?? "").join(" ");
+  await waitFor(() => expect(polite()).toMatch(/1 failed/));
+  expect(polite()).toMatch(/1 hidden/);
+});
+
+it("still announces failures when every upload of the batch fails", async () => {
+  upload.mockRejectedValue(new ApiError([{ code: "UPLOAD_CHECKSUM_MISMATCH", message: "Wrong bytes" }], 422));
+  render(<FocusedUploadPage />);
+  const files = ["a.jpg", "b.jpg"].map((name) => new File([name], name, { type: "image/jpeg" }));
+  fireEvent.change(screen.getByRole("button", { name: /browse photos/i }).parentElement!.querySelector("input")!, { target: { files } });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/^2 failed$/));
+  expect(screen.getByRole("status")).not.toHaveTextContent(/confirmed/);
+  expect(screen.queryByText("0%")).not.toBeInTheDocument();
 });
 
 it("leaves an exhausted temporary 429 available for manual Retry", async () => {

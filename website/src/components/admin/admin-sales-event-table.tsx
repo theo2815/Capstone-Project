@@ -101,6 +101,17 @@ export function AdminSalesEventTable() {
         })}
       </div>
 
+      {/* Column headings for the desktop grid; each cell also carries its label for screen readers. */}
+      <div
+        aria-hidden="true"
+        className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_1fr_1fr] md:gap-6 pb-3"
+      >
+        <Kicker tone="soft">Event</Kicker>
+        <Kicker tone="soft" className="text-right">Date</Kicker>
+        <Kicker tone="soft" className="text-right">GMV</Kicker>
+        <Kicker tone="soft" className="text-right">Platform cut</Kicker>
+        <Kicker tone="soft" className="text-right">Refunds</Kicker>
+      </div>
       <ul className="border-y border-line divide-y divide-line">
         {visible.map((row) => (
           <EventTableRow key={row.id} row={row} />
@@ -179,7 +190,7 @@ function DataCell({
         : "text-ink";
   return (
     <div className="mt-3 md:mt-0 flex items-baseline justify-between md:block md:text-right gap-3">
-      <Kicker tone="soft" className="md:hidden">
+      <Kicker tone="soft" className="md:sr-only">
         {label}
       </Kicker>
       <p

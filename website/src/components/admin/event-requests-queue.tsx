@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { Slab } from "@/components/profile-shell";
-import { AdminFormModal } from "@/components/admin/admin-form-modal";
+import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import {
   BTN_PRIMARY,
   BTN_SECONDARY,
@@ -37,6 +38,11 @@ export function EventRequestsQueue() {
   const { showToast } = useToast();
   const [rejecting, setRejecting] = useState<AdminEventRow | null>(null);
   const [reason, setReason] = useState("");
+  // "Same race" merges and deletes a request, so it asks first.
+  // Only the id is kept: confirm reads the row's current revision, so a change made meanwhile is not a conflict.
+  const [joiningState, setJoining] = useState<{ id: string; target: RaceCandidate } | null>(null);
+  const joiningRow = joiningState && rows?.find((r) => r.id === joiningState.id);
+  const joining = joiningState && joiningRow ? { row: joiningRow, target: joiningState.target } : null;
   async function run(action: () => Promise<boolean>, message: string) {
     try {
       const ok = await action();
@@ -62,6 +68,16 @@ export function EventRequestsQueue() {
       setRejecting(null);
       setReason("");
     }
+  }
+
+  async function confirmJoin() {
+    if (!joining) return;
+    const { row, target } = joining;
+    const ok = await run(
+      () => sameRace(row.id, target.id, row.reviewRevision),
+      `${row.submittedByName ?? "The photographer"} joined ${target.name}. The duplicate request is removed.`,
+    );
+    if (ok) setJoining(null);
   }
 
   const waiting = rows?.length ?? 0;
@@ -112,16 +128,29 @@ export function EventRequestsQueue() {
                 )
               }
               onReject={() => setRejecting(row)}
-              onSameRace={(target) =>
-                run(
-                  () => sameRace(row.id, target.id, row.reviewRevision),
-                  `${row.submittedByName ?? "The photographer"} joined ${target.name}. The duplicate request is removed.`,
-                )
-              }
+              onSameRace={(target) => setJoining({ id: row.id, target })}
             />
           ))}
         </ul>
       )}
+
+      <AdminConfirmModal
+        open={joining !== null}
+        onClose={() => setJoining(null)}
+        onConfirm={() => void confirmJoin()}
+        title="Join the existing race?"
+        confirmLabel="Join race"
+        submitting={!!joining && isPending(joining.row.id)}
+        pendingLabel="Joining…"
+      >
+        {joining && (
+          <p className="font-sans text-sm text-ink-soft">
+            {joining.row.submittedByName ?? "The photographer"} will cover{" "}
+            <strong className="text-ink">{joining.target.name}</strong>, and
+            their request &ldquo;{joining.row.name}&rdquo; is removed.
+          </p>
+        )}
+      </AdminConfirmModal>
 
       <AdminFormModal
         open={rejecting !== null}
@@ -208,9 +237,7 @@ function RequestRow({
               className="w-full h-full object-cover"
             />
           ) : (
-            <p className="h-full flex items-center justify-center font-sans text-sm text-slate">
-              No cover photo
-            </p>
+            <LogoPlaceholder size="md" label="No cover photo yet" className="h-full" />
           )}
         </div>
         <Kicker as="p" tone="soft" tnum>

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { ListEvent } from "@/types/event";
-import { StatusChip } from "@/components/events/event-tile";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
+import type { EventState, ListEvent } from "@/types/event";
 import { ROUTES } from "@/lib/constants";
 import type { EventReviewStatus } from "@/lib/photographer-mock";
 
@@ -47,7 +47,6 @@ interface AdminEventCardProps {
 
 export function AdminEventCard({
   event,
-  index = 0,
   review,
   pendingLabel,
   onEdit,
@@ -57,7 +56,6 @@ export function AdminEventCard({
   onRaceListing,
 }: AdminEventCardProps) {
   const dateLabel = formatShortDate(event.date);
-  const cityUpper = event.city.toUpperCase();
   // A pending / sent-back submission is a DRAFT: no public page to view,
   // so the link points at the queue instead.
   const awaitingReview = review !== undefined && event.status === "DRAFT";
@@ -65,15 +63,13 @@ export function AdminEventCard({
   const canList = review !== undefined && !awaitingReview && review.visibility === "public" && onSetListing;
 
   return (
+    // Proposal 12: one compact list row instead of a 4:3 cover card, so a
+    // screen holds 8–9 races. Same fields and actions as before.
     <article
       aria-busy={!!pendingLabel}
-      className="rounded-2xl border border-line bg-bone overflow-hidden"
-      style={{
-        animation: `fade-up 0.5s ${0.05 * index + 0.05}s both`,
-        opacity: 0,
-      }}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors hover:bg-bone-deep/50"
     >
-      <div className="relative aspect-[4/3] bg-ink overflow-hidden">
+      <div className="relative w-[88px] h-[56px] shrink-0 rounded-lg overflow-hidden bg-bone-deep flex items-center justify-center">
         {event.bannerUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -83,114 +79,116 @@ export function AdminEventCard({
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center px-6">
-            <span className="font-display text-bone/25 text-2xl md:text-3xl font-medium tracking-tight text-center leading-tight">
-              {event.name}
-            </span>
-          </div>
+          <LogoPlaceholder size="sm" className="absolute inset-0" />
         )}
-        <StatusChip state={event.state} />
       </div>
-      <div className="p-6 md:p-7">
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
-          <span className="tnum">{dateLabel}</span> · {cityUpper}
-        </p>
-        <h3 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-tight text-ink">
+      <div className="min-w-0 flex-1 basis-[240px]">
+        <h3 className="font-display text-base font-semibold text-ink">
           {event.name}
         </h3>
-        <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
-          {event.location}
+        <p className="font-sans text-sm text-slate">
+          <span className="tnum">{dateLabel}</span> · {event.city}
+          {event.location && event.location !== event.city && ` · ${event.location}`}
         </p>
         {review && (
-          <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+          <p className="font-sans text-sm text-slate">
             Photographer event · {review.owner} · {REVIEW_LABEL[review.status]}
           </p>
         )}
         {raceHidden && (
-          <div className="mt-3 space-y-2">
-            <span className="inline-block rounded-full border border-line-strong bg-bone-deep px-3 py-1 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink">
-              Hidden
-            </span>
-            {/* Review F36: say what hiding does and does not do. */}
-            <p className="font-sans text-sm text-ink-soft">
-              Off /events and the upload pickers. Its link still opens, and it still shows on its photographers&apos; public profiles.
-            </p>
-          </div>
+          // Review F36: say what hiding does and does not do.
+          <p className="font-sans text-sm text-ink-soft">
+            <span className="font-semibold text-ink">Hidden</span>. Off /events and the upload pickers. Its link still opens, and it still shows on its photographers&apos; public profiles.
+          </p>
         )}
-
-        <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-4 flex-wrap">
-            <button
-              type="button"
-              onClick={() => onEdit(event)}
+      </div>
+      <span className={`inline-flex items-center gap-1.5 font-sans text-sm w-[120px] shrink-0 ${STATE_TEXT[event.state]}`}>
+        <span aria-hidden="true" className="size-[7px] rounded-full bg-current" />
+        {STATE_LABEL[event.state]}
+      </span>
+      {/* Fixed width from md so the status column lines up row to row. */}
+      <div className="flex items-center justify-end gap-1 flex-wrap ml-auto md:w-[23rem]">
+        <button
+          type="button"
+          onClick={() => onEdit(event)}
+          disabled={!!pendingLabel}
+          className={actionBtn}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(event)}
+          disabled={!!pendingLabel}
+          className={dangerBtn}
+          aria-label={`Delete ${event.name}`}
+        >
+          Delete
+        </button>
+        {canList && (
+          <label className="inline-flex items-center gap-2 min-h-[44px] px-3 font-sans text-sm text-ink cursor-pointer has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed">
+            <input
+              type="checkbox"
+              className="size-5 accent-fresh"
+              checked={review.listed}
               disabled={!!pendingLabel}
-              className={actionBtn}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(event)}
-              disabled={!!pendingLabel}
-              className={actionBtn}
-              aria-label={`Delete ${event.name}`}
-            >
-              Delete
-            </button>
-            {canList && (
-              <label className="inline-flex items-center gap-2 min-h-[44px] font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink cursor-pointer has-[:disabled]:opacity-50 has-[:disabled]:cursor-not-allowed">
-                <input
-                  type="checkbox"
-                  className="size-5 accent-fresh"
-                  checked={review.listed}
-                  disabled={!!pendingLabel}
-                  onChange={(e) => onSetListing(event, e.target.checked)}
-                />
-                Show on /events
-              </label>
-            )}
-            {raceHidden !== undefined && onRaceListing && (
-              <button
-                type="button"
-                onClick={() => onRaceListing(event, raceHidden)}
-                disabled={!!pendingLabel}
-                className={actionBtn}
-              >
-                {raceHidden ? "Relist" : "Hide"}
-              </button>
-            )}
-          </div>
-          {pendingLabel && <p role="status" className="font-sans text-sm text-slate">{pendingLabel}</p>}
-          {awaitingReview ? (
-            <Link
-              href={ROUTES.ADMIN_EVENT_REQUESTS}
-              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-            >
-              Review →
-            </Link>
-          ) : (
-            <Link
-              href={`/events/${event.slug}`}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-            >
-              View ↗
-            </Link>
-          )}
-        </div>
+              onChange={(e) => onSetListing(event, e.target.checked)}
+            />
+            Show on /events
+          </label>
+        )}
+        {raceHidden !== undefined && onRaceListing && (
+          <button
+            type="button"
+            onClick={() => onRaceListing(event, raceHidden)}
+            disabled={!!pendingLabel}
+            className={actionBtn}
+          >
+            {raceHidden ? "Relist" : "Hide"}
+          </button>
+        )}
+        {pendingLabel && <p role="status" className="font-sans text-sm text-slate px-2">{pendingLabel}</p>}
+        {awaitingReview ? (
+          <Link href={ROUTES.ADMIN_EVENT_REQUESTS} className={linkBtn}>
+            Review →
+          </Link>
+        ) : (
+          <Link href={`/events/${event.slug}`} target="_blank" rel="noreferrer" className={linkBtn}>
+            View ↗
+          </Link>
+        )}
       </div>
     </article>
   );
 }
 
+const STATE_LABEL: Record<EventState, string> = {
+  live: "Live now",
+  upcoming: "Upcoming",
+  open: "Open for sale",
+  past: "Archived",
+};
+// The dot takes the text colour; the word carries the meaning, not the colour.
+const STATE_TEXT: Record<EventState, string> = {
+  live: "text-fresh",
+  upcoming: "text-slate",
+  open: "text-ink",
+  past: "text-slate-soft",
+};
+
+
+// 44px tall so the row's actions are comfortable to tap (they were 20px).
+// Sentence case (proposal 11): mono uppercase is kept for labels only.
 const actionBtn =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  "inline-flex items-center min-h-[44px] px-3 font-sans text-sm font-semibold text-ink hover:text-fresh transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+const linkBtn =
+  "inline-flex items-center min-h-[44px] px-3 font-sans text-sm text-slate hover:text-ink transition-colors";
+
+// Delete is destructive, so it reads in the error colour (house BTN_DANGER tone).
+const dangerBtn = actionBtn.replace("text-ink hover:text-fresh", "text-error hover:text-error/80");
 
 function formatShortDate(iso: string) {
   const d = new Date(iso + "T00:00:00");
-  const month = d.toLocaleString("en-US", { month: "short" }).toUpperCase();
-  const day = d.getDate().toString().padStart(2, "0");
-  const year = d.getFullYear();
-  return `${month} ${day} · ${year}`;
+  const month = d.toLocaleString("en-US", { month: "short" });
+  return `${month} ${d.getDate()}, ${d.getFullYear()}`;
 }

@@ -38,7 +38,7 @@ import {
   type FlagConfirmKind,
 } from "@/lib/admin-flags";
 import { FlagRelevanceEvidence } from "@/components/admin/flag-relevance-evidence";
-import { syntheticCoverGradient } from "@/lib/admin-photographer-view";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { formatLongDate } from "@/lib/format";
 
 const DONE_LABEL = {
@@ -654,7 +654,6 @@ function FlagDrawerActions({
 
 function FlagDetailBody({ flag }: { flag: Flag }) {
   const eventName = flagEventName(flag);
-  const cover = syntheticCoverGradient(flag.id);
 
   return (
     <div className="space-y-10">
@@ -673,13 +672,7 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
             />
           </div>
         ) : (
-          <div
-            className="aspect-[16/9] rounded-2xl border border-line"
-            style={{
-              background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-            }}
-            aria-label={flag.photoSnapshot.alt}
-          />
+          <LogoPlaceholder size="lg" label={flag.photoSnapshot.alt} className="aspect-[16/9] rounded-2xl border border-line" />
         )}
         <p className="font-sans text-sm text-ink-soft mt-3">
           {flag.photoSnapshot.alt}

@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { SiteHeader } from "@/components/layout/site-header";
 import { fetchPublicEventsCatalog } from "@/lib/api-events";
 import { EventsBrowser } from "./events-browser";
-import { LegalLinks } from "@/components/legal/legal-links";
+import { Footer } from "@/components/layout/footer";
 
 export const metadata: Metadata = {
   title: "Events",
@@ -20,6 +20,7 @@ export default async function EventsPage() {
   const events = await fetchPublicEventsCatalog().catch(() => undefined);
 
   return (
+    <>
     <main className="bg-bone text-ink relative">
       <SiteHeader />
 
@@ -27,21 +28,9 @@ export default async function EventsPage() {
         <EventsBrowser events={events} />
       </Suspense>
 
-      <Footer />
     </main>
+    <Footer showCta={false} />
+    </>
   );
 }
 
-function Footer() {
-  return (
-    <footer className="px-6 md:px-10 py-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-bone">
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-        QuickPitik &middot; Cebu, Philippines
-      </p>
-      <LegalLinks />
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-        © 2026
-      </p>
-    </footer>
-  );
-}

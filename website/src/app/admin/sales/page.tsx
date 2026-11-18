@@ -58,9 +58,13 @@ export default function AdminSalesPage() {
             number="03"
             kicker="Refunds issued"
             value={formatPrice(kpis.refundsIssued)}
+            // The amount is the server total and the count comes from the dispute
+            // list, so never caption a non-zero amount with "no refunds".
             caption={
-              refunds.refundCount === 0
+              kpis.refundsIssued === 0
                 ? "no refunds processed"
+                : refunds.refundCount === 0
+                ? "refunded to runners"
                 : `${refunds.refundCount} ${
                     refunds.refundCount === 1 ? "refund" : "refunds"
                   } processed`

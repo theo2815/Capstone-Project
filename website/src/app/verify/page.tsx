@@ -11,10 +11,12 @@ export const metadata: Metadata = {
 
 export default function VerifyPage() {
   return (
+    <>
     <main className="bg-bone text-ink relative">
       <SiteHeader />
       <VerifyForm />
-      <Footer />
     </main>
+    <Footer />
+    </>
   );
 }

@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { ROUTES } from "@/lib/constants";
 import { SiteHeader } from "@/components/layout/site-header";
-import { LegalLinks } from "@/components/legal/legal-links";
+import { Footer } from "@/components/layout/footer";
 
 const REGISTER_AS_PHOTOGRAPHER = `${ROUTES.REGISTER}?role=PHOTOGRAPHER`;
 
@@ -16,6 +16,7 @@ const BATCH_MY_PHOTOS_URL = "https://www.batchmyphotos.com/";
 
 export default function PhotographersPage() {
   return (
+    <>
     <main className="snap-y-mobile bg-paper text-ink relative">
       <SiteHeader />
 
@@ -104,10 +105,11 @@ export default function PhotographersPage() {
 
       <FinalCta />
 
-      <Footer />
 
       <MobileStickyCta />
     </main>
+    <Footer showCta={false} className="pb-24 md:pb-0" />
+    </>
   );
 }
 
@@ -880,20 +882,6 @@ function FinalCta() {
         </Link>
       </div>
     </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="px-6 md:px-10 py-8 pb-24 md:pb-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-line bg-paper">
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-        QuickPitik &middot; Cebu, Philippines
-      </p>
-      <LegalLinks />
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-        © 2026
-      </p>
-    </footer>
   );
 }
 

@@ -14,6 +14,10 @@ import {
   useSearchFocusShortcut,
 } from "@/hooks/use-admin-keyboard";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import { useUrlState } from "@/hooks/use-url-state";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { cn } from "@/lib/utils";
 
 // Phase 2a admin Photographers directory. Four slabs (Pending / Approved /
 // Incomplete / Suspended) of <AdminPhotographerCard>s. Search box filters
@@ -23,9 +27,11 @@ import { PAGE_SIZE } from "@/lib/pagination-config";
 export default function AdminPhotographersPage() {
   const users = useAdminUsers();
   const effective = users.data ?? EMPTY_ADMIN_USERS;
-  const { isPending: loading, refetch } = users;
-  const error = users.error?.message;
-  const [query, setQuery] = useState("");
+  const { isPending: loading, refetch, isFetching } = users;
+  // A failed background refresh keeps the loaded list; the error shows only with nothing to show.
+  const failed = users.isError && !users.data;
+  // In the URL so the search survives opening a profile and pressing Back.
+  const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -157,6 +163,28 @@ export default function AdminPhotographersPage() {
         )}
       </div>
 
+      {failed ? (
+        <div role="alert" className="mt-10 space-y-3">
+          <p className="font-sans text-sm text-error">
+            Couldn&apos;t load photographers. Please try again.
+          </p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : loading ? (
+        <div className="mt-10 space-y-4" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
+          ))}
+        </div>
+      ) : (
+      <>
       <DirectorySlab
         id="pending"
         number="01"
@@ -218,6 +246,8 @@ export default function AdminPhotographersPage() {
             setSuspendedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
+      </>
+      )}
     </>
   );
 }
@@ -233,8 +263,7 @@ function Header({ total, pending }: { total: number; pending: number }) {
         Photographers.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Every photographer, every status. Click a row for the full profile
-        and admin actions.
+        Every photographer, by status.
       </p>
     </header>
   );
@@ -274,6 +303,7 @@ function DirectorySlab({
       title={title}
       caption={caption}
       trailing={`${totalCount} ${noun}`}
+      collapsed={totalCount === 0}
     >
       {totalCount === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{empty}</p>

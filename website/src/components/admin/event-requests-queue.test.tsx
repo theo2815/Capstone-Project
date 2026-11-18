@@ -81,6 +81,10 @@ it("shows duplicate candidates and decides only after the API answers", async ()
   expect(screen.getByText("Ana Cruz · @anashoots")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Different race" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  // Joining merges and removes the request, so nothing is sent until the admin confirms.
+  expect(post).not.toHaveBeenCalled();
+  expect(screen.getByText(/will cover/)).toHaveTextContent("Ana Cruz will cover Cebu Marathon");
+  await user.click(screen.getByRole("button", { name: "Join race" }));
   expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 4 });
   expect(screen.getByRole("button", { name: "Different race" })).toBeDisabled();
   expect(client.getQueryData(key)).toEqual([race]); expect(useToastStore.getState().toasts).toEqual([]);
@@ -123,4 +127,23 @@ it("an Other request shows the race it looks like", () => {
   client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByHandle: "anashoots", lookalike: { ...target, strength: "medium" } }]);
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   expect(screen.getByText(/Looks like a shared race:/).closest("p")).toHaveTextContent("Cebu Marathon");
+});
+it("join confirm sends the request's current revision, not the one it had when the modal opened", async () => {
+  client.setQueryData(key, [race]); const user = userEvent.setup();
+  const post = vi.spyOn(api, "post").mockResolvedValue(target);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  act(() => { client.setQueryData(key, [{ ...race, reviewRevision: 9 }]); });
+  await user.click(screen.getByRole("button", { name: "Join race" }));
+  expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 9 });
+});
+it("join confirm closes when the request is gone", async () => {
+  client.setQueryData(key, [race]); const user = userEvent.setup();
+  const post = vi.spyOn(api, "post");
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  act(() => { client.setQueryData(key, []); });
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(post).not.toHaveBeenCalled();
 });

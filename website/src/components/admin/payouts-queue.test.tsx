@@ -60,8 +60,14 @@ it("opens an unrelated payout drawer while a selected row approval is pending", 
   await act(async () => { request.reject(new Error("Unavailable")); });
 });
 
+// Payouts show one status tab at a time; open the tab a seeded status lives on.
+const TAB_FOR: Record<AdminPayoutCycle["status"], string> = {
+  pending_review: "pending", approved: "in-progress", processing: "in-progress", held: "held", paid: "paid",
+  failed: "closed", returned: "closed", rejected: "closed", cancelled: "closed",
+};
 function seed(status: AdminPayoutCycle["status"] = "pending_review") {
   rows = [{ ...payoutCycle, status }]; client.setQueryData(key, rows);
+  navigation.search = status === "pending_review" ? "" : `status=${TAB_FOR[status]}`;
 }
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);
@@ -209,13 +215,18 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   rows = [{ ...payoutCycle, status: action === "hold" ? "held" : "pending_review", approvedBy: admin.id }];
   await act(async () => { request.resolve({ groupId: "batch", results: [{ id: payoutCycle.id, ok: true }] }); });
   await waitFor(() => expect(modal).not.toBeInTheDocument());
-  expect(screen.getByRole("checkbox")).not.toBeChecked();
+  // Approve leaves the row on this tab (unticked); hold moves it to the Held tab. Both fail if the row is wrong.
+  const box = screen.queryByRole("checkbox", { name: `Select payout ${payoutCycle.id}` });
+  if (action === "approve") expect(box).not.toBeChecked();
+  else expect(box).toBeNull();
+  expect(screen.queryByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" })).not.toBeInTheDocument();
   expect(client.getQueryData(key)).toEqual(rows);
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain(action === "approve" ? "Approvals recorded" : "Held");
 });
 
 it("preserves provider-controlled action guards, including drawer keyboard shortcuts", async () => {
   const user = userEvent.setup(); rows = [{ ...payoutCycle, status: "processing", provider: "paymongo" }];
+  navigation.search = "status=in-progress";
   client.setQueryData(key, rows); const post = vi.spyOn(api, "post"); mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   expect(screen.getByRole("dialog")).toHaveTextContent("Payment provider manages this transfer");
@@ -273,13 +284,15 @@ it("a held photographer's payout names the flag and disables approve and mark pa
     { ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true },
     { ...payoutCycle, id: "cycle-2", status: "approved", relevanceFlagId: "flag-1", relevanceHold: true },
   ]; client.setQueryData(key, rows);
-  mount();
-  expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(2);
+  const view = mount();
+  expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(1);
   expect(screen.getAllByRole("link", { name: /relevance flag/i })[0]).toHaveAttribute("href", "/admin/flags?row=flag-1");
   expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Hold…" })[0]).toBeEnabled();
+  view.unmount(); navigation.search = "status=in-progress"; mount();
+  expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Mark processing" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Mark paid…" })).toBeDisabled();
-  expect(screen.getAllByRole("button", { name: "Hold…" })[0]).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
   const drawer = screen.getByRole("dialog");
   expect(within(drawer).getByRole("button", { name: "Mark paid…" })).toBeDisabled();
@@ -333,4 +346,45 @@ it("an admin shortcut key pressed on the flag link still reaches the page", () =
   } finally {
     window.removeEventListener("keydown", seen);
   }
+});
+
+it("shows one status tab at a time with counts, and keeps the tab in the URL", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "paid", paymentReference: "GC-1" }]; client.setQueryData(key, rows);
+  mount();
+  const tabs = screen.getByRole("group", { name: "Payout status" });
+  expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  expect(within(tabs).getByRole("button", { name: /Pending review 1/, pressed: true })).toBeInTheDocument();
+  expect(within(tabs).getByRole("button", { name: /Paid 1/, pressed: false })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Select payout cycle-1" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Select payout cycle-2" })).not.toBeInTheDocument();
+  await user.click(within(tabs).getByRole("button", { name: /Paid 1/ }));
+  expect(navigation.replace).toHaveBeenLastCalledWith(expect.stringContaining("status=paid"), expect.anything());
+});
+
+it("clears the ticked payouts when the URL status changes (Back, Forward or a link)", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
+  const view = mount();
+  await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
+  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  const again = () => view.rerender(<QueryClientProvider client={client}><PayoutsQueue /><StepUpProvider /></QueryClientProvider>);
+  navigation.search = "status=held"; again();
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /^Approve \d/ })).not.toBeInTheDocument();
+  navigation.search = ""; again();
+  expect(await screen.findByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeChecked();
+});
+
+it("clears the ticked payouts when the status tab changes", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
+  mount();
+  const tabs = screen.getByRole("group", { name: "Payout status" });
+  await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
+  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  await user.click(within(tabs).getByRole("button", { name: /Held 1/ }));
+  expect(screen.queryByRole("button", { name: /^Approve \d/ })).not.toBeInTheDocument();
+  await user.click(within(tabs).getByRole("button", { name: /Pending review 1/ }));
+  expect(screen.getByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeChecked();
 });

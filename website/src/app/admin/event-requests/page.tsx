@@ -21,9 +21,8 @@ export default function AdminEventRequestsPage() {
           Event requests.
         </h1>
         <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-          Photographer-created events stay invisible until you approve them.
-          Pricing changes on a live event wait here too — the gallery keeps
-          its current settings until you apply the change.
+          Photographer events stay hidden, and pricing changes on live events
+          stay pending, until you approve them.
         </p>
       </header>
       <EventRequestsQueue />

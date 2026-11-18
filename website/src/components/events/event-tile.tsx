@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { EventState, ListEvent } from "@/types/event";
 import { SaveButton } from "@/components/events/save-button";
+import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { ROUTES } from "@/lib/constants";
 import { canOwnerUploadToEvent, canUploadToEvent } from "@/lib/event-catalog";
 
@@ -84,16 +85,8 @@ export function EventTile(props: EventTileProps) {
             className="absolute inset-0 w-full h-full object-cover"
           />
         ) : (
-          <>
-            <div className="absolute inset-0 flex items-center justify-center px-6">
-              <span className="font-display text-bone/25 text-2xl md:text-3xl font-medium tracking-tight text-center leading-tight">
-                {event.name}
-              </span>
-            </div>
-            <span className="absolute bottom-3 right-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/35">
-              Banner · soon
-            </span>
-          </>
+          // No cover yet: the QuickPitik logo instead of a faint name and "Banner · soon".
+          <LogoPlaceholder tone="dark" size="lg" className="absolute inset-0" />
         )}
         <StatusChip state={event.state} />
         {isBrowse && (

@@ -15,6 +15,10 @@ import { useCanUpload } from "@/hooks/use-can-upload";
 import { usePhotographerEvents } from "@/hooks/use-photographer-data";
 import { usePublicEvents } from "@/hooks/use-public-events";
 import { PAGE_SIZE } from "@/lib/pagination-config";
+import Link from "next/link";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { ROUTES } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import {
   isOwnedEventLive,
   summaryToListEvent,
@@ -193,8 +197,15 @@ function PickerEmpty() {
         No events to upload to.
       </p>
       <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
-        Schedule a coverage to start lifting photos.
+        Create an event of your own, or ask an organizer to add you to
+        their race.
       </p>
+      <Link
+        href={`${ROUTES.DASHBOARD_EVENTS}/new`}
+        className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-6 inline-flex")}
+      >
+        + Create an event
+      </Link>
     </div>
   );
 }

@@ -14,8 +14,9 @@ interface StatTileProps {
 // optional caption + optional `href` (turns the card into a Link with chevron).
 // Variant `muted` softens borders + text for "coming next" / Phase 2b stub
 // tiles so they read as informational rather than active.
+// `number` is still accepted but no longer drawn: the 01–08 prefix encoded no
+// real order and made labels wrap unevenly, so the values didn't line up.
 export function AdminStatTile({
-  number,
   kicker,
   value,
   caption,
@@ -25,7 +26,7 @@ export function AdminStatTile({
   const isMuted = variant === "muted";
   const isInteractive = !!href && !isMuted;
   const baseClasses = cn(
-    "block rounded-2xl border p-6 md:p-7 transition-all duration-300",
+    "relative block rounded-2xl border p-6 md:p-7 transition-all duration-300",
     isMuted
       ? "border-dashed border-line bg-bone"
       : "border-line bg-bone",
@@ -36,11 +37,12 @@ export function AdminStatTile({
     <>
       <p
         className={cn(
-          "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px]",
+          // Two lines reserved so every tile's value starts at the same height.
+          "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] min-h-[2.8em] pr-6",
           isMuted ? "text-slate-soft" : "text-slate-soft",
         )}
       >
-        <span className="tnum">{number}</span> · {kicker}
+        {kicker}
       </p>
       <p
         className={cn(
@@ -60,10 +62,14 @@ export function AdminStatTile({
           {caption}
         </p>
       )}
+      {/* The whole tile is the link; a corner arrow marks it instead of a repeated "Open →". */}
       {isInteractive && (
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors mt-6">
-          Open →
-        </p>
+        <span
+          aria-hidden="true"
+          className="absolute top-6 right-6 md:top-7 md:right-7 font-mono text-[15px] text-slate-soft group-hover:text-fresh transition-colors"
+        >
+          →
+        </span>
       )}
     </>
   );

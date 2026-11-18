@@ -98,6 +98,10 @@ export function DashboardRail() {
   const isOverview = pathname === ROUTES.DASHBOARD;
 
   return (
+    <>
+    {/* Phone sub-pages hide the rail (and its h1), so give them a screen-reader
+        h1; the rail's links stay out of the tab order there. */}
+    {!isOverview && <h1 className="sr-only md:hidden">Dashboard</h1>}
     <aside
       className={cn(
         "md:sticky md:top-20 md:self-start pt-6 md:pt-10 pb-6 md:pb-8 md:max-h-[calc(100vh-5rem)] md:overflow-y-auto border-b md:border-0 border-line",
@@ -159,6 +163,7 @@ export function DashboardRail() {
         <LegalLinks />
       </div>
     </aside>
+    </>
   );
 }
 
