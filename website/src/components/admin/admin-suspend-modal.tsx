@@ -57,6 +57,7 @@ export function AdminSuspendModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel="Suspending…"

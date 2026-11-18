@@ -93,6 +93,7 @@ export function RelevanceCaseActions({
           onConfirm={() => void confirm(confirming)}
           title={open.title}
           confirmLabel={open.confirmLabel}
+          tone={confirming === "hide_batch" || confirming === "hold_payouts" ? "danger" : "primary"}
           submitting={isPending}
         >
           <p className="font-sans text-sm text-ink-soft">

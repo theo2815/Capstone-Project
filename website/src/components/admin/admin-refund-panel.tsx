@@ -199,6 +199,7 @@ export function AdminRefundPanel({
       )}
 
       <AdminFormModal
+        tone="danger"
         open={cancelOpen}
         submitting={busy}
         pendingLabel="Cancelling…"

@@ -49,6 +49,7 @@ export function AdminDenyDisputeModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel="Denying…"

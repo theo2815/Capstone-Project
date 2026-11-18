@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { Modal } from "@/components/ui/modal";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { cn } from "@/lib/utils";
+import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 
 // Singleton overlay — reads the active request from the store and renders
 // one Modal-wrapped confirmation at a time. Mounted globally in providers.tsx
@@ -94,7 +95,7 @@ export function ConfirmationOverlay() {
             type="button"
             onClick={handleCancel}
             disabled={loading}
-            className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed px-2"
+            className={cn(BTN_GHOST, BTN_SIZE.sm)}
           >
             {cancelLabel}
           </button>
@@ -103,12 +104,7 @@ export function ConfirmationOverlay() {
             onClick={runConfirm}
             disabled={loading}
             aria-busy={loading}
-            className={cn(
-              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-5 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-              config.danger
-                ? "bg-bone-deep border border-line text-error hover:bg-line"
-                : "bg-fresh text-surface hover:bg-fresh-deep",
-            )}
+            className={cn(config.danger ? BTN_DANGER : BTN_PRIMARY, BTN_SIZE.sm)}
           >
             {loading ? "Working…" : confirmLabel}
           </button>

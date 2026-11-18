@@ -59,6 +59,7 @@ export function AdminPayoutHoldModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel="Holding…"

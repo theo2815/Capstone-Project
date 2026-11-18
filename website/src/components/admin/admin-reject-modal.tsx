@@ -57,6 +57,7 @@ export function AdminRejectModal({
 
   return (
     <AdminFormModal
+      tone="danger"
       open={open}
       submitting={submitting}
       pendingLabel="Sending back…"

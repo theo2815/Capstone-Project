@@ -205,3 +205,14 @@ describe("confirmation ID ownership", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 });
+
+describe("confirmation overlay buttons (AX-3)", () => {
+  afterEach(() => { cleanup(); useConfirmationStore.setState({ active: null, loading: false, error: null }); });
+
+  it("uses the shared button styles at 44 px, danger when the config says so", () => {
+    render(<ConfirmationOverlay />);
+    act(() => useConfirmationStore.getState().open({ id: "d", config: { title: "Delete", message: "Sure?", confirmLabel: "Delete", danger: true }, resolve: vi.fn() }));
+    expect(screen.getByRole("button", { name: "Delete" })).toHaveClass("text-error", "font-display", "min-h-[44px]");
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveClass("font-display", "min-h-[44px]");
+  });
+});
