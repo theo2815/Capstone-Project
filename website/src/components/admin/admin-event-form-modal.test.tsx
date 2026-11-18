@@ -20,9 +20,9 @@ function mount(mode: "create" | "edit" = "edit", event = adminEvent, seeded = tr
 }
 
 function fillCreate() {
-  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Race" } });
-  fireEvent.change(screen.getByLabelText("Location"), { target: { value: "Venue" } });
-  fireEvent.change(screen.getByLabelText("Date"), { target: { value: "2026-11-01" } });
+  fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: "Race" } });
+  fireEvent.change(screen.getByLabelText(/^Location/), { target: { value: "Venue" } });
+  fireEvent.change(screen.getByLabelText(/^Date/), { target: { value: "2026-11-01" } });
   fireEvent.change(screen.getByLabelText("Price per photo · PHP"), { target: { value: "80" } });
 }
 
@@ -33,13 +33,17 @@ async function pick(field: string, option: string) {
 
 it("requires a complete catalog-valid pair on create and clears province when region changes", async () => {
   const { submit } = mount("create"); fillCreate();
-  expect(screen.getByRole("button", { name: "Create event" })).toBeDisabled();
+  // AX-20: Create stays pressable and says what is missing instead of disabling.
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  expect(screen.getByText("Choose a region before saving.")).toBeInTheDocument();
   await pick("Region", eventRegions[0].name);
-  expect(screen.getByRole("button", { name: "Create event" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  expect(screen.getByText("Choose a province before saving.")).toBeInTheDocument();
   await pick("Province", "Cebu");
   expect(screen.getByRole("button", { name: "Create event" })).toBeEnabled();
   await pick("Region", eventRegions[1].name);
-  expect(screen.getByRole("button", { name: "Create event" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  expect(submit).not.toHaveBeenCalled();
   await pick("Province", "Leyte");
   await userEvent.click(screen.getByRole("button", { name: "Create event" }));
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ regionCode: "region-viii", provinceCode: "leyte", location: "Venue" }));
@@ -51,7 +55,9 @@ it("allows an unrelated legacy-null edit but requires province after choosing re
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ regionCode: null, provinceCode: null }));
   await pick("Region", eventRegions[0].name);
-  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(submit).toHaveBeenCalledOnce();
+  expect(screen.getByText("Choose a province before saving.")).toBeInTheDocument();
 });
 
 it("keeps saved codes through loading and error, retries, and identifies unknown codes", async () => {
@@ -68,7 +74,9 @@ it("keeps saved codes through loading and error, retries, and identifies unknown
   await screen.findByText(/unrecognized region/i);
   expect(screen.getByRole("button", { name: "Region: retired" })).toBeEnabled();
   await pick("Region", eventRegions[0].name);
-  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  const calls = submit.mock.calls.length;
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(submit).toHaveBeenCalledTimes(calls);
   await pick("Province", "Cebu");
   await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
   expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ regionCode: "region-vii", provinceCode: "cebu" }));
@@ -77,10 +85,10 @@ it("keeps saved codes through loading and error, retries, and identifies unknown
 it("preserves the dirty draft across refetch, resets on a fresh session, and owns Escape before the modal", async () => {
   const event = { ...adminEvent, regionCode: "region-vii", provinceCode: "cebu" };
   const { rerender, close, submit } = mount("edit", event);
-  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Draft" } });
+  fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: "Draft" } });
   await pick("Region", eventRegions[1].name); await pick("Province", "Leyte");
   rerender({ event: { ...event, name: "Remote", reviewRevision: 5 } });
-  expect(screen.getByLabelText("Title")).toHaveValue("Draft");
+  expect(screen.getByLabelText(/^Title/)).toHaveValue("Draft");
   expect(screen.getByRole("button", { name: "Province: Leyte" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: /^Province:/ }));
   expect(screen.getByRole("menu")).toHaveClass("z-[70]");
@@ -93,7 +101,7 @@ it("preserves the dirty draft across refetch, resets on a fresh session, and own
   expect(screen.getByRole("button", { name: /^Region:/ })).toBeDisabled();
   expect(submit).not.toHaveBeenCalled();
   rerender({ open: false }); rerender({ open: true });
-  await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Cebu Race"));
+  await waitFor(() => expect(screen.getByLabelText(/^Title/)).toHaveValue("Cebu Race"));
   expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Province: Cebu" })).toBeInTheDocument();
 });
 
@@ -123,7 +131,7 @@ it("reset needs a confirm and refreshes the list after the API answers", async (
 it("shows no price list on an untyped event", async () => {
   const get = vi.spyOn(api, "get").mockResolvedValue({ selfServeEnabled: false, types: [] });
   mount("edit");
-  await screen.findByLabelText("Title");
+  await screen.findByLabelText(/^Title/);
   expect(screen.queryByText("Photographer prices")).not.toBeInTheDocument();
   expect(get.mock.calls.some(([path]) => String(path).includes("photographer-prices"))).toBe(false);
 });
@@ -148,4 +156,55 @@ it("duplicate warning needs a second confirm", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Create anyway" }));
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ eventType: "ROAD_RACE", name: "Race" }));
   expect(checks()).toHaveLength(1);
+});
+
+// AX-20 (EV4, X3): the form says what is missing, but only once it matters.
+it("shows no error before the admin leaves a field or tries to submit", async () => {
+  mount("create");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Enter a price above zero/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/^Title/)).toBeRequired();
+  expect(screen.getByLabelText(/^Date/)).toBeRequired();
+  fireEvent.blur(screen.getByLabelText(/^Title/));
+  expect(screen.getByText("Add a title.")).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Title/)).toHaveAttribute("aria-invalid", "true");
+  expect(screen.queryByText("Add the place.")).not.toBeInTheDocument();
+  fireEvent.blur(screen.getByLabelText("Price per photo · PHP"));
+  expect(screen.getByText(/Enter a price above zero/)).toBeInTheDocument();
+});
+
+it("names every missing required field after a submit attempt", async () => {
+  const { submit } = mount("edit");
+  for (const label of [/^Title/, /^Location/, /^Date/]) fireEvent.change(screen.getByLabelText(label), { target: { value: "" } });
+  expect(screen.queryByText("Add a title.")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(screen.getByText("Add a title.")).toBeInTheDocument();
+  expect(screen.getByText("Add the place.")).toBeInTheDocument();
+  expect(screen.getByText("Pick the date.")).toBeInTheDocument();
+  expect(screen.getByLabelText(/^Date/)).toHaveAttribute("aria-describedby", "event-date-error");
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("cover controls are 44 px house buttons (EV4)", () => {
+  mount("create");
+  expect(screen.getByText("Upload cover").closest("label")).toHaveClass("rounded-full", "min-h-[44px]", "focus-within:outline-2");
+});
+
+it("treats the browser's own required check as a submit attempt", () => {
+  mount("create");
+  const title = screen.getByLabelText(/^Title/);
+  fireEvent.invalid(title);
+  expect(screen.getByText("Add a title.")).toBeInTheDocument();
+  expect(screen.getByText("Add the place.")).toBeInTheDocument();
+  expect(screen.getByText("Pick the date.")).toBeInTheDocument();
+});
+
+it("a press that leaves a field shows its error after the press, not during it", async () => {
+  mount("create");
+  fireEvent.pointerDown(document.body);
+  fireEvent.blur(screen.getByLabelText(/^Title/));
+  // Shown mid-press, the new line would push the pressed button and lose the click.
+  expect(screen.queryByText("Add a title.")).not.toBeInTheDocument();
+  fireEvent.pointerUp(document.body);
+  expect(await screen.findByText("Add a title.")).toBeInTheDocument();
 });

@@ -62,7 +62,7 @@ it("waits in delete confirmation, retains the event on failure, and allows retry
   const dialog = screen.getByRole("dialog", { name: "Delete event?" });
   const submit = within(dialog).getByRole("button", { name: "Delete event" });
   await user.click(submit); await user.click(submit);
-  expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Edit Cebu Race" })).toBeDisabled();
   expect(submit).toBeDisabled(); expect(remove).toHaveBeenCalledTimes(1);
   expect(client.getQueryData(key)).toEqual([adminEvent]); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => { request.reject(new Error("Event is still in use.")); });
@@ -76,12 +76,12 @@ it("waits in delete confirmation, retains the event on failure, and allows retry
 it.each(["create", "edit"])("retains %s form input and canonical rows after failure, then retries", async (mode) => {
   const user = userEvent.setup(); const request = deferred();
   const mutation = vi.spyOn(api, mode === "create" ? "post" : "fetch").mockReturnValueOnce(request.promise); mount();
-  await user.click(screen.getByRole("button", { name: mode === "create" ? /new event/i : "Edit" }));
+  await user.click(screen.getByRole("button", { name: mode === "create" ? /new event/i : "Edit Cebu Race" }));
   const dialog = screen.getByRole("dialog", { name: mode === "create" ? "Create event" : "Edit event" });
-  const title = within(dialog).getByLabelText("Title"); await user.clear(title); await user.type(title, "Draft title");
+  const title = within(dialog).getByLabelText(/^Title/); await user.clear(title); await user.type(title, "Draft title");
   if (mode === "create") {
-    await user.type(within(dialog).getByLabelText("Location"), "Cebu");
-    fireEvent.change(within(dialog).getByLabelText("Date"), { target: { value: adminEvent.date } });
+    await user.type(within(dialog).getByLabelText(/^Location/), "Cebu");
+    fireEvent.change(within(dialog).getByLabelText(/^Date/), { target: { value: adminEvent.date } });
     await user.clear(within(dialog).getByLabelText("Price per photo · PHP"));
     await user.type(within(dialog).getByLabelText("Price per photo · PHP"), "80");
     await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
@@ -98,8 +98,8 @@ it.each(["create", "edit"])("retains %s form input and canonical rows after fail
   await act(async () => { request.reject(new Error("Try again")); });
   expect(title).toHaveValue("Draft title"); expect(title).toBeEnabled(); expect(dialog).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  await user.click(screen.getByRole("button", { name: mode === "create" ? /new event/i : "Edit" }));
-  expect(within(screen.getByRole("dialog")).getByLabelText("Title")).toHaveValue("Draft title");
+  await user.click(screen.getByRole("button", { name: mode === "create" ? /new event/i : "Edit Cebu Race" }));
+  expect(within(screen.getByRole("dialog")).getByLabelText(/^Title/)).toHaveValue("Draft title");
   expect(screen.getByRole("status")).toHaveTextContent(/unresolved|unchanged|original/i);
   const confirmed = { ...adminEvent, name: "Backend title", slug: "backend-title" };
   mutation.mockImplementationOnce(async () => { rows = [confirmed]; return confirmed; });
@@ -124,10 +124,12 @@ it("shows loading and a retryable query error instead of an empty catalog", asyn
     if (!failed && String(path).startsWith("/admin/events")) { failed = true; throw new Error("Offline"); }
     return { items: rows };
   }); mount();
-  expect(screen.getByRole("status")).toHaveTextContent("Loading events");
+  // EV5: a skeleton list, like Photographers and Event requests, not a bare line.
+  expect(document.querySelector('[aria-busy="true"] .animate-pulse')).toBeInTheDocument();
+  expect(screen.queryByText("Loading events…")).not.toBeInTheDocument();
   await screen.findByRole("alert"); expect(screen.queryByText("No live events right now.")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await screen.findByRole("button", { name: "Edit" });
+  await screen.findByRole("button", { name: "Edit Cebu Race" });
 });
 it("identifies a lost edit snapshot after a committed response is lost and the editor remounts", async () => {
   const update = vi.spyOn(api, "fetch").mockImplementationOnce(async () => {
@@ -135,13 +137,13 @@ it("identifies a lost edit snapshot after a committed response is lost and the e
     throw new Error("Response lost after commit");
   });
   mount(); const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Edit" }));
-  await user.clear(screen.getByLabelText("Title")); await user.type(screen.getByLabelText("Title"), "Committed draft");
+  await user.click(screen.getByRole("button", { name: "Edit Cebu Race" }));
+  await user.clear(screen.getByLabelText(/^Title/)); await user.type(screen.getByLabelText(/^Title/), "Committed draft");
   await user.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
   const reference = (update.mock.calls[0][1]?.headers as Record<string, string>)["Idempotency-Key"];
   cleanup(); client.setQueryData(key, rows); mount();
-  await user.click(screen.getByRole("button", { name: "Edit" }));
+  await user.click(screen.getByRole("button", { name: "Edit Committed draft" }));
   const dialog = screen.getByRole("dialog");
   expect(dialog).toHaveTextContent(/original edit snapshot/i);
   expect(dialog).toHaveTextContent(/reconcil/i); expect(dialog).toHaveTextContent(reference);
@@ -157,7 +159,7 @@ it("retains changed geography and cover after a conflict refresh, then sends the
   const update = vi.spyOn(api, "fetch").mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", field: "expectedRevision", message: "Event changed" }], 409));
   const objectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:cover");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-  mount(); await user.click(screen.getByRole("button", { name: "Edit" }));
+  mount(); await user.click(screen.getByRole("button", { name: "Edit Cebu Race" }));
   const dialog = screen.getByRole("dialog");
   await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
   await user.click(screen.getByRole("menuitem", { name: eventRegions[1].name }));
@@ -168,7 +170,7 @@ it("retains changed geography and cover after a conflict refresh, then sends the
   await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeEnabled());
   await waitFor(() => expect(client.getQueryData(key)).toEqual(rows));
-  expect(within(dialog).getByLabelText("Title")).toHaveValue("Cebu Race");
+  expect(within(dialog).getByLabelText(/^Title/)).toHaveValue("Cebu Race");
   expect(within(dialog).getByRole("button", { name: "Province: Leyte" })).toBeInTheDocument();
   expect(within(dialog).getByAltText("Cover preview")).toHaveAttribute("src", "blob:cover");
   expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/event changed.*reopen the event/i);
@@ -205,28 +207,35 @@ it("shows the /events switch only on a live public photographer event", () => {
   rows = [adminEvent, { ...owned, id: "private", slug: "private", name: "Private Run", visibility: "unlisted" as const },
     { ...owned, id: "draft", slug: "draft", name: "Draft Run", status: "DRAFT" as const, reviewStatus: "pending" as const }, owned];
   client.setQueryData(key, rows); mount();
-  expect(screen.getAllByRole("checkbox", { name: "Show on /events" })).toHaveLength(1);
-  expect(screen.getByRole("checkbox", { name: "Show on /events" }).closest("article")).toHaveTextContent("@quickpitikfree");
+  expect(screen.getAllByRole("checkbox", { name: "Show on /events: NRW Fun Run" })).toHaveLength(1);
+  expect(screen.getByRole("checkbox", { name: "Show on /events: NRW Fun Run" }).closest("article")).toHaveTextContent("@quickpitikfree");
 });
 it("lists a photographer event from the server's answer and refreshes the public catalog", async () => {
   rows = [owned]; client.setQueryData(key, rows); client.setQueryData(["public", "events", "catalog"], []);
   const request = deferred(); const patch = vi.spyOn(api, "fetch").mockReturnValueOnce(request.promise); mount();
-  const box = screen.getByRole("checkbox", { name: "Show on /events" });
+  const box = screen.getByRole("checkbox", { name: "Show on /events: NRW Fun Run" });
   await userEvent.click(box);
+  // EV5: it asks first, as Relist does, and the box waits for the answer.
+  expect(patch).not.toHaveBeenCalled(); expect(box).not.toBeChecked();
+  const dialog = screen.getByRole("dialog", { name: "Show this event on /events?" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Show on /events" }));
   expect(patch).toHaveBeenCalledWith(`/admin/events/${owned.id}/listing`, { method: "PATCH", body: JSON.stringify({ listed: true }) });
   expect(box).toBeDisabled();
   await act(async () => { rows = [{ ...owned, listedOnEvents: true }]; request.resolve(rows[0]); });
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Show on /events" })).toBeChecked());
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Show on /events: NRW Fun Run" })).toBeChecked());
   expect(client.getQueryState(["public", "events", "catalog"])?.isInvalidated).toBe(true);
 });
 it("keeps the switch as the server has it when listing fails", async () => {
   rows = [owned]; client.setQueryData(key, rows);
   vi.spyOn(api, "fetch").mockRejectedValueOnce(new ApiError([{ code: "VALIDATION_ERROR", message: "This event is Private. The photographer must make it Public first." }], 400));
   mount();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Show on /events" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "Show on /events: NRW Fun Run" }));
+  const dialog = screen.getByRole("dialog", { name: "Show this event on /events?" });
+  await userEvent.click(within(dialog).getByRole("button", { name: "Show on /events" }));
+  await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("must make it Public first"));
   await waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ kind: "error", message: "This event is Private. The photographer must make it Public first." })]));
-  expect(screen.getByRole("checkbox", { name: "Show on /events" })).not.toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "Show on /events" })).toBeEnabled();
+  expect(screen.getByRole("checkbox", { name: "Show on /events: NRW Fun Run" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Show on /events: NRW Fun Run" })).toBeEnabled();
 });
 // AA-R17b: a hidden shared race is relisted through the listing switch.
 it("relist waits for the API before the chip clears", async () => {
@@ -235,7 +244,7 @@ it("relist waits for the API before the chip clears", async () => {
   const request = deferred(); const patch = vi.spyOn(api, "fetch").mockReturnValueOnce(request.promise); mount();
   expect(screen.getByText("Hidden")).toBeInTheDocument();
   expect(screen.getByText(/link still opens/)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Relist" }));
+  await userEvent.click(screen.getByRole("button", { name: "Relist Cebu Race" }));
   await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Relist race" }));
   expect(patch).toHaveBeenCalledWith(`/admin/events/${hidden.id}/listing`, { method: "PATCH", body: JSON.stringify({ listed: true }) });
   expect(screen.getByText("Hidden")).toBeInTheDocument();
@@ -245,5 +254,10 @@ it("relist waits for the API before the chip clears", async () => {
 it("a race still waiting for review offers no Hide or Relist", () => {
   rows = [{ ...adminEvent, eventType: "ROAD_RACE", status: "DRAFT", reviewStatus: "pending", hiddenAt: "2026-09-12T00:00:00Z" }];
   client.setQueryData(key, rows); mount();
-  expect(screen.queryByRole("button", { name: /^(Hide|Relist)$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^(Hide|Relist) / })).not.toBeInTheDocument();
+});
+it("keeps the count in the tab and does not repeat it under the tabs (EV6)", () => {
+  mount();
+  expect(screen.getByRole("button", { name: "Live now 1", pressed: true })).toBeInTheDocument();
+  expect(screen.queryByText("1 event")).not.toBeInTheDocument();
 });
