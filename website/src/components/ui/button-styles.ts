@@ -30,6 +30,12 @@ export const BTN_SIZE = {
   sm: "px-5 py-2.5 text-sm min-h-[44px]",
 } as const;
 
+/** Title button of a row that opens a drawer (AX-4): its ::after covers the
+ *  `relative` row so a click anywhere opens it, and the focus outline rings
+ *  the whole row. Inner controls take `relative z-10` to stay on top. */
+export const ROW_OPEN_BUTTON =
+  "cursor-pointer text-left outline-none after:absolute after:inset-0 after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-fresh";
+
 /** Pill for dark (pine) surfaces, e.g. the footer CTA band. */
 export const BTN_ON_DARK =
   "inline-flex items-center justify-center gap-2 rounded-full bg-paper font-display font-bold text-pine transition-colors hover:bg-fresh-tint disabled:opacity-50 disabled:cursor-not-allowed";

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useId } from "react";
 import {
   type Dispute,
   DISPUTE_ATTENTION_LABEL,
@@ -9,26 +9,21 @@ import {
   DISPUTE_STATUS_LABEL,
   disputeStatusTone,
 } from "@/lib/admin-disputes";
-import { ROUTES } from "@/lib/constants";
 import { formatSalesDate } from "@/lib/format";
-import { formatPrice } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
+import { ROW_OPEN_BUTTON } from "@/components/ui/button-styles";
 import { AdminStatusPill } from "./admin-status-pill";
 
 interface AdminDisputeCardProps {
   dispute: Dispute;
-  /**
-   * Phase 3: when provided, the card behaves as a click-to-open trigger
-   * for the drawer host. The default (no callback) preserves the legacy
-   * Link wrap to /admin/disputes/[id], so the dedicated detail route
-   * still acts as a deep-link backup if you visit it directly.
-   */
-  onOpen?: () => void;
+  /** Opens the drawer host for this dispute. */
+  onOpen: () => void;
   /** Phase 4: J/K keyboard focus indicator. Adds an ink ring + offset. */
   focused?: boolean;
 }
 
-// Directory list-row for /admin/disputes. Whole card is a Link to the
-// detail page; no nested interactives. Left: identity + reason chip.
+// Directory list-row for /admin/disputes. The title button covers the card
+// (ROW_OPEN_BUTTON) and opens the drawer. Left: identity + reason chip.
 // Right: status pill + age + amount.
 export function AdminDisputeCard({
   dispute,
@@ -45,10 +40,12 @@ export function AdminDisputeCard({
     dispute.orderSnapshot.paymentMethod;
   const attentionLabel = dispute.attention ? DISPUTE_ATTENTION_LABEL[dispute.attention] : null;
 
-  const inner = (
+  const idLineId = useId();
+
+  return (
     <article
       data-row-id={dispute.id}
-      className={`rounded-2xl border border-line bg-bone p-5 md:p-6 transition-all duration-300 hover:border-ink hover:-translate-y-[2px] ${
+      className={`relative rounded-2xl border border-line bg-bone p-5 md:p-6 transition-all duration-300 hover:border-ink hover:-translate-y-[2px] ${
         focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""
       }`}
     >
@@ -56,11 +53,13 @@ export function AdminDisputeCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-3 flex-wrap">
             <h3 className="font-display text-lg md:text-xl font-medium text-ink truncate">
-              @{dispute.runnerHandle}
-              <span className="text-slate-soft"> vs </span>
-              @{dispute.photographerHandle}
+              <button type="button" onClick={onOpen} aria-describedby={idLineId} className={cn(ROW_OPEN_BUTTON, "block w-full truncate after:rounded-2xl")}>
+                @{dispute.runnerHandle}
+                <span className="text-slate-soft"> vs </span>
+                @{dispute.photographerHandle}
+              </button>
             </h3>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+            <p id={idLineId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {dispute.id}
             </p>
           </div>
@@ -97,26 +96,6 @@ export function AdminDisputeCard({
         </div>
       )}
     </article>
-  );
-
-  if (onOpen) {
-    return (
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`Open dispute ${dispute.id}`}
-        className="block w-full text-left"
-      >
-        {inner}
-      </button>
-    );
-  }
-
-  const href = `${ROUTES.ADMIN_DISPUTES}/${dispute.id}`;
-  return (
-    <Link href={href} className="block">
-      {inner}
-    </Link>
   );
 }
 

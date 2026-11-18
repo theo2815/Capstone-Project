@@ -31,7 +31,7 @@ it.each(["card", "drawer"])("%s retains flag reasons on failure and blocks repea
   let reject!: (error: Error) => void;
   const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, no) => { reject = no; }));
   render(<QueryClientProvider client={client}>{surface === "card" ? <><AdminFlagCard flag={flag} /><AdminFlagCard flag={flag} /></> : <FlagsQueue />}</QueryClientProvider>);
-  if (surface === "drawer") await user.click(await screen.findByRole("button", { name: "Open flag flag-1" }));
+  if (surface === "drawer") await user.click(await screen.findByRole("button", { description: "flag-1" }));
   const scope = surface === "drawer" ? within(await screen.findByRole("dialog")) : screen;
   await user.click(scope.getAllByRole("button", { name: "Hide…" })[0]!);
   const dialog = screen.getByRole("dialog", { name: "Hide flag-1" });
@@ -116,10 +116,9 @@ it("buttons inside a clickable card do not open it or swallow other keys", async
   expect(fireEvent.keyDown(button, { key: "Enter" })).toBe(true);
   expect(fireEvent.keyDown(button, { key: "j" })).toBe(true);
   expect(seen.mock.calls.map(([e]) => e.key)).toContain("j");
-  // The card itself still opens on Enter and Space.
-  const card = screen.getByRole("button", { name: "Open flag flag-2" });
-  fireEvent.keyDown(card, { key: "Enter" });
-  fireEvent.keyDown(card, { key: " " });
+  // The card itself still opens on Enter and Space, through its title button.
+  screen.getByRole("button", { description: "flag-2" }).focus();
+  await userEvent.keyboard("{Enter} ");
   expect(onOpen).toHaveBeenCalledTimes(2);
   window.removeEventListener("keydown", seen);
 });
@@ -132,7 +131,7 @@ it("the drawer of a relevance flag holds payouts, shows a refusal and keeps the 
         : { items: [relevanceFlag], total: 1 }) as typeof api.get);
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(refusal()).mockResolvedValue({ ...relevanceFlag, payoutHoldAt: "2026-11-13T00:00:00Z" });
   render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
-  await user.click(await screen.findByRole("button", { name: "Open flag flag-2" }));
+  await user.click(await screen.findByRole("button", { description: "flag-2" }));
   const drawer = within(await screen.findByRole("dialog"));
   expect(await drawer.findByText("No batch is linked to this flag.")).toBeInTheDocument();
   expect(drawer.queryByRole("button", { name: "Hide…" })).not.toBeInTheDocument();
