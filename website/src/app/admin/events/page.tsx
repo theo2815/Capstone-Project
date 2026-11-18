@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Slab } from "@/components/profile-shell";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   AdminEventCard,
   type AdminEventReview,
@@ -17,8 +17,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import type { EventState, ListEvent } from "@/types/event";
 
-// Admin Events page. Four slabs (Live / Upcoming / Recent / Archive) of
-// <AdminEventCard>s. Lifecycle state is derived from `event.date`
+// Admin Events page. Four status tabs (Live / Upcoming / Recent / Archive),
+// one list of <AdminEventCard>s at a time. Lifecycle state is derived from `event.date`
 // (see `lib/event-catalog.ts`) — admin only edits Title/Location/Date and
 // the four states fall out automatically:
 //
@@ -29,7 +29,6 @@ import type { EventState, ListEvent } from "@/types/event";
 
 const SECTIONS: ReadonlyArray<{
   id: string;
-  number: string;
   title: string;
   caption: string;
   matchState: EventState;
@@ -37,7 +36,6 @@ const SECTIONS: ReadonlyArray<{
 }> = [
   {
     id: "live",
-    number: "01",
     title: "Live now",
     caption: "Currently accepting uploads · 4-day grace from race day",
     matchState: "live",
@@ -45,7 +43,6 @@ const SECTIONS: ReadonlyArray<{
   },
   {
     id: "upcoming",
-    number: "02",
     title: "Upcoming",
     caption: "Race day pending",
     matchState: "upcoming",
@@ -53,7 +50,6 @@ const SECTIONS: ReadonlyArray<{
   },
   {
     id: "recent",
-    number: "03",
     title: "Recent",
     caption: "Galleries open for sale · upload window closed",
     matchState: "open",
@@ -61,7 +57,6 @@ const SECTIONS: ReadonlyArray<{
   },
   {
     id: "archive",
-    number: "04",
     title: "Archive",
     caption: "Read-only history",
     matchState: "past",
@@ -128,6 +123,21 @@ export default function AdminEventsPage() {
         const ok = await setListing(event.id, listed);
         if (!ok) throw new Error("Another action is pending or the session changed. Review this race before retrying.");
         showToast({ kind: "success", message: `${listed ? "Relisted" : "Hidden"} · ${event.name}` });
+      },
+    });
+  }
+
+  // EV5: "Show on /events" asks first, as Relist does; the box follows the server.
+  async function handleSetListing(event: ListEvent, listed: boolean) {
+    await confirm({
+      title: listed ? "Show this event on /events?" : "Take this event off /events?",
+      message: listed
+        ? <>Puts <strong className="text-ink">{event.name}</strong> on the public /events list.</>
+        : <>Takes <strong className="text-ink">{event.name}</strong> off the public /events list. Its link still opens.</>,
+      confirmLabel: listed ? "Show on /events" : "Take off /events",
+      onConfirm: async () => {
+        const ok = await setListing(event.id, listed);
+        if (!ok) throw new Error("Another action is pending or the session changed. Review this event before retrying.");
       },
     });
   }
@@ -245,7 +255,11 @@ export default function AdminEventsPage() {
         liveCount={liveCount}
         onCreate={() => setCreateOpen(true)}
       />
-      {query.isPending && <p role="status" className="font-sans text-sm text-slate">Loading events…</p>}
+      {query.isPending && (
+        <div className="mt-8 md:mt-10 space-y-3" aria-busy="true">
+          {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-20 w-full rounded-2xl" />)}
+        </div>
+      )}
       {query.isError && (
         <div role="alert" className="space-y-3">
           <p className="font-sans text-sm text-error">Couldn&apos;t load events. Please try again.</p>
@@ -260,18 +274,11 @@ export default function AdminEventsPage() {
           onChange={setTab}
         />
       )}
-      {query.data && grouped.filter((section) => section.id === activeTab).map((section) => {
-        const noun = section.items.length === 1 ? "event" : "events";
-        return (
-          <Slab
-            key={section.id}
-            id={section.id}
-            number={section.number}
-            title={section.title}
-            caption={section.caption}
-            trailing={`${section.items.length} ${noun}`}
-            collapsed={section.items.length === 0}
-          >
+      {/* EV6: the tab already names the status and its count; only the caption stays. */}
+      {query.data && grouped.filter((section) => section.id === activeTab).map((section) => (
+          <section key={section.id} id={section.id} aria-labelledby={`${section.id}-heading`} className="pt-6 md:pt-8">
+            <h2 id={`${section.id}-heading`} className="sr-only">{section.title}</h2>
+            <p className="font-sans text-sm text-slate mb-4">{section.caption}</p>
             {section.items.length === 0 ? (
               <p className="font-sans text-sm text-slate-soft">
                 {emptyCopyFor(section.matchState)}
@@ -286,7 +293,7 @@ export default function AdminEventsPage() {
                     pendingLabel={pendingAction(event.id)}
                     onEdit={(e) => { if (editTarget?.id !== e.id || !recoveryNotice(e.id)) setEditTarget(e); setEditOpen(true); }}
                     onDelete={handleDelete}
-                    onSetListing={(e, listed) => { void setListing(e.id, listed).catch(() => {}); }}
+                    onSetListing={handleSetListing}
                     raceHidden={raceHiddenById.get(event.id)}
                     onRaceListing={handleRaceListing}
                   />
@@ -294,9 +301,8 @@ export default function AdminEventsPage() {
                 ))}
               </ul>
             )}
-          </Slab>
-        );
-      })}
+          </section>
+      ))}
 
       <AdminEventFormModal
         open={createOpen}

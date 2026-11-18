@@ -9,6 +9,7 @@ import {
   AdminTextInput,
   AdminTextarea,
 } from "@/components/admin/admin-form-fields";
+import { FieldError } from "@/components/ui/field-error";
 import { useRaceTypes } from "@/hooks/use-race-types";
 import { fetchAdminDuplicateCandidates } from "@/lib/api-admin";
 import type { RaceCandidate } from "@/lib/api-photographer";
@@ -117,6 +118,22 @@ export function AdminEventFormModal({
   const [warned, setWarned] = useState<{ key: string; races: RaceCandidate[] } | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // EV4: a field's error shows once it was left, or once a submit was tried.
+  const [attempted, setAttempted] = useState(false);
+  const [left, setLeft] = useState<ReadonlySet<string>>(() => new Set());
+  const pressing = useRef(false);
+  useEffect(() => {
+    const down = () => { pressing.current = true; };
+    const up = () => { pressing.current = false; };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
   const submittingRef = useRef(false);
   const draftTarget = useRef<string | null>(null);
   const wasOpen = useRef(false);
@@ -157,6 +174,8 @@ export function AdminEventFormModal({
     setWarned(null);
     setCheckError(null);
     setSubmitting(false);
+    setAttempted(false);
+    setLeft(new Set());
   }, [open, mode, event, recoveryNotice]);
 
   // Object URL preview for newly picked files. Revoke on swap/close so we
@@ -182,22 +201,21 @@ export function AdminEventFormModal({
   const freeEvent = mode === "edit" && event?.pricingMode === "free";
   const parsedPrice = parsePrice(price, freeEvent);
   const priceValid = parsedPrice !== null;
-  const priceHint = !priceValid
+  const shown = (id: string) => attempted || left.has(id);
+  const priceHint = !priceValid && shown("event-price-per-photo")
     ? "Enter a price above zero (e.g. 80 or 80.50)."
     : undefined;
+  const nameError = !trimmedName && shown("event-name") ? "Add a title." : null;
+  const locationError = !trimmedLocation && shown("event-location") ? "Add the place." : null;
+  const dateError = !dateValid && shown("event-date") ? "Pick the date." : null;
   const selectedRegion = pair.regionCode ? getRegion(regions, pair.regionCode) : undefined;
   const selectedProvince = selectedRegion?.provinces.find((p) => p.code === pair.provinceCode);
   const pairChanged = pair.regionCode !== initialPair.current.regionCode || pair.provinceCode !== initialPair.current.provinceCode;
   const pairRequired = mode === "create" || pairChanged;
   const pairValid = !pairRequired || (!regionsLoading && !regionsError && !!selectedProvince);
   const catalogReady = !regionsLoading && !regionsError;
-  const canSubmit =
-    trimmedName.length > 0 &&
-    trimmedLocation.length > 0 &&
-    dateValid &&
-    priceValid &&
-    pairValid &&
-    !submitting && !pending;
+  // Missing fields no longer disable Submit: pressing it names what is missing.
+  const fieldsValid = trimmedName.length > 0 && trimmedLocation.length > 0 && dateValid && priceValid;
 
   const duplicateKey = JSON.stringify([raceType, trimmedName, date, pair.provinceCode, organizerName.trim()]);
   const warnedNow = warned?.key === duplicateKey ? warned.races : null;
@@ -207,7 +225,8 @@ export function AdminEventFormModal({
     : [];
 
   async function handleSubmit() {
-    if (!canSubmit || parsedPrice === null || submittingRef.current) return;
+    if (submitting || pending || submittingRef.current) return;
+    if (!fieldsValid || !pairValid || parsedPrice === null) { setAttempted(true); return; }
     // User cleared an existing cover (Remove button) and didn't replace it.
     // The new file branch takes precedence in the parent + backend if the
     // user actually picked a replacement.
@@ -275,9 +294,22 @@ export function AdminEventFormModal({
       submitLabel={submitLabel}
       submitting={submitting || pending}
       pendingLabel={mode === "create" ? "Creating…" : "Saving…"}
-      submitDisabled={!canSubmit}
       escDisabled={locationOpen}
     >
+      {/* Blur marks a field as left; the browser's own check on submit (which also
+          focuses the first problem) counts as an attempt. When a press moved focus, the error waits for the press to end: shown mid-press,
+          its line pushes the pressed button down and the click is lost. */}
+      <div
+        className="space-y-5"
+        onBlur={(e) => {
+          const id = e.target.id;
+          if (!id) return;
+          const mark = () => setLeft((s) => (s.has(id) ? s : new Set(s).add(id)));
+          if (pressing.current) window.addEventListener("pointerup", () => setTimeout(mark), { once: true });
+          else mark();
+        }}
+        onInvalid={() => setAttempted(true)}
+      >
       {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
       {raceOptions.length > 0 && (
         <fieldset className="space-y-3">
@@ -294,6 +326,8 @@ export function AdminEventFormModal({
         showCounter
         placeholder="Cebu Marathon 2026"
         autoFocus
+        required
+        error={nameError}
       />
       <AdminTextInput
         id="event-location"
@@ -303,6 +337,8 @@ export function AdminEventFormModal({
         maxLength={120}
         showCounter
         placeholder="SRP Boulevard, Cebu City"
+        required
+        error={locationError}
       />
       {mode === "edit" && !pair.regionCode && !pair.provinceCode && <p className="font-sans text-sm text-slate">Unclassified event. You can keep this unchanged when editing other details.</p>}
       {regionsLoading && <p role="status" className="font-sans text-sm text-slate">Loading regions… Saved values are kept.</p>}
@@ -315,19 +351,24 @@ export function AdminEventFormModal({
         panelClassName="z-[70]"
         onOpenChange={setLocationOpen}
         errors={{
-          region: catalogReady && pair.regionCode && !selectedRegion ? "Unrecognized region. Choose a current region to change this pair." : null,
+          region: catalogReady && pair.regionCode && !selectedRegion ? "Unrecognized region. Choose a current region to change this pair."
+            : attempted && catalogReady && pairRequired && !pair.regionCode ? "Choose a region before saving." : null,
           province: catalogReady && pair.provinceCode && !selectedProvince ? "Unrecognized province. Choose a province in the selected region." : pair.regionCode && !pair.provinceCode ? "Choose a province before saving." : null,
         }}
       />
       <div className="space-y-2">
-        <AdminFieldLabel htmlFor="event-date">Date</AdminFieldLabel>
+        <AdminFieldLabel htmlFor="event-date" required>Date</AdminFieldLabel>
         <input
           id="event-date"
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
           className={DATE_INPUT_CLS}
+          required
+          aria-invalid={dateError ? true : undefined}
+          aria-describedby={dateError ? "event-date-error" : undefined}
         />
+        <FieldError id="event-date-error" message={dateError} density="tight" />
       </div>
 
       <AdminTextInput
@@ -399,6 +440,7 @@ export function AdminEventFormModal({
           </ul>
         </div>
       )}
+      </div>
     </AdminFormModal>
   );
 }
@@ -543,10 +585,9 @@ export function CoverField({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 border-t border-line">
+          {/* The file input is sr-only, so its label shows the keyboard focus. */}
           <label
-            className={cn(
-              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors cursor-pointer",
-            )}
+            className={cn(BTN_GHOST, BTN_SIZE.sm, "cursor-pointer focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-fresh")}
           >
             {bannerUrl ? "Replace cover" : "Upload cover"}
             <input
@@ -561,7 +602,7 @@ export function CoverField({
             <button
               type="button"
               onClick={onRemove}
-              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-error transition-colors"
+              className={cn(BTN_GHOST, BTN_SIZE.sm)}
             >
               Remove
             </button>
