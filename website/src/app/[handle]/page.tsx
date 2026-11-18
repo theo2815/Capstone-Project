@@ -5,7 +5,7 @@ import { notFound, useParams } from "next/navigation";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SiteHeader } from "@/components/layout/site-header";
-import { Slab } from "@/components/profile-shell";
+import { ProfileShellFooter, Slab } from "@/components/profile-shell";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { EventTile } from "@/components/events/event-tile";
 import { ReportButton } from "@/components/moderation/report-dialog";
@@ -51,6 +51,7 @@ export default function PublicHandlePage() {
     <main className="bg-bone text-ink min-h-screen flex flex-col">
       <SiteHeader />
       <PublicProfileBody handle={handle} />
+      <ProfileShellFooter />
     </main>
   );
 }
