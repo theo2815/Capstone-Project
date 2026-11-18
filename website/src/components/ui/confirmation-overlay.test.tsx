@@ -176,15 +176,32 @@ describe("confirmation ID ownership", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it("still confirms once on Enter while focus is on the trigger behind the dialog", async () => {
+  it("puts focus on the dialog itself on open, so Enter there confirms (not on the trigger behind it)", async () => {
     const trigger = document.createElement("button");
     document.body.appendChild(trigger); trigger.focus();
     const execute = vi.fn();
     render(<ConfirmationOverlay />);
     const resolve = open(execute);
-    expect(fireEvent.keyDown(trigger, { key: "Enter" })).toBe(false);
+    const dialog = screen.getByRole("dialog", { name: "first" });
+    expect(dialog).toHaveFocus();
+    expect(fireEvent.keyDown(dialog, { key: "Enter" })).toBe(false);
     await waitFor(() => expect(resolve).toHaveBeenCalledExactlyOnceWith(true));
     expect(execute).toHaveBeenCalledTimes(1);
+    expect(trigger).toHaveFocus();
     trigger.remove();
+  });
+
+  it("does not confirm on Enter inside a field in the message", () => {
+    const execute = vi.fn();
+    render(<ConfirmationOverlay />);
+    const resolve = vi.fn();
+    act(() => useConfirmationStore.getState().open({ id: "note", config: { title: "Reject", message: <textarea aria-label="Note" />, onConfirm: execute }, resolve }));
+    const note = screen.getByRole("textbox", { name: "Note" });
+    note.focus();
+    expect(fireEvent.keyDown(note, { key: "Enter" })).toBe(true);
+    // A held Enter in a field still types newlines.
+    expect(fireEvent.keyDown(note, { key: "Enter", repeat: true })).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
   });
 });

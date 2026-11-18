@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useScrollLock } from "@/lib/scroll-lock";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { Kicker } from "@/components/ui/kicker";
 import { useAdminLegendStore } from "@/store/admin-legend-store";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
@@ -50,6 +51,8 @@ export function AdminDetailDrawer({
   className,
 }: AdminDetailDrawerProps) {
   const [mounted, setMounted] = useState(false);
+  const [panel, setPanel] = useState<HTMLDivElement | null>(null);
+  const titleId = useId();
   const legendOpen = useAdminLegendStore((s) => s.open);
   const paletteOpen = useAdminPaletteStore((s) => s.open);
   // The keyboard legend and command palette both render as Modals at z-60
@@ -58,6 +61,7 @@ export function AdminDetailDrawer({
   // the topmost surface, not both.
   const effectiveEscDisabled = escDisabled || legendOpen || paletteOpen;
   useScrollLock(open);
+  useDialogFocus(panel, open, { trap: true });
 
   useEffect(() => {
     setMounted(true);
@@ -76,11 +80,13 @@ export function AdminDetailDrawer({
 
   const content = (
     <div
+      ref={setPanel}
       role="dialog"
       aria-modal="true"
-      aria-label={typeof title === "string" ? title : undefined}
+      aria-labelledby={titleId}
+      tabIndex={-1}
       className={cn(
-        "fixed inset-0 z-50 bg-bone flex flex-col",
+        "fixed inset-0 z-50 bg-bone flex flex-col outline-none",
         "animate-[fade-up_0.18s_ease-out_both]",
         className,
       )}
@@ -100,7 +106,7 @@ export function AdminDetailDrawer({
                   kicker && "mt-2",
                 )}
               >
-                <h2 className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-[1.1] text-ink min-w-0">
+                <h2 id={titleId} className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-[1.1] text-ink min-w-0">
                   {title}
                 </h2>
                 {rightHeader && <div className="shrink-0">{rightHeader}</div>}
@@ -111,7 +117,7 @@ export function AdminDetailDrawer({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="shrink-0 size-9 rounded-full border border-line text-ink hover:bg-ink hover:text-surface hover:border-ink transition-colors flex items-center justify-center"
+              className="shrink-0 size-11 rounded-full border border-line text-ink hover:bg-ink hover:text-surface hover:border-ink transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ×

@@ -4,6 +4,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useScrollLock } from "@/lib/scroll-lock";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { Kicker } from "@/components/ui/kicker";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,10 @@ interface ModalProps {
    * own close affordance, or when dismissal must be gated (mid-payment).
    */
   hideClose?: boolean;
+  /** Accessible name when there is no visible `title` (e.g. the command palette). */
+  ariaLabel?: string;
+  /** Where focus lands on open; "container" focuses the panel itself. */
+  initialFocus?: "first" | "container";
 }
 
 // Portals to document.body so the modal escapes any transform-context
@@ -38,10 +43,14 @@ export function Modal({
   className,
   escDisabled = false,
   hideClose = false,
+  ariaLabel,
+  initialFocus,
 }: ModalProps) {
   const [mounted, setMounted] = useState(false);
+  const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const titleId = useId();
   useScrollLock(isOpen);
+  useDialogFocus(panel, isOpen, { trap: true, initialFocus });
 
   useEffect(() => {
     setMounted(true);
@@ -68,11 +77,14 @@ export function Modal({
         aria-hidden
       />
       <div
+        ref={setPanel}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
+        aria-label={title ? undefined : ariaLabel}
+        tabIndex={-1}
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-2xl border border-line bg-bone p-6 md:p-8 shadow-2xl",
+          "relative z-10 outline-none w-full max-w-lg rounded-2xl border border-line bg-bone p-6 md:p-8 shadow-2xl",
           "max-h-[calc(100vh-3rem)] overflow-y-auto",
           "animate-[fade-up_0.25s_ease-out_both]",
           className,
