@@ -5,7 +5,8 @@ import { cn } from "@/lib/utils";
 export interface AdminStatusTab<K extends string> {
   key: K;
   label: string;
-  count: number;
+  /** Left out for tabs that are not statuses (the Sales sort). */
+  count?: number;
 }
 
 // Status tabs for admin lists (Payouts, Events): one status shows at a time,
@@ -37,7 +38,9 @@ export function AdminStatusTabs<K extends string>({
             )}
           >
             {t.label}
-            <span className="ml-1.5 font-mono text-[12px] text-slate-soft tnum">{t.count}</span>
+            {t.count !== undefined && (
+              <span className="ml-1.5 font-mono text-[12px] text-slate-soft tnum">{t.count}</span>
+            )}
           </button>
         );
       })}

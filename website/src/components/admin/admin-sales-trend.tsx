@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { Kicker } from "@/components/ui/kicker";
-import { useWeeklyGmvSeries } from "@/lib/admin-sales";
+import { SALES_ESTIMATE_NOTE, useWeeklyGmvSeries } from "@/lib/admin-sales";
 import { formatPrice } from "@/lib/utils";
 import { AdminTrendChart } from "./admin-trend-chart";
 
@@ -33,12 +33,18 @@ export function AdminSalesTrend() {
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-4 mb-5">
-        <Kicker>Weekly GMV · last {series.length} weeks</Kicker>
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-2">
+        <div className="flex items-center gap-3">
+          <Kicker>Weekly GMV · last {series.length} weeks</Kicker>
+          <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
+            Estimate
+          </Kicker>
+        </div>
         <Kicker tone="soft" tnum>
           {formatPrice(total)} total
         </Kicker>
       </div>
+      <p className="font-sans text-sm text-ink-soft mb-5">{SALES_ESTIMATE_NOTE}</p>
 
       <AdminTrendChart
         data={data}

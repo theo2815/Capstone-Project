@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
@@ -24,9 +25,8 @@ const SORT_OPTIONS: Array<{ key: SortKey; label: string; defaultDir: SortDir }> 
   { key: "refunds", label: "Refunds", defaultDir: "desc" },
 ];
 
-// Sales-by-event audit table. All events with photoCount > 0, sortable by
-// implied GMV / name / date / refund $. Hybrid Load-More via the shared
-// <LoadMoreButton> primitive (matches the 11 other paginated surfaces).
+// Sales-by-event audit table, sortable by GMV / name / date / refund $.
+// Hybrid Load-More via the shared <LoadMoreButton> primitive (matches the 11 other paginated surfaces).
 export function AdminSalesEventTable() {
   const all = useSalesByEvent();
   const [sortKey, setSortKey] = useState<SortKey>("gmv");
@@ -68,37 +68,24 @@ export function AdminSalesEventTable() {
   if (total === 0) {
     return (
       <p className="font-sans text-sm text-ink-soft">
-        No events with photo sales yet — once a race accumulates photos, its
-        implied GMV row appears here.
+        No events with photo sales yet — once a race sells photos, its row
+        appears here.
       </p>
     );
   }
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        <Kicker tone="soft">Sort by</Kicker>
-        {SORT_OPTIONS.map((opt) => {
-          const isActive = sortKey === opt.key;
-          const arrow = isActive ? (sortDir === "asc" ? "↑" : "↓") : null;
-          return (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => handleSort(opt.key)}
-              aria-pressed={isActive}
-              className={cn(
-                "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-3 py-1 border transition-colors",
-                isActive
-                  ? "border-ink text-ink"
-                  : "border-line text-slate hover:text-ink hover:border-ink",
-              )}
-            >
-              {opt.label}
-              {arrow && <span className="ml-1.5 tnum">{arrow}</span>}
-            </button>
-          );
-        })}
+      <div className="mb-5">
+        <AdminStatusTabs
+          label="Sort events by"
+          tabs={SORT_OPTIONS.map((opt) => ({
+            key: opt.key,
+            label: opt.key === sortKey ? `${opt.label} ${sortDir === "asc" ? "↑" : "↓"}` : opt.label,
+          }))}
+          value={sortKey}
+          onChange={handleSort}
+        />
       </div>
 
       {/* Column headings for the desktop grid; each cell also carries its label for screen readers. */}
@@ -144,9 +131,11 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
-              <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
-                Implied
-              </Kicker>
+              {row.implied && (
+                <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
+                  Implied
+                </Kicker>
+              )}
             </div>
             <Kicker as="p" tone="soft" tnum className="mt-1">
               {row.city} · {capitalize(row.state)} · {row.photoCount.toLocaleString()} photos

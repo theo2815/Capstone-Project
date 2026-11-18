@@ -197,17 +197,15 @@ export function useFlagHiddenPhotos(flagId: string) {
 
 // ───────────────────────────────────────────── Sales
 
-export function useAdminSalesKpisLive(
-  range: AdminSalesRange = "ytd",
-): AdminSalesKpis | null {
+// The full query, so Sales can tell "loading" or "failed" apart from real money.
+export function useAdminSalesKpisQuery(range: AdminSalesRange = "ytd") {
   const session = usePrivateQuerySession("ADMIN");
-  const query = useQuery<AdminSalesKpis>({
+  return useQuery<AdminSalesKpis>({
     queryKey: ["admin", "sales", "kpis", range, ...session.key],
     queryFn: ({ signal }) => fetchAdminSalesKpis(range, signal),
     enabled: session.enabled,
     staleTime: SALES_STALE_MS,
   });
-  return query.data ?? null;
 }
 
 export function useAdminSalesByEventLive(args: {

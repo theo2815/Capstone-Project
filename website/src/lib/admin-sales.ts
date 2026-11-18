@@ -8,61 +8,18 @@ import {
 } from "@/lib/platform-economics";
 import { useAdminEvents, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
 import { useAdminDisputes, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
-import {
-  useAdminSalesKpisLive,
-  useAdminSalesByEventLive,
-} from "@/hooks/use-admin-data";
+import { useAdminSalesByEventLive } from "@/hooks/use-admin-data";
+import { formatPrice } from "@/lib/utils";
 
 // Admin sales — derivation hooks. Pure read-side.
 //
-// `useSalesKpis` and `useSalesByEvent` prefer server data from
-// `/admin/sales/*`; local derivation from store overrides stays as a
-// fallback when the server query is still pending.
-//
-// Caveat: orders mock has no photographer attribution, so events are scored
-// via "implied GMV" = photoCount × PHOTO_PRICE_PHP. The page surfaces this
-// as an Implied badge until the backend lands order-level event attribution.
+// The money tiles read the server only (`useAdminSalesKpisQuery`). The weekly
+// trend and top photographers are still estimated from payout photo counts
+// until AX-18 wires the server series; both carry SALES_ESTIMATE_NOTE.
+// `useSalesByEvent` prefers the server's real order sums and marks rows it
+// had to derive in the browser as `implied`.
 
-export interface SalesKpis {
-  gmv: number;
-  platformRevenue: number;
-  refundsIssued: number;
-  netPlatformRevenue: number;
-  photographerKeep: number;
-  totalSalesCount: number;
-}
-
-export function useSalesKpis(): SalesKpis {
-  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
-  const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
-
-  const derived = useMemo(() => {
-    const cycles = serverPayouts;
-    const totalSalesCount = cycles.reduce((s, c) => s + c.itemCount, 0);
-    const gmv = totalSalesCount * PHOTO_PRICE_PHP;
-    const split = splitGmv(gmv);
-
-    const refundsIssued = disputes.reduce(
-      (s, d) => s + (d.refundAmount ?? 0),
-      0,
-    );
-    const netPlatformRevenue = Math.max(0, split.cut - refundsIssued);
-
-    return {
-      gmv,
-      platformRevenue: split.cut,
-      refundsIssued,
-      netPlatformRevenue,
-      photographerKeep: split.keep,
-      totalSalesCount,
-    };
-  }, [serverPayouts, disputes]);
-
-  // Live mode: prefer server data when present, fall back to derivation while
-  // the query is loading or in mock mode.
-  const live = useAdminSalesKpisLive("ytd");
-  return live ?? derived;
-}
+export const SALES_ESTIMATE_NOTE = `Estimated from payout photo counts × ${formatPrice(PHOTO_PRICE_PHP)} until server figures arrive.`;
 
 export interface WeeklyGmvPoint {
   /** ISO Monday for the week (YYYY-MM-DD). */
@@ -173,6 +130,8 @@ export interface SalesEventRow {
   impliedGmv: number;
   impliedCut: number;
   refundsIssued: number;
+  /** True when derived in the browser (photoCount × price), not a server order sum. */
+  implied: boolean;
 }
 
 export function useSalesByEvent(): SalesEventRow[] {
@@ -206,13 +165,15 @@ export function useSalesByEvent(): SalesEventRow[] {
           impliedGmv,
           impliedCut: split.cut,
           refundsIssued: refundsByEvent.get(e.id) ?? 0,
+          implied: true,
         };
       });
   }, [catalog, disputes]);
 
-  // Live mode: prefer server data when present, fall back to derivation.
+  // Prefer the server's real order sums; fall back to derivation while it has no answer.
   const live = useAdminSalesByEventLive();
-  return live ?? derived;
+  const liveRows = useMemo(() => live?.map((r) => ({ ...r, implied: false })), [live]);
+  return liveRows ?? derived;
 }
 
 export function useTopEvents(limit: number = 10): SalesEventRow[] {
@@ -223,41 +184,25 @@ export function useTopEvents(limit: number = 10): SalesEventRow[] {
   );
 }
 
+// Counts from the dispute list; the refund money comes from the server KPIs.
 export interface RefundPulse {
-  refundsIssued: number;
   refundCount: number;
-  refundRatePct: number; // % of GMV refunded; 0 when GMV = 0
   openCount: number;
   escalatedCount: number;
 }
 
 export function useRefundPulse(): RefundPulse {
-  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
 
   return useMemo(() => {
-    const cycles = serverPayouts;
-    const gmv =
-      cycles.reduce((s, c) => s + c.itemCount, 0) * PHOTO_PRICE_PHP;
-    let refundsIssued = 0;
     let refundCount = 0;
     let openCount = 0;
     let escalatedCount = 0;
     for (const d of disputes) {
-      if (d.refundAmount && d.refundAmount > 0) {
-        refundsIssued += d.refundAmount;
-        refundCount += 1;
-      }
+      if (d.refundAmount && d.refundAmount > 0) refundCount += 1;
       if (d.status === "open") openCount += 1;
       if (d.status === "escalated") escalatedCount += 1;
     }
-    const refundRatePct = gmv > 0 ? (refundsIssued / gmv) * 100 : 0;
-    return {
-      refundsIssued,
-      refundCount,
-      refundRatePct,
-      openCount,
-      escalatedCount,
-    };
-  }, [serverPayouts, disputes]);
+    return { refundCount, openCount, escalatedCount };
+  }, [disputes]);
 }
