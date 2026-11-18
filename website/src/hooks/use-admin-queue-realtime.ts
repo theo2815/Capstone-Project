@@ -46,6 +46,8 @@ export function useAdminQueueRealtime(enabled: boolean): void {
       queryClient.invalidateQueries({ queryKey: ["admin", "events"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
       queryClient.invalidateQueries({ queryKey: ["admin", "relevance"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "flags"] });
+      queryClient.invalidateQueries({ queryKey: ["admin", "sales"] });
       void queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
       void queryClient.invalidateQueries({ queryKey: removalKeys.admin([user.id, user.role, sessionVersion]) });
     };
