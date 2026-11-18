@@ -7,31 +7,32 @@ import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
 import { AdminSalesEventTable } from "@/components/admin/admin-sales-event-table";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ROUTES } from "@/lib/constants";
-import {
-  useSalesKpis,
-  useRefundPulse,
-} from "@/lib/admin-sales";
-import { formatPrice } from "@/lib/utils";
+import { useAdminSalesKpisQuery } from "@/hooks/use-admin-data";
+import { SALES_TREND_WEEKS, useRefundPulse } from "@/lib/admin-sales";
+import { PLATFORM_CUT_RATE } from "@/lib/platform-economics";
+import { cn, formatPrice } from "@/lib/utils";
 
-// /admin/sales — revenue intelligence. Five slabs, all derivations sourced
-// from existing mock seeds:
-//   01 KPIs            Backend KPIs, with cycle/dispute fallback
-//   02 Weekly trend    Payout cycles grouped by weekOf
-//   03 Top performers  same, plus the event catalog (implied GMV for events)
-//   04 Sales by event  the event catalog × per-photo price + dispute join
-//   05 Refund pulse    disputes with refundAmount > 0
+// /admin/sales — revenue intelligence. Five slabs:
+//   01 KPIs            server KPIs only (`range=ytd`); never a browser estimate
+//   02 Weekly trend    estimated from payout cycles, labelled Estimate
+//   03 Top performers  photographers estimated, events from server order sums
+//   04 Sales by event  server order sums; browser-derived rows badged Implied
+//   05 Refund pulse    server refunds; rate against `range=week` GMV
 //
 // Per-photo price + cut rate live in lib/platform-economics.ts so this page
 // and the photographer-facing PlatformCutModal stay in lockstep.
 
 export default function AdminSalesPage() {
-  const kpis = useSalesKpis();
+  const kpisQuery = useAdminSalesKpisQuery("ytd");
+  const kpis = kpisQuery.data;
   const refunds = useRefundPulse();
 
   return (
     <>
-      <Header totalSales={kpis.totalSalesCount} />
+      <Header totalSales={kpis?.totalSalesCount} />
 
       <Slab
         id="kpis"
@@ -39,6 +40,30 @@ export default function AdminSalesPage() {
         title="Money"
         caption="GMV and where it splits"
       >
+        {!kpis && kpisQuery.isError ? (
+          <div role="alert" className="space-y-3">
+            <p className="font-sans text-sm text-error">
+              Couldn&apos;t load the sales figures. Please try again.
+            </p>
+            <button
+              type="button"
+              onClick={() => void kpisQuery.refetch()}
+              disabled={kpisQuery.isFetching}
+              className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+            >
+              Retry
+            </button>
+          </div>
+        ) : !kpis ? (
+          <div
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8"
+            aria-busy="true"
+          >
+            {Array.from({ length: 4 }, (_, i) => (
+              <Skeleton key={i} className="h-40 w-full rounded-2xl" />
+            ))}
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
           <AdminStatTile
             kicker="Gross merch volume"
@@ -50,22 +75,12 @@ export default function AdminSalesPage() {
           <AdminStatTile
             kicker="Platform revenue"
             value={formatPrice(kpis.platformRevenue)}
-            caption="25% of every sale"
+            caption={`${Math.round(PLATFORM_CUT_RATE * 100)}% of every sale`}
           />
           <AdminStatTile
             kicker="Refunds issued"
             value={formatPrice(kpis.refundsIssued)}
-            // The amount is the server total and the count comes from the dispute
-            // list, so never caption a non-zero amount with "no refunds".
-            caption={
-              kpis.refundsIssued === 0
-                ? "no refunds processed"
-                : refunds.refundCount === 0
-                ? "refunded to runners"
-                : `${refunds.refundCount} ${
-                    refunds.refundCount === 1 ? "refund" : "refunds"
-                  } processed`
-            }
+            caption={refundCaption(kpis.refundsIssued, refunds.refundCount)}
           />
           <AdminStatTile
             kicker="Net platform revenue"
@@ -73,6 +88,7 @@ export default function AdminSalesPage() {
             caption="cut minus refunds"
           />
         </div>
+        )}
       </Slab>
 
       <Slab
@@ -108,13 +124,21 @@ export default function AdminSalesPage() {
         title="Refund pulse"
         caption="Pressure on net revenue"
       >
-        <RefundPulseSummary />
+        <RefundPulseSummary refundsIssued={kpis?.refundsIssued} />
       </Slab>
     </>
   );
 }
 
-function Header({ totalSales }: { totalSales: number }) {
+// The amount is the server total and the count comes from the dispute list, so
+// never caption a non-zero amount with "no refunds" or "0 refunds".
+function refundCaption(amount: number, count: number): string {
+  if (amount === 0) return "no refunds processed";
+  if (count === 0) return "refunded to runners";
+  return `${count} ${count === 1 ? "refund" : "refunds"} processed`;
+}
+
+function Header({ totalSales }: { totalSales: number | undefined }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker tone="soft">Sales · Revenue intelligence</Kicker>
@@ -122,33 +146,35 @@ function Header({ totalSales }: { totalSales: number }) {
         The money.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Where revenue comes from across photographers, events, and the last
-        twelve weeks. Event-side figures are{" "}
-        <span className="text-ink">implied</span> until order-level
-        attribution lands —{" "}
-        <span className="font-mono tnum">{totalSales.toLocaleString()}</span>{" "}
+        Where revenue comes from across photographers, events, and the last{" "}
+        <span className="font-mono tnum">{SALES_TREND_WEEKS}</span> weeks. The
+        weekly trend and top photographers are{" "}
+        <span className="text-ink">estimates</span> until server figures
+        arrive —{" "}
+        <span className="font-mono tnum">{totalSales?.toLocaleString() ?? "—"}</span>{" "}
         photos sold to date.
       </p>
     </header>
   );
 }
 
-function RefundPulseSummary() {
+function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefined }) {
   const refunds = useRefundPulse();
+  const week = useAdminSalesKpisQuery("week").data;
+  // No sales this week means no rate (a refund can be for an older sale).
+  const rate = week && week.gmv > 0 ? (week.refundsIssued / week.gmv) * 100 : null;
   return (
     <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-start">
       <ul className="border-y border-line divide-y divide-line">
         <PulseRow
           label="Refunds issued"
-          value={formatPrice(refunds.refundsIssued)}
-          caption={`${refunds.refundCount} ${
-            refunds.refundCount === 1 ? "refund" : "refunds"
-          } processed`}
+          value={refundsIssued === undefined ? "—" : formatPrice(refundsIssued)}
+          caption={refundsIssued === undefined ? "not loaded" : `${refundCaption(refundsIssued, refunds.refundCount)}, year to date`}
         />
         <PulseRow
           label="Refund rate"
-          value={`${refunds.refundRatePct.toFixed(2)}%`}
-          caption="of gross merch volume"
+          value={rate === null ? "—" : `${rate.toFixed(2)}%`}
+          caption="of this week's gross merch volume"
         />
         <PulseRow
           label="Open · escalated"

@@ -6,6 +6,7 @@ import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
 import {
+  SALES_ESTIMATE_NOTE,
   useTopPhotographers,
   useTopEvents,
   type TopPhotographer,
@@ -14,10 +15,10 @@ import {
 
 const TOP_LIMIT = 10;
 
-// Two-column ranked board for /admin/sales. Photographer side is grounded in
-// canonical payout-cycle data. Event side is "implied GMV" — derived
-// from the event catalog’s photoCount × per-photo price — and carries an Implied
-// kicker badge until backend Phase F lands order-level event attribution.
+// Two-column ranked board for /admin/sales. Photographer side is an estimate
+// (payout photo counts × per-photo price) until AX-18 reads the server list.
+// Event side is the server's order sums; a row derived in the browser while the
+// server has no answer carries an Implied badge.
 export function AdminSalesLeaderboard() {
   const photographers = useTopPhotographers(TOP_LIMIT);
   const events = useTopEvents(TOP_LIMIT);
@@ -26,7 +27,8 @@ export function AdminSalesLeaderboard() {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14">
       <Column
         title="Top photographers"
-        caption="By gross merchandise volume"
+        caption="Estimate"
+        note={SALES_ESTIMATE_NOTE}
         emptyCopy="No payouts yet — once payouts land, the highest-earning brands surface here."
         rows={photographers}
         renderRow={(p, rank) => (
@@ -35,7 +37,7 @@ export function AdminSalesLeaderboard() {
       />
       <Column
         title="Top events"
-        caption="Implied · until order attribution lands"
+        caption="By gross merchandise volume"
         emptyCopy="No events with photo sales yet."
         rows={events}
         renderRow={(e, rank) => (
@@ -49,6 +51,7 @@ export function AdminSalesLeaderboard() {
 interface ColumnProps<T> {
   title: string;
   caption: string;
+  note?: string;
   emptyCopy: string;
   rows: T[];
   renderRow: (row: T, rank: number) => React.ReactNode;
@@ -57,6 +60,7 @@ interface ColumnProps<T> {
 function Column<T>({
   title,
   caption,
+  note,
   emptyCopy,
   rows,
   renderRow,
@@ -67,6 +71,7 @@ function Column<T>({
         <Kicker>{title}</Kicker>
         <Kicker tone="soft">{caption}</Kicker>
       </header>
+      {note && <p className="font-sans text-sm text-ink-soft -mt-2 mb-5">{note}</p>}
       {rows.length === 0 ? (
         <p className="font-sans text-sm text-ink-soft">{emptyCopy}</p>
       ) : (
@@ -134,9 +139,11 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
-              <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
-                Implied
-              </Kicker>
+              {row.implied && (
+                <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
+                  Implied
+                </Kicker>
+              )}
             </div>
             <Kicker as="p" tone="soft" tnum className="mt-1">
               {formatLongDate(row.date, true)} · {row.photoCount.toLocaleString()} photos
