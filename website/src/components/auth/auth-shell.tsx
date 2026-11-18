@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Footer } from "@/components/layout/footer";
 import { SiteHeader } from "@/components/layout/site-header";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,8 @@ export function AuthShell({
         <div
           className={cn(
             "relative z-10 flex-1 px-6 md:px-10 pt-12 md:pt-20 flex flex-col items-center",
-            showFooter ? "pb-16" : "pb-20",
+            // pb-32 keeps the bottom-24 horizon line clear of the content.
+            showFooter ? "pb-32" : "pb-20",
           )}
         >
           <div
@@ -37,14 +39,8 @@ export function AuthShell({
             {children}
           </div>
         </div>
-        {showFooter && (
-          <div className="relative z-10 px-6 md:px-10 pb-10">
-            <p className="text-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-              Cebu &middot; PH &middot; 2026
-            </p>
-          </div>
-        )}
       </main>
+      {showFooter && <Footer showCta={false} />}
     </>
   );
 }
