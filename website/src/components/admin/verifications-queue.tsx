@@ -245,7 +245,7 @@ export function VerificationsQueue() {
       return;
     }
     const results = await verifyBatch(ids.map((id) => ({ userId: id, verificationRevision: rejectRevisions[id] })), reason);
-    if (!results) return;
+    if (!results) return false;
     if (useAuthStore.getState().sessionVersion !== sessionVersion) return;
     const failed = ids.filter((_, i) => !results[i]);
     setSelected(new Set(failed));
@@ -255,15 +255,18 @@ export function VerificationsQueue() {
       kind: failed.length ? "error" : "info",
       message: failed.length ? `${count}/${ids.length} updated — ${failed.length} failed` : `Sent back · ${count} ${count === 1 ? "photographer" : "photographers"}`,
     });
+    return !failed.length;
   }
 
   async function handleDrawerRejectSubmit(reason: string) {
     if (!openRow) return;
     const row = openRow;
-      if (await reject(row.userId, reason, rejectRevisions[row.userId])) {
+      const ok = await reject(row.userId, reason, rejectRevisions[row.userId]);
+      if (ok) {
         showToast({ kind: "info", message: `Sent back · ${row.brandName ?? row.name}` });
         setDrawerRejectOpen(false); setRowId("");
       }
+      return ok;
   }
 
   async function handleApproveHeld() {

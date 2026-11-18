@@ -151,6 +151,7 @@ it.each([
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: trigger }));
   const form = screen.getAllByRole("dialog").find((dialog) => within(dialog).queryByRole("textbox"))!;
   const input = within(form).getByRole("textbox");
+  if (action === "hold") await user.click(within(form).getAllByRole("radio")[0]!);
   await user.type(input, "Reference or note retained");
   await user.click(within(form).getByRole("button", { name: submitLabel }));
   expect(within(form).getByRole("button", { name: action === "hold" ? "Holding…" : action === "mark-paid" ? "Marking paid…" : action === "reject" ? "Rejecting…" : action === "mark-failed" ? "Marking failed…" : "Marking returned…" })).toBeDisabled();
@@ -162,6 +163,7 @@ it.each([
   expect(input).toHaveValue("Reference or note retained");
   await waitFor(() => expect(within(form).getByRole("button", { name: submitLabel })).toBeEnabled());
   expect(useToastStore.getState().toasts.at(-1)?.kind).toBe("error");
+  if (action === "hold") expect(within(form).getByRole("alert")).toHaveTextContent(/Couldn.t finish/);
   post.mockImplementationOnce(async () => {
     rows = [{ ...rows[0], status: finalStatus }]; return rows[0];
   });
@@ -182,6 +184,7 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 2" : "Hold 2…" }));
   const modal = screen.getByRole("dialog");
   const submit = action === "approve" ? "Confirm approve" : "Hold 2 payouts";
+  if (action === "hold") await user.click(within(modal).getAllByRole("radio")[0]!);
   await user.click(within(modal).getByRole("button", { name: submit }));
   expect(within(modal).getByRole("button", { name: action === "approve" ? "Approving…" : "Holding…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
@@ -194,6 +197,7 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   expect(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeChecked();
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain("1 succeeded, 1 failed");
+  if (action === "hold") expect(within(modal).getByRole("alert")).toHaveTextContent(/Couldn.t finish/);
   expect(useToastStore.getState().toasts.some((toast) => toast.kind === "success")).toBe(false);
   post.mockResolvedValueOnce({ groupId: "retry", results: [{ id: "cycle-2", ok: true }] });
   await user.click(within(modal).getByRole("button", { name: retryLabel }));
@@ -209,6 +213,7 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   await user.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
   await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" }));
   const modal = screen.getByRole("dialog");
+  if (action === "hold") await user.click(within(modal).getAllByRole("radio")[0]!);
   await user.click(within(modal).getByRole("button", { name: action === "approve" ? "Confirm approve" : "Hold payout" }));
   expect(modal).toBeInTheDocument();
   expect(screen.getByRole("checkbox")).toBeChecked();

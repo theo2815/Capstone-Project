@@ -475,6 +475,7 @@ export function PayoutsQueue() {
         // the queue state and the open detail don't drift apart.
         if (openRow && openRow.id === target.payoutId) setRowId("");
       }
+      return ok;
     } else {
       const ok = await bulkHold(target.payoutIds, reason, (failedIds) => {
         setSelected(new Set(failedIds));
@@ -491,6 +492,7 @@ export function PayoutsQueue() {
           message: `Held · ${target.payoutIds.length} payouts`,
         });
       }
+      return ok;
     }
   }
 
