@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Slab } from "@/components/profile-shell";
 import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
@@ -17,6 +17,7 @@ import { useAdminEvents, useAdminEventActions } from "@/hooks/use-admin-events";
 import { useRaceTypes } from "@/hooks/use-race-types";
 import { useRegions } from "@/hooks/use-regions";
 import { useToast } from "@/hooks/use-toast";
+import { useUrlState } from "@/hooks/use-url-state";
 import { isRaceEdit, type AdminEventRow, type RaceEditChange } from "@/lib/api-admin";
 import type { RaceCandidate } from "@/lib/api-photographer";
 import { formatLongDate } from "@/lib/format";
@@ -43,6 +44,11 @@ export function EventRequestsQueue() {
   const [joiningState, setJoining] = useState<{ id: string; target: RaceCandidate } | null>(null);
   const joiningRow = joiningState && rows?.find((r) => r.id === joiningState.id);
   const joining = joiningState && joiningRow ? { row: joiningRow, target: joiningState.target } : null;
+  // ER2: Approve asks first; like the join, only the id is kept so confirm sends the current revision.
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const approving = (approvingId && rows?.find((r) => r.id === approvingId)) || null;
+  const [kindRaw, setKind] = useUrlState<string>("kind", "all");
+  const kind: RequestKind = kindRaw === "new" || kindRaw === "changes" ? kindRaw : "all";
   async function run(action: () => Promise<boolean>, message: string) {
     try {
       const ok = await action();
@@ -80,16 +86,28 @@ export function EventRequestsQueue() {
     if (ok) setJoining(null);
   }
 
-  const waiting = rows?.length ?? 0;
+  async function confirmApprove() {
+    const row = approving;
+    if (!row) return;
+    const ok = await run(
+      () => approve(row.id, row.reviewRevision),
+      row.reviewStatus === "change_pending"
+        ? `Change applied to ${row.name}.`
+        : `${row.name} is live. Uploads are open.`,
+    );
+    if (ok) setApprovingId(null);
+  }
+
+  const changes = rows?.filter((r) => r.reviewStatus === "change_pending").length ?? 0;
+  const shown = rows?.filter((r) => kind === "all" || (r.reviewStatus === "change_pending") === (kind === "changes"));
 
   return (
-    <Slab
-      id="event-requests"
-      number="01"
-      title="Event requests"
-      caption="Photographer-owned events · new submissions and pricing changes"
-      trailing={rows ? `${waiting} waiting` : undefined}
-    >
+    // ER4: the page header (or the Inbox chip) already names the queue; the h2 stays for screen readers.
+    <section id="event-requests" aria-labelledby="event-requests-heading">
+      <h2 id="event-requests-heading" className="sr-only">Event requests</h2>
+      <p className="font-sans text-sm text-slate mt-6 md:mt-8">
+        Photographer-owned events · new submissions and pricing changes
+      </p>
       {query.isError && (
         <div role="alert" className="space-y-3">
           <p className="font-sans text-sm text-error">Couldn&apos;t load event requests. Please try again.</p>
@@ -112,27 +130,48 @@ export function EventRequestsQueue() {
           </p>
         </div>
       ) : (
-        <ul className="divide-y divide-line border-y border-line">
-          {rows.map((row) => (
-            <RequestRow
-              key={row.id}
-              row={row}
-              busy={isPending(row.id)}
-              pendingLabel={pendingAction(row.id)}
-              onApprove={() =>
-                run(
-                  () => approve(row.id, row.reviewRevision),
-                  row.reviewStatus === "change_pending"
-                    ? `Change applied to ${row.name}.`
-                    : `${row.name} is live. Uploads are open.`,
-                )
-              }
-              onReject={() => setRejecting(row)}
-              onSameRace={(target) => setJoining({ id: row.id, target })}
-            />
-          ))}
-        </ul>
+        <>
+          <AdminStatusTabs
+            label="Request kind"
+            tabs={[
+              { key: "all", label: "All", count: rows.length },
+              { key: "new", label: "New", count: rows.length - changes },
+              { key: "changes", label: "Changes", count: changes },
+            ]}
+            value={kind}
+            onChange={setKind}
+          />
+          {shown?.length === 0 ? (
+            <p className="font-sans text-sm text-slate-soft pt-6">Nothing of this kind is waiting.</p>
+          ) : (
+            <ul className="divide-y divide-line border-b border-line">
+              {shown?.map((row) => (
+                <RequestRow
+                  key={row.id}
+                  row={row}
+                  busy={isPending(row.id)}
+                  pendingLabel={pendingAction(row.id)}
+                  onApprove={() => setApprovingId(row.id)}
+                  onReject={() => setRejecting(row)}
+                  onSameRace={(target) => setJoining({ id: row.id, target })}
+                />
+              ))}
+            </ul>
+          )}
+        </>
       )}
+
+      <AdminConfirmModal
+        open={approving !== null}
+        onClose={() => setApprovingId(null)}
+        onConfirm={() => void confirmApprove()}
+        title={approving ? approveTitle(approving) : ""}
+        confirmLabel={approving && isDuplicate(approving) ? "Approve as a new race" : "Approve"}
+        submitting={!!approving && isPending(approving.id)}
+        pendingLabel="Approving…"
+      >
+        {approving && <ApproveSummary row={approving} />}
+      </AdminConfirmModal>
 
       <AdminConfirmModal
         open={joining !== null}
@@ -186,8 +225,75 @@ export function EventRequestsQueue() {
           placeholder="What should they change before resubmitting?"
         />
       </AdminFormModal>
-    </Slab>
+    </section>
   );
+}
+
+type RequestKind = "all" | "new" | "changes";
+
+// The same test RequestRow uses to show the duplicate's "Same race" choice.
+const isDuplicate = (row: AdminEventRow) =>
+  row.reviewStatus !== "change_pending" && !!row.eventType && !!row.possibleDuplicateOf;
+
+const visibilityLabel = (row: AdminEventRow) =>
+  row.visibility === "unlisted" ? "Unlisted · link only" : "Public · link and profile";
+
+function approveTitle(row: AdminEventRow) {
+  if (row.reviewStatus !== "change_pending") return isDuplicate(row) ? "Approve as a new race?" : "Approve this event?";
+  return isRaceEdit(row.pendingChange) ? "Apply this race edit?" : "Apply this pricing change?";
+}
+
+// What the approval makes public, or what it changes, in the admin's words before the click.
+function ApproveSummary({ row }: { row: AdminEventRow }) {
+  const edit = isRaceEdit(row.pendingChange) ? row.pendingChange : null;
+  const price = row.pendingChange && !isRaceEdit(row.pendingChange) ? row.pendingChange : null;
+  const current = describePricing({
+    pricingMode: row.pricingMode,
+    pricePerPhoto: row.pricePerPhoto ?? 0,
+    watermarkPolicy: row.watermarkPolicy,
+  });
+  if (row.reviewStatus === "change_pending") {
+    return (
+      <p className="font-sans text-sm text-ink-soft tnum">
+        {edit ? (
+          <>
+            <strong className="text-ink">{row.name}</strong> takes the new{" "}
+            {[
+              ...EDIT_FIELDS.filter(([f]) => edit.fields[f] !== undefined).map(([, label]) => label.toLowerCase()),
+              ...(edit.coverS3Key ? ["cover photo"] : []),
+            ].join(", ")}.
+          </>
+        ) : price ? (
+          <>
+            <strong className="text-ink">{row.name}</strong> changes from {current} to{" "}
+            <strong className="text-ink">{describePricing(price)}</strong>.
+          </>
+        ) : (
+          <>The requested change replaces what <strong className="text-ink">{row.name}</strong> shows now.</>
+        )}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2 font-sans text-sm text-ink-soft tnum">
+      <p>
+        <strong className="text-ink">{row.name}</strong> goes live and uploads open.
+        {isDuplicate(row) && <> It stays its own race, apart from {row.possibleDuplicateOf!.name}.</>}
+      </p>
+      <p>
+        Visibility: {visibilityLabel(row)}. Pricing: {current}.
+      </p>
+    </div>
+  );
+}
+
+// ER3: only a change request carries its request time; a new submission's time is not sent.
+function waitingLine(row: AdminEventRow) {
+  const at = row.pendingChange?.requestedAt;
+  if (!at) return null;
+  const days = Math.floor((Date.now() - new Date(at).getTime()) / 86_400_000);
+  if (Number.isNaN(days) || days < 0) return null;
+  return days === 0 ? "Waiting since today" : `Waiting ${days} ${days === 1 ? "day" : "days"}`;
 }
 
 function RequestRow({
@@ -207,7 +313,8 @@ function RequestRow({
 }) {
   const isChange = row.reviewStatus === "change_pending";
   const heldEdit = isRaceEdit(row.pendingChange) ? row.pendingChange : null;
-  const duplicate = !isChange && row.eventType ? row.possibleDuplicateOf : null;
+  const duplicate = isDuplicate(row) ? row.possibleDuplicateOf! : null;
+  const waiting = waitingLine(row);
   const current = describePricing({
     pricingMode: row.pricingMode,
     pricePerPhoto: row.pricePerPhoto ?? 0,
@@ -242,7 +349,7 @@ function RequestRow({
           )}
         </div>
         <Kicker as="p" tone="soft" tnum>
-          {kind} · {owner}
+          {kind} · {owner}{waiting && <> · {waiting}</>}
         </Kicker>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 break-words">
           {row.name}
@@ -271,18 +378,19 @@ function RequestRow({
           <Detail label="Organizer" value={row.organizerName || "Not given"} />
           <Detail
             label="Visibility"
-            value={row.visibility === "unlisted" ? "Unlisted · link only" : "Public · link and profile"}
+            value={visibilityLabel(row)}
           />
           {!isChange && <Detail label="Pricing" value={current} />}
           <div className="sm:col-span-2">
-            <dt className={DETAIL_LABEL}>Race day notes</dt>
+            <Kicker as="dt" tone="soft">Race day notes</Kicker>
             <dd className="mt-1 font-sans text-sm text-ink whitespace-pre-line break-words max-w-prose">
               {row.description || "None given"}
             </dd>
           </div>
         </dl>
       </div>
-      <div className="flex flex-wrap gap-2 shrink-0">
+      {/* Capped so a duplicate's three buttons wrap instead of squeezing the details to one word a line. */}
+      <div className="flex flex-wrap gap-2 shrink-0 lg:max-w-64 lg:justify-end">
         <button
           type="button"
           onClick={onApprove}
@@ -290,7 +398,7 @@ function RequestRow({
           aria-busy={busy}
           className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
         >
-          {pendingLabel === "Approving…" ? pendingLabel : duplicate ? "Different race" : "Approve"}
+          {pendingLabel === "Approving…" ? pendingLabel : duplicate ? "Approve as a new race" : "Approve"}
         </button>
         {duplicate && (
           <button
@@ -315,9 +423,6 @@ function RequestRow({
     </li>
   );
 }
-
-const DETAIL_LABEL =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
 
 const EDIT_FIELDS: ReadonlyArray<[keyof RaceEditChange["fields"], string]> = [
   ["title", "Title"], ["date", "Date"], ["location", "Location"], ["regionCode", "Region"],
@@ -350,7 +455,7 @@ function HeldRaceEdit({ row, change }: { row: AdminEventRow; change: RaceEditCha
     <dl className="mt-3 space-y-2">
       {EDIT_FIELDS.filter(([field]) => change.fields[field] !== undefined).map(([field, label]) => (
         <div key={field} className="min-w-0">
-          <dt className={DETAIL_LABEL}>{label}</dt>
+          <Kicker as="dt" tone="soft">{label}</Kicker>
           <dd className="mt-1 font-sans text-sm text-ink tnum break-words whitespace-pre-line">
             <span className="text-slate">{show(field, live[field])}</span>
             <span className="text-slate-soft mx-2">→</span>
@@ -360,7 +465,7 @@ function HeldRaceEdit({ row, change }: { row: AdminEventRow; change: RaceEditCha
       ))}
       {change.coverS3Key && (
         <div>
-          <dt className={DETAIL_LABEL}>Cover</dt>
+          <Kicker as="dt" tone="soft">Cover</Kicker>
           <dd className="mt-1 font-sans text-sm text-ink">
             {row.heldCoverUrl ? (
               <div className="w-full sm:w-56 aspect-[16/9] rounded-xl overflow-hidden border border-line bg-bone-deep">
@@ -403,7 +508,7 @@ function RaceRef({ label, race }: { label: string; race: RaceCandidate }) {
 function Detail({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className={DETAIL_LABEL}>{label}</dt>
+      <Kicker as="dt" tone="soft">{label}</Kicker>
       <dd className="mt-1 font-sans text-sm text-ink tnum break-words">{value}</dd>
     </div>
   );
