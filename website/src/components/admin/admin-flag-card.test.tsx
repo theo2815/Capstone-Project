@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { canConfirmHold, canHide, flagReasonLabel, type Flag } from "@/lib/admin-flags";
 import { AdminFlagCard } from "./admin-flag-card";
 
@@ -85,4 +85,15 @@ it("a relevance flag offers Resolve and both confirms say what happens to the ho
 it("other flags have no Resolve button", () => {
   renderCard(userFlag);
   expect(screen.queryByRole("button", { name: "Resolve" })).not.toBeInTheDocument();
+});
+
+it("an openable card opens through a button named by its title; inner actions do not open it", async () => {
+  const onOpen = vi.fn();
+  const photoFlag: Flag = { ...base, reason: "inappropriate", targetKind: "photo", targetId: "photo-9", photoId: "photo-9" };
+  const { container } = render(<QueryClientProvider client={new QueryClient()}><AdminFlagCard flag={photoFlag} onOpen={onOpen} /></QueryClientProvider>);
+  expect(container.querySelector('[role="button"]')).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(onOpen).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: flagReasonLabel("inappropriate") }));
+  expect(onOpen).toHaveBeenCalledTimes(1);
 });

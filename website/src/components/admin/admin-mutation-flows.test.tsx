@@ -147,7 +147,7 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
     render(<QueryClientProvider client={client}>{surface === "detail"
       ? <AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} />
       : <DisputesQueue />}</QueryClientProvider>);
-    if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+    if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
 
     const fail = pendingRequest("post");
     const note = "Please review the supporting evidence.";
@@ -214,7 +214,7 @@ it.each([
   render(<QueryClientProvider client={client}>{surface === "detail"
     ? <AdminDisputeActionAside dispute={priced} runnerHandle={priced.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
-  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
   await user.click(screen.getByRole("button", { name: "Approve refund…" }));
   const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
   expect(within(form).getByText(/Full refund/)).toHaveTextContent("₱127.50");
@@ -240,7 +240,7 @@ it.each(["detail", "queue"])("labels a provider-confirmed %s refund with the ret
   render(<QueryClientProvider client={client}>{surface === "detail"
     ? <AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
-  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
   await user.click(screen.getByRole("button", { name: "Approve refund…" }));
   const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
   await user.clear(within(form).getByRole("textbox"));
@@ -326,7 +326,7 @@ it.each(["detail", "queue"])("offers no Escalate on a denied dispute in the %s v
   render(<QueryClientProvider client={client}>{surface === "detail"
     ? <AdminDisputeActionAside dispute={denied} runnerHandle={denied.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
-  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
   // The server escalates open disputes only.
   expect(screen.queryByRole("button", { name: "Escalate…" })).not.toBeInTheDocument();
   expect(screen.getByText("This dispute is closed. No further actions are available.")).toBeInTheDocument();
@@ -340,7 +340,7 @@ it.each(["detail", "queue"])("an admin-escalated dispute shows Approve refund an
   render(<QueryClientProvider client={client}>{surface === "detail"
     ? <AdminDisputeActionAside dispute={escalated} runnerHandle={escalated.runnerHandle} />
     : <DisputesQueue />}</QueryClientProvider>);
-  if (surface === "queue") await user.click(screen.getByRole("button", { name: /dispute-1/i }));
+  if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
   expect(screen.getByRole("button", { name: "Approve refund…" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Deny…" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Escalate…" })).not.toBeInTheDocument();

@@ -94,7 +94,7 @@ it("a failed refund row still offers the decision buttons, so the admin can try 
 it("the queue asks the server for the needs-you view first", async () => {
   client.removeQueries({ queryKey: firstPageKey });
   renderQueue();
-  expect(await screen.findByRole("button", { name: `Open dispute ${dispute.id}` })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { description: dispute.id })).toBeInTheDocument();
   expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&offset=0", expect.anything());
   expect(screen.getByRole("tab", { name: "Needs you" })).toHaveAttribute("aria-selected", "true");
 });
@@ -125,7 +125,7 @@ it("Next asks for the following page and shows x–y of total", async () => {
   await user.click(screen.getByRole("button", { name: "Next →" }));
   expect(await screen.findByText("3–4 of 5")).toBeInTheDocument();
   expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&offset=2", expect.anything());
-  expect(screen.getByRole("button", { name: "Open dispute dispute-3" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { description: "dispute-3" })).toBeInTheDocument();
 });
 
 it("search sends q and starts at the first page", async () => {
@@ -138,7 +138,7 @@ it("search sends q and starts at the first page", async () => {
   await user.click(await screen.findByRole("button", { name: "Next →" }));
   await user.type(screen.getByRole("searchbox", { name: "Search disputes" }), "  pay_ABC ");
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&q=pay_ABC&offset=0", expect.anything()));
-  expect(await screen.findByRole("button", { name: "Open dispute dispute-9" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { description: "dispute-9" })).toBeInTheDocument();
 });
 
 it("an overdue dispute shows the overdue chip", async () => {
@@ -148,7 +148,7 @@ it("an overdue dispute shows the overdue chip", async () => {
   };
   client.setQueryData(firstPageKey, page([late]));
   renderQueue();
-  const card = screen.getByRole("button", { name: `Open dispute ${late.id}` });
+  const card = screen.getByRole("button", { description: late.id }).closest("article")!;
   expect(card).toHaveTextContent("Overdue · 2d");
   expect(card).toHaveTextContent("Needs review");
 });

@@ -16,7 +16,7 @@ import { useAdminPaletteStore } from "@/store/admin-palette-store";
 //   - useAdminLegendShortcut() — global `?` toggles the shortcut legend.
 //     Mount once inside <AdminShell>.
 //   - useQueueKeyboardNav({ rowIds, disabled, onActivate }) — J/K cycle
-//     through queue rows, Enter activates the focused id. The queue
+//     through queue rows, Enter (from the page, not a control) activates the focused id. The queue
 //     threads the returned focusedId to its row components and slaps a
 //     data-row-id="<id>" attribute on each row root so the hook can scroll
 //     the focused row into view via querySelector.
@@ -106,6 +106,9 @@ export function useQueueKeyboardNav({
       if (!isJ && !isK && !isEnter) return;
 
       const idx = focusedId ? rowIds.indexOf(focusedId) : -1;
+      // J/K moves the row ring, so real focus must leave the old row too, or Enter would open that one.
+      const active = document.activeElement;
+      if (!isEnter && active instanceof HTMLElement && active.closest("[data-row-id]")) active.blur();
 
       if (isJ) {
         if (rowIds.length === 0) return;
@@ -123,6 +126,8 @@ export function useQueueKeyboardNav({
       }
       if (isEnter) {
         if (!focusedId) return;
+        // Enter on a focused control belongs to that control, not the J/K row.
+        if (e.target !== document.body && !(e.target instanceof HTMLElement && e.target.hasAttribute("data-row-id"))) return;
         e.preventDefault();
         onActivateRef.current(focusedId);
       }

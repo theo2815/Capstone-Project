@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   type Flag,
   type FlagStatus,
@@ -29,6 +29,7 @@ import {
   BTN_GHOST,
   BTN_SECONDARY,
   BTN_SIZE,
+  ROW_OPEN_BUTTON,
 } from "@/components/ui/button-styles";
 
 interface AdminFlagCardProps {
@@ -37,8 +38,8 @@ interface AdminFlagCardProps {
    *  page's single fresh accent. Subsequent open cards get bordered Hide. */
   primary?: boolean;
   /**
-   * Phase 3: when provided, clicking the card body (not the inline
-   * action buttons) calls this — typically the drawer host's setRowId.
+   * Phase 3: when provided, the title button (which covers the card, AX-4)
+   * calls this — typically the drawer host's setRowId.
    * Inline Hide/Dismiss/Escalate keep the fast path so triage doesn't
    * always require opening the drawer.
    */
@@ -133,29 +134,13 @@ export function AdminFlagCard({
     if (await run("escalate", () => escalate(flag.id, note))) setEscalateOpen(false);
   }
 
-  function handleArticleClick() {
-    if (onOpen) onOpen();
-  }
-  function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
-    // Keys pressed on a button or link inside the card belong to that control.
-    if (!onOpen || e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onOpen();
-    }
-  }
-
   const interactive = onOpen !== undefined;
+  const idLineId = useId();
 
   return (
     <article
-      role={interactive ? "button" : undefined}
-      tabIndex={interactive ? 0 : undefined}
       data-row-id={flag.id}
-      onClick={interactive ? handleArticleClick : undefined}
-      onKeyDown={interactive ? handleArticleKeyDown : undefined}
-      aria-label={interactive ? `Open flag ${flag.id}` : undefined}
-      className={`rounded-2xl border border-line bg-bone overflow-hidden ${
+      className={`relative rounded-2xl border border-line bg-bone overflow-hidden ${
         interactive
           ? "cursor-pointer transition-colors hover:border-ink"
           : ""
@@ -177,11 +162,17 @@ export function AdminFlagCard({
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+            <p id={idLineId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
               {flag.id}
             </p>
             <h3 className="font-display text-lg md:text-xl font-medium text-ink mt-1">
-              {flagReasonLabel(flag.reason)}
+              {interactive ? (
+                <button type="button" onClick={onOpen} aria-describedby={idLineId} className={`${ROW_OPEN_BUTTON} after:rounded-2xl`}>
+                  {flagReasonLabel(flag.reason)}
+                </button>
+              ) : (
+                flagReasonLabel(flag.reason)
+              )}
             </h3>
           </div>
           <AdminStatusPill
@@ -206,8 +197,7 @@ export function AdminFlagCard({
           {flag.targetKind === "user" ? (
             <Link
               href={`${ROUTES.ADMIN_PHOTOGRAPHERS}/${encodeURIComponent(flag.photographerHandle)}`}
-              onClick={(e) => e.stopPropagation()}
-              className="underline underline-offset-2 hover:text-ink"
+              className="relative z-10 underline underline-offset-2 hover:text-ink"
             >
               @{flag.photographerHandle}
             </Link>
@@ -238,15 +228,12 @@ export function AdminFlagCard({
 
         {submitting && <p role="status">{pendingAction(flag.id)}</p>}
         {actionable && (
-          <div className="flex items-center gap-3 flex-wrap pt-2">
+          <div className="relative z-10 flex items-center gap-3 flex-wrap pt-2">
             {canHide(flag) && (
               <button
                 type="button"
                 disabled={submitting}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setHideOpen(true);
-                }}
+                onClick={() => setHideOpen(true)}
                 className={
                   primary ? `${dangerBtn} shadow-[var(--shadow-card)]` : dangerBtn
                 }
@@ -258,10 +245,7 @@ export function AdminFlagCard({
               <button
                 type="button"
                 disabled={submitting}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleConfirm("hold");
-                }}
+                onClick={() => toggleConfirm("hold")}
                 className={dangerBtn}
               >
                 {confirm === "hold" ? "Cancel" : "Hold payouts"}
@@ -271,10 +255,7 @@ export function AdminFlagCard({
               <button
                 type="button"
                 disabled={submitting}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleConfirm("resolve");
-                }}
+                onClick={() => toggleConfirm("resolve")}
                 className={tertiaryBtn}
               >
                 {confirm === "resolve" ? "Cancel" : "Resolve"}
@@ -283,10 +264,7 @@ export function AdminFlagCard({
             <button
               type="button"
                 disabled={submitting}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleConfirm("dismiss");
-              }}
+              onClick={() => toggleConfirm("dismiss")}
               className={tertiaryBtn}
             >
               {confirmDismiss
@@ -299,10 +277,7 @@ export function AdminFlagCard({
               <button
                 type="button"
                 disabled={submitting}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEscalateOpen(true);
-                }}
+                onClick={() => setEscalateOpen(true)}
                 className={tertiaryBtn}
               >
                 Escalate…
@@ -312,10 +287,7 @@ export function AdminFlagCard({
         )}
 
         {confirm && actionable && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="rounded-xl border border-line bg-bone-deep p-4 space-y-3"
-          >
+          <div className="relative z-10 rounded-xl border border-line bg-bone-deep p-4 space-y-3">
             <p className="font-sans text-sm text-ink-soft">
               {relevance || confirm === "hold"
                 ? relevanceConfirmText(confirm)
@@ -326,8 +298,7 @@ export function AdminFlagCard({
             <button
               type="button"
                 disabled={submitting}
-              onClick={(e) => {
-                e.stopPropagation();
+              onClick={() => {
                 if (confirm === "hold") handleHold();
                 else if (confirm === "resolve") handleResolve();
                 else handleDismiss();

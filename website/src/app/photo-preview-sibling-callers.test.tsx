@@ -84,7 +84,7 @@ it("opens the actual admin dispute review without metadata", async () => {
   const get = vi.spyOn(api, "get");
   const unmount = mount(<DisputesQueue />);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Open dispute dispute-1" }));
+  await user.click(screen.getByRole("button", { description: "dispute-1" }));
   await user.click(await screen.findByRole("button", { name: "Open Runner at full size" }));
   expect(await screen.findByText("Admin · Read-only preview")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Show Metadata" })).toBeNull();

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useId } from "react";
 import {
   type AdminPayoutCycle,
   type AdminPayoutStatus,
@@ -11,7 +12,7 @@ import {
   payoutMethodLabel,
 } from "@/lib/admin-payouts";
 import { cn, formatPrice } from "@/lib/utils";
-import { BTN_DANGER, BTN_SECONDARY } from "@/components/ui/button-styles";
+import { BTN_DANGER, BTN_SECONDARY, ROW_OPEN_BUTTON } from "@/components/ui/button-styles";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { type AdminStatusPillTone } from "./admin-status-pill";
 
@@ -59,11 +60,11 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 //   held           → [Approve] [Mark paid]
 //   paid           → no actions, payment reference visible
 //
-// Phase 3 makes the row body itself clickable. With selectionActive=false
-// the click opens the focus-mode drawer; with selectionActive=true it
-// toggles the checkbox (bulk triage takes over). The chevron on the
-// right always opens the drawer regardless of selection state. Inline
-// action buttons stopPropagation so they don't trigger the row click.
+// The title button covers the row (ROW_OPEN_BUTTON), so a click anywhere
+// calls onActivate: with selectionActive=false it opens the focus-mode
+// drawer; with selectionActive=true it toggles the checkbox (bulk triage
+// takes over). The chevron on the right always opens the drawer regardless
+// of selection state. Inner controls sit above the cover (relative z-10).
 export function AdminPayoutRow({
   cycle,
   submitting,
@@ -80,26 +81,13 @@ export function AdminPayoutRow({
   onMarkProcessing,
 }: AdminPayoutRowProps) {
   const subjectLabel = cycle.brandName ?? cycle.photographerName;
-
-  function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onActivate();
-    }
-  }
+  const hintId = useId();
 
   return (
     <article
-      role="button"
-      tabIndex={0}
       data-row-id={cycle.id}
-      onClick={onActivate}
-      onKeyDown={handleArticleKeyDown}
-      aria-label={`${subjectLabel}${
-        selectionActive ? " — toggle selection" : " — open payout"
-      }`}
       className={cn(
-        "group cursor-pointer px-4 py-3 transition-colors",
+        "group relative cursor-pointer px-4 py-3 transition-colors",
         // One table row: stacked on phones, the shared column grid from md up.
         "flex flex-wrap items-start gap-x-4 gap-y-2",
         "md:grid md:items-center md:gap-x-4",
@@ -114,13 +102,15 @@ export function AdminPayoutRow({
         checked={selected}
         disabled={submitting}
         onChange={onToggleSelect}
-        onClick={(e) => e.stopPropagation()}
-        className="mt-1 md:mt-0 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        className="relative z-10 mt-1 md:mt-0 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       />
       <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] md:basis-auto">
         <h3 className="font-display text-base font-semibold text-ink truncate">
-          {subjectLabel}
+          <button type="button" onClick={onActivate} aria-describedby={hintId} className={cn(ROW_OPEN_BUTTON, "block w-full truncate")}>
+            {subjectLabel}
+          </button>
         </h3>
+        <span id={hintId} className="sr-only">{selectionActive ? "Toggles selection" : "Opens the payout"}</span>
         <p className="font-sans text-sm text-slate truncate">
           {cycle.handle && <span className="font-mono text-[13px]">@{cycle.handle}</span>}
           {cycle.handle && " · "}
@@ -159,31 +149,16 @@ export function AdminPayoutRow({
           status={cycle.status}
           provider={cycle.provider ?? "manual"}
           blocked={payoutActionsBlockedByHold(cycle)}
-          onApprove={(e) => {
-            e.stopPropagation();
-            onApprove();
-          }}
-          onHold={(e) => {
-            e.stopPropagation();
-            onHold();
-          }}
-          onMarkPaid={(e) => {
-            e.stopPropagation();
-            onMarkPaid();
-          }}
-          onMarkProcessing={(e) => {
-            e.stopPropagation();
-            onMarkProcessing();
-          }}
+          onApprove={onApprove}
+          onHold={onHold}
+          onMarkPaid={onMarkPaid}
+          onMarkProcessing={onMarkProcessing}
         />
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenDrawer();
-          }}
+          onClick={onOpenDrawer}
           aria-label={`Open payout ${cycle.id}`}
-          className="shrink-0 size-11 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
+          className="relative z-10 shrink-0 size-11 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
         >
           <span aria-hidden="true" className="text-lg leading-none">
             ›
@@ -252,7 +227,7 @@ export function PayoutFlagLine({ cycle }: { cycle: AdminPayoutCycle }) {
   if (!cycle.relevanceFlagId) return null;
   return (
     <p className="font-sans text-sm text-amber-700 mt-2">
-      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }} className="underline underline-offset-2 hover:text-ink">
+      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} className="relative z-10 underline underline-offset-2 hover:text-ink">
         {cycle.relevanceHold ? PAYOUT_HOLD_REASON : PAYOUT_UNCONFIRMED_FLAG_NOTE}
       </Link>
     </p>
@@ -279,10 +254,10 @@ function RowActions({
   status: AdminPayoutStatus;
   submitting: boolean;
   provider: string;
-  onApprove: (e: React.MouseEvent) => void;
-  onHold: (e: React.MouseEvent) => void;
-  onMarkPaid: (e: React.MouseEvent) => void;
-  onMarkProcessing: (e: React.MouseEvent) => void;
+  onApprove: () => void;
+  onHold: () => void;
+  onMarkPaid: () => void;
+  onMarkProcessing: () => void;
 }) {
   if (provider !== "manual") return null;
   // House buttons in sentence case (proposal 11: mono uppercase is for labels only).
@@ -301,7 +276,7 @@ function RowActions({
     return null;
   }
   return (
-    <div className="flex items-center gap-2 flex-wrap justify-end">
+    <div className="relative z-10 flex items-center gap-2 flex-wrap justify-end">
       {canApprove && (
         <button type="button" disabled={submitting || blocked} onClick={onApprove} className={PILL}>
           Approve
