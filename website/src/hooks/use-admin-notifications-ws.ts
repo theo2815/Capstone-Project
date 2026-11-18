@@ -122,6 +122,7 @@ export function useAdminNotificationsWs(enabled: boolean): void {
               break;
             case "payout_report_filed":
               void queryClient.invalidateQueries({ queryKey: ["admin", "payouts", "reports"] });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "kpis"] });
               break;
             case "relevance_alert":
               // The ping stores nothing; the alert row is read back with the cases.

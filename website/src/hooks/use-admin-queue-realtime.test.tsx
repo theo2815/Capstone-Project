@@ -21,3 +21,14 @@ it("the polling fallback refreshes the relevance cases and alerts", () => {
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "relevance"] });
   unmount(); client.clear();
 });
+
+it("one tick also refreshes the flags and the sales figures", () => {
+  const client = new QueryClient();
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { unmount } = renderHook(() => useAdminQueueRealtime(true), { wrapper });
+  vi.advanceTimersByTime(30_000);
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "flags"] });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "sales"] });
+  unmount(); client.clear();
+});
