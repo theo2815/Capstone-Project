@@ -92,6 +92,8 @@ export interface AdminKpis {
   pendingPayouts: number;
   /** V46 — photographer-owned events awaiting a decision (new + pricing change). */
   pendingEventRequests: number;
+  /** AX-8: seller details waiting for an admin. Optional until the backend ships it. */
+  pendingSellerDetails?: number;
 }
 
 export interface AdminTrendPoint {

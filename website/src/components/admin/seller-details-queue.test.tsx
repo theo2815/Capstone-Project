@@ -6,6 +6,24 @@ import { useAuthStore } from "@/store/auth-store";
 import { SellerDetailsQueue } from "./seller-details-queue";
 
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: vi.fn(), dismissToast: vi.fn() }) }));
+// A tiny in-memory URL: the filter lives in ?sd=.
+const nav = vi.hoisted(() => {
+  let search = "";
+  const listeners = new Set<() => void>();
+  return {
+    get: () => search,
+    set: (next: string) => { search = next; listeners.forEach((l) => l()); },
+    subscribe: (l: () => void) => { listeners.add(l); return () => listeners.delete(l); },
+  };
+});
+vi.mock("next/navigation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    usePathname: () => "/admin/verifications",
+    useSearchParams: () => new URLSearchParams(useSyncExternalStore(nav.subscribe, nav.get)),
+    useRouter: () => ({ replace: (url: string) => nav.set(url.split("?")[1] ?? ""), push: vi.fn() }),
+  };
+});
 
 // `status` keeps the old wire values (manual_review → submitted, auto_approved → approved); the queue reads reviewState.
 const WIRE_STATUS = { manual_review: "submitted", auto_approved: "approved", approved: "approved", rejected: "rejected" } as const;
@@ -49,7 +67,11 @@ async function openRecord(name: RegExp = /Juan Dela Cruz/) {
   return screen.findByRole("dialog");
 }
 
+let kpis: object = { pendingSellerDetails: 4 };
 beforeEach(() => {
+  nav.set("");
+  kpis = { pendingSellerDetails: 4 };
+  Element.prototype.scrollIntoView = vi.fn();
   useAuthStore.getState().logout();
   useAuthStore.getState().setUser({ id: "admin-1", role: "ADMIN", name: "Admin", email: "admin@example.test", createdAt: "2026-09-10" });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -62,6 +84,7 @@ beforeEach(() => {
     }
     if (path === "/admin/seller-details/u1") return RECORD;
     if (path === "/admin/seller-details/u2") return AUTO_RECORD;
+    if (path === "/admin/kpis") return kpis;
     if (path.startsWith("/admin/users?")) return { items: USERS, total: USERS.length, offset: 0, limit: 100 };
     if (path === "/admin/users/u1/settings" || path === "/admin/users/u2/settings") return { payouts: [{ id: "p1", method: "gcash", accountName: "Juan D. Cruz", accountNumber: "0917", isPrimary: true }] };
     throw new Error(`unexpected GET ${path}`);
@@ -82,6 +105,57 @@ it("default list asks for manual_review, and labels and actions read reviewState
   expect(within(maria).getByText("Auto-approved")).toBeInTheDocument();
   const dialog = await openRecordFrom(/Juan Dela Cruz/);
   expect(await within(dialog).findByRole("button", { name: "Approve" })).toBeInTheDocument();
+});
+
+it("the filter reads and writes ?sd=, and only Needs review carries the KPI count", async () => {
+  nav.set("sd=auto_approved");
+  renderQueue();
+  const tabs = screen.getByRole("group", { name: "Filter seller details" });
+  await screen.findByRole("button", { name: /Maria Santos/ });
+  expect(listCalls()[0]).toContain("status=auto_approved");
+  expect(within(tabs).getByRole("button", { name: "Auto-approved" })).toHaveAttribute("aria-pressed", "true");
+  expect(await within(tabs).findByRole("button", { name: "Needs review 4" })).toBeInTheDocument();
+  fireEvent.click(within(tabs).getByRole("button", { name: "All" }));
+  expect(nav.get()).toBe("sd=all");
+  await waitFor(() => expect(listCalls().at(-1)).not.toContain("status="));
+  fireEvent.click(within(tabs).getByRole("button", { name: "Needs review 4" }));
+  expect(nav.get()).toBe("");
+});
+
+it("an old backend without the KPI field shows no count, not 0", async () => {
+  kpis = {};
+  renderQueue();
+  await screen.findByRole("button", { name: /Juan Dela Cruz/ });
+  await waitFor(() => expect(get.mock.calls.some(([path]) => path === "/admin/kpis")).toBe(true));
+  expect(screen.getByRole("button", { name: "Needs review" })).toBeInTheDocument();
+});
+
+it("shows a busy skeleton while the list loads", () => {
+  get.mockImplementation(() => new Promise(() => {}));
+  const { container } = renderQueue();
+  expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+  expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+});
+
+it("Reject with no reason brings the reason box into view and focuses it", async () => {
+  const dialog = await openRecord();
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Reject" }));
+  const box = within(dialog).getByLabelText(/Reason for rejecting/);
+  expect(box).toHaveFocus();
+  expect(box.scrollIntoView).toHaveBeenCalled();
+  expect(box).toHaveAttribute("aria-invalid", "true");
+  expect(box).toBeRequired();
+  expect(within(dialog).getByText("0/500")).toBeInTheDocument();
+});
+
+it("Open full size shows the ID photo in its own dialog, and Esc closes only that", async () => {
+  const dialog = await openRecord();
+  fireEvent.click(await within(dialog).findByRole("button", { name: /^Open full size\W+Front of the ID$/ }));
+  const zoom = await screen.findByRole("dialog", { name: "Front of the ID" });
+  expect(within(zoom).getByRole("img", { name: "Front of the ID" })).toHaveAttribute("src", RECORD.files.idFront);
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Front of the ID" })).not.toBeInTheDocument());
+  expect(dialog).toBeInTheDocument();
 });
 
 async function openRecordFrom(name: RegExp) {
@@ -188,13 +262,21 @@ it("approves with the record's revision", async () => {
   await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/seller-details/u1/approve", { revision: 3 }));
 });
 
+it("a decision refetches the KPIs, so the Needs review count drops at once", async () => {
+  vi.spyOn(api, "post").mockResolvedValue({ ...RECORD, status: "approved", reviewState: "approved", files: null });
+  const dialog = await openRecord();
+  await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/admin/kpis")).toHaveLength(1));
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/admin/kpis")).toHaveLength(2));
+});
+
 it("needs a reason to reject and sends it with the revision", async () => {
   const post = vi.spyOn(api, "post").mockResolvedValue({ ...RECORD, status: "rejected", reviewState: "rejected", files: null });
   const dialog = await openRecord();
   fireEvent.click(await within(dialog).findByRole("button", { name: "Reject" }));
   expect(await within(dialog).findByText("Write the reason the photographer will see.")).toBeInTheDocument();
   expect(post).not.toHaveBeenCalled();
-  fireEvent.change(within(dialog).getByLabelText("Reason for rejecting"), { target: { value: "The ID is expired." } });
+  fireEvent.change(within(dialog).getByLabelText(/Reason for rejecting/), { target: { value: "The ID is expired." } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
   await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/seller-details/u1/reject", { revision: 3, reason: "The ID is expired." }));
 });
