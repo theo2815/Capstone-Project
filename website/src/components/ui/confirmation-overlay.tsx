@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Modal } from "@/components/ui/modal";
 import { useConfirmationStore } from "@/store/confirmation-store";
 import { cn } from "@/lib/utils";
@@ -16,27 +16,23 @@ export function ConfirmationOverlay() {
   const claim = useConfirmationStore((s) => s.claim);
   const fail = useConfirmationStore((s) => s.fail);
 
-  // Restore focus to the element that triggered the confirmation when it closes.
-  const triggerRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (active) {
-      triggerRef.current = document.activeElement as HTMLElement | null;
-    } else if (triggerRef.current) {
-      triggerRef.current.focus?.();
-      triggerRef.current = null;
-    }
-  }, [active]);
-
-  // Enter triggers confirm while overlay is open and not already working.
-  // A held key never confirms, and Enter on Cancel stays Cancel's own click.
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  // Enter confirms while the overlay is open and not already working. Modal
+  // focuses the dialog itself on open (and returns focus on close), so Enter
+  // there confirms; Enter on a button, link or field stays that control's own
+  // key (UA4). A held key never clicks anything.
   useEffect(() => {
     if (!active) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && !loading && !cancelRef.current?.contains(e.target as Node)) {
+      if (e.key !== "Enter" || loading) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest("input, textarea, select")) return;
+      if (e.repeat) {
         e.preventDefault();
-        if (!e.repeat) runConfirm();
+        return;
       }
+      if (target?.closest("button, a")) return;
+      e.preventDefault();
+      runConfirm();
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -76,7 +72,7 @@ export function ConfirmationOverlay() {
   }
 
   return (
-    <Modal isOpen={true} onClose={handleCancel} title={config.title} hideClose>
+    <Modal isOpen={true} onClose={handleCancel} title={config.title} hideClose initialFocus="container">
       <div className="space-y-5">
         {typeof config.message === "string" ? (
           <p className="font-sans text-sm text-ink-soft">{config.message}</p>
@@ -95,7 +91,6 @@ export function ConfirmationOverlay() {
 
         <div className="flex items-center justify-end gap-3 pt-2">
           <button
-            ref={cancelRef}
             type="button"
             onClick={handleCancel}
             disabled={loading}
