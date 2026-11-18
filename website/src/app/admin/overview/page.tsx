@@ -77,7 +77,6 @@ export default function AdminOverviewPage() {
         ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
           <AdminStatTile
-            number="01"
             kicker="Pending verifications"
             value={kpis.pendingVerifications}
             caption={
@@ -88,7 +87,6 @@ export default function AdminOverviewPage() {
             href={ROUTES.ADMIN_INBOX}
           />
           <AdminStatTile
-            number="02"
             kicker="Disputes needing you"
             value={needingAdmin}
             caption={
@@ -101,7 +99,6 @@ export default function AdminOverviewPage() {
           />
           {ADMIN_FLAGS_ENABLED && (
             <AdminStatTile
-              number="03"
               kicker="Open flags"
               value={kpis.openFlags}
               caption={
@@ -113,7 +110,6 @@ export default function AdminOverviewPage() {
             />
           )}
           <AdminStatTile
-            number={ADMIN_FLAGS_ENABLED ? "04" : "03"}
             kicker="Pending payouts"
             value={kpis.pendingPayouts}
             caption={
@@ -124,7 +120,6 @@ export default function AdminOverviewPage() {
             href={ROUTES.ADMIN_PAYOUTS}
           />
           <AdminStatTile
-            number={ADMIN_FLAGS_ENABLED ? "05" : "04"}
             kicker="Live events"
             value={kpis.liveEvents}
             caption={
@@ -135,14 +130,12 @@ export default function AdminOverviewPage() {
             href={ROUTES.ADMIN_EVENTS}
           />
           <AdminStatTile
-            number={ADMIN_FLAGS_ENABLED ? "06" : "05"}
             kicker="Approved photographers"
             value={kpis.approvedPhotographers}
             caption="active on platform"
             href={ROUTES.ADMIN_PHOTOGRAPHERS}
           />
           <AdminStatTile
-            number={ADMIN_FLAGS_ENABLED ? "07" : "06"}
             kicker="Active suspensions"
             value={kpis.suspended}
             caption={
@@ -151,7 +144,6 @@ export default function AdminOverviewPage() {
             href={ROUTES.ADMIN_PHOTOGRAPHERS}
           />
           <AdminStatTile
-            number={ADMIN_FLAGS_ENABLED ? "08" : "07"}
             kicker="This week's decisions"
             value={kpis.decisionsThisWeek}
             caption={
@@ -159,6 +151,7 @@ export default function AdminOverviewPage() {
                 ? "action logged"
                 : "actions logged"
             }
+            href="#decisions"
           />
         </div>
         )}

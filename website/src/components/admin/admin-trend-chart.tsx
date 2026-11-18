@@ -3,13 +3,17 @@
 import { useState } from "react";
 import { formatLongDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { DailyMetric } from "@/lib/admin-overview-mock";
+
+export interface DailyMetric {
+  date: string; // YYYY-MM-DD
+  amount: number;
+}
 
 interface AdminTrendChartProps {
   data: ReadonlyArray<DailyMetric>;
   /** Used in the active-bar readout: "{n} {unit} on {date}" */
   unitLabel: string;
-  /** aria-label for the whole chart. */
+  /** Caption of the screen-reader table that stands in for the bars. */
   ariaLabel: string;
   /** Override how each `point.date` renders in the readout + aria. Default
    *  renders the long-form day (e.g. "APR 28 · 2026"). */
@@ -46,26 +50,37 @@ export function AdminTrendChart({
 
   return (
     <div>
+      <table className="sr-only">
+        <caption>{ariaLabel}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Date</th>
+            <th scope="col">{unitLabel}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((point) => (
+            <tr key={point.date}>
+              <td>{renderLabel(point.date)}</td>
+              <td>{renderValue(point.amount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {/* Bars are for the eye only; the table above is their text version. */}
       <div
-        role="img"
-        aria-label={ariaLabel}
+        aria-hidden="true"
         className="flex items-end gap-1 h-20 md:h-24 bg-bone-deep rounded-md p-1.5"
         onMouseLeave={() => setActiveIndex(null)}
       >
         {data.map((point, i) => {
-          const pct = Math.max(4, (point.amount / max) * 100);
+          const pct = (point.amount / max) * 100;
           const isActive = activeIndex === i;
           return (
-            <button
+            <span
               key={point.date}
-              type="button"
               onMouseEnter={() => setActiveIndex(i)}
-              onFocus={() => setActiveIndex(i)}
-              onClick={() =>
-                setActiveIndex(activeIndex === i ? null : i)
-              }
-              aria-label={`${renderLabel(point.date)}: ${renderValue(point.amount)}`}
-              className="flex-1 h-full flex items-end rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-fresh focus-visible:ring-offset-1 focus-visible:ring-offset-bone-deep cursor-pointer"
+              className="flex-1 h-full flex items-end rounded-sm"
             >
               <span
                 style={{
@@ -78,7 +93,7 @@ export function AdminTrendChart({
                   isActive ? "bg-ink" : "bg-ink-soft",
                 )}
               />
-            </button>
+            </span>
           );
         })}
       </div>

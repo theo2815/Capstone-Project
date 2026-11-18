@@ -99,6 +99,8 @@ export interface AdminTrendPoint {
   decisions: number;
   disputes: number;
   payouts: number;
+  // Absent until the backend sends it (AX-11); the Uploads toggle hides then.
+  uploads?: number;
 }
 
 export async function fetchAdminKpis(signal?: AbortSignal): Promise<AdminKpis> {

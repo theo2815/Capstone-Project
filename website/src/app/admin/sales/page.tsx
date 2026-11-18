@@ -41,7 +41,6 @@ export default function AdminSalesPage() {
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
           <AdminStatTile
-            number="01"
             kicker="Gross merch volume"
             value={formatPrice(kpis.gmv)}
             caption={`${kpis.totalSalesCount.toLocaleString()} ${
@@ -49,13 +48,11 @@ export default function AdminSalesPage() {
             }`}
           />
           <AdminStatTile
-            number="02"
             kicker="Platform revenue"
             value={formatPrice(kpis.platformRevenue)}
             caption="25% of every sale"
           />
           <AdminStatTile
-            number="03"
             kicker="Refunds issued"
             value={formatPrice(kpis.refundsIssued)}
             // The amount is the server total and the count comes from the dispute
@@ -71,7 +68,6 @@ export default function AdminSalesPage() {
             }
           />
           <AdminStatTile
-            number="04"
             kicker="Net platform revenue"
             value={formatPrice(kpis.netPlatformRevenue)}
             caption="cut minus refunds"

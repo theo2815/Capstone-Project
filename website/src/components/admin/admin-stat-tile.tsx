@@ -2,7 +2,6 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 interface StatTileProps {
-  number: string;
   kicker: string;
   value: number | string;
   caption?: string;
@@ -14,8 +13,6 @@ interface StatTileProps {
 // optional caption + optional `href` (turns the card into a Link with chevron).
 // Variant `muted` softens borders + text for "coming next" / Phase 2b stub
 // tiles so they read as informational rather than active.
-// `number` is still accepted but no longer drawn: the 01–08 prefix encoded no
-// real order and made labels wrap unevenly, so the values didn't line up.
 export function AdminStatTile({
   kicker,
   value,

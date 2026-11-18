@@ -71,17 +71,20 @@ export function useAdminKpis(): AdminKpis | null {
   return useAdminKpisQuery().data ?? null;
 }
 
-export function useAdminKpiTrend(
-  days: number = 30,
-): AdminTrendPoint[] | null {
+export function useAdminKpiTrendQuery(days: number = 30) {
   const session = usePrivateQuerySession("ADMIN");
-  const query = useQuery<AdminTrendPoint[]>({
+  return useQuery<AdminTrendPoint[]>({
     queryKey: ["admin", "kpis", "trend", days, ...session.key],
     queryFn: ({ signal }) => fetchAdminKpiTrend(days, signal),
     enabled: session.enabled,
     staleTime: KPI_STALE_MS,
   });
-  return query.data ?? null;
+}
+
+export function useAdminKpiTrend(
+  days: number = 30,
+): AdminTrendPoint[] | null {
+  return useAdminKpiTrendQuery(days).data ?? null;
 }
 
 // ───────────────────────────────────────────── Flags

@@ -33,6 +33,15 @@ it("the disputes tile counts everything that needs an admin", async () => {
   expect(tile.textContent).toContain("2 overdue");
 });
 
+it("the decisions tile links to the decision history on the same page", () => {
+  useAuthStore.getState().setUser(admin);
+  kpis.value = { decisionsThisWeek: 3 };
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
+  expect(screen.getByText(/This week's decisions/).closest("a")?.getAttribute("href")).toBe("#decisions");
+});
+
 it("shows a retry instead of zero counts when the metrics fail to load", async () => {
   useAuthStore.getState().setUser(admin);
   kpis.isError = true;
