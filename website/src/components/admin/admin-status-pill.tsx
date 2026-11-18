@@ -34,6 +34,6 @@ const TONE_CLASS: Record<AdminStatusPillTone, string> = {
   ink: "border-ink text-ink",
   slate: "border-line text-slate",
   muted: "border-line text-slate-soft",
-  amber: "border-amber-600/30 text-amber-700",
+  amber: "border-warning-text/30 text-warning-text",
   error: "border-error/30 text-error",
 };
