@@ -51,7 +51,11 @@ export function useAdminSellerDetailsRecord(userId: string | null) {
 export function useAdminSellerDetailsActions() {
   const qc = useQueryClient();
   const { owner } = useAdminOwner();
-  const refreshLists = () => qc.invalidateQueries({ queryKey: [...sellerKeys.owner(owner), "list"] });
+  // The KPIs carry the "Needs review" tab count (pendingSellerDetails).
+  const refreshLists = () => Promise.allSettled([
+    qc.invalidateQueries({ queryKey: [...sellerKeys.owner(owner), "list"] }),
+    qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+  ]);
   const approve = useMutation({
     mutationFn: ({ userId, revision }: { userId: string; revision: number }) => approveSellerDetails(userId, revision),
     onSuccess: refreshLists,

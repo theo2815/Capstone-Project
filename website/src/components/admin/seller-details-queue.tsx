@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
+import { AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { Slab } from "@/components/profile-shell/slab";
-import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { FieldError } from "@/components/ui/field-error";
+import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Modal } from "@/components/ui/modal";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import {
   useAdminSellerDetailsActions,
   useAdminSellerDetailsList,
@@ -14,6 +19,7 @@ import {
 } from "@/hooks/use-admin-seller-details";
 import { EMPTY_ADMIN_USERS, useAdminPhotographerSettings, useAdminUsers } from "@/hooks/use-admin-users";
 import { useToast } from "@/hooks/use-toast";
+import { useUrlState } from "@/hooks/use-url-state";
 import { ApiError } from "@/lib/api";
 import { SELLER_ID_TYPES, type AdminSellerDetails, type AdminSellerFilter, type RepeatMatch } from "@/lib/api-seller-details";
 import { captureAuthSession } from "@/lib/auth-session";
@@ -43,46 +49,54 @@ const REASON_LABEL: Record<string, string> = {
   REPEATED_FAILED_CHECKS: "Several failed automatic checks before this one",
 };
 const MATCH_LABEL: Record<string, string> = { ID_NUMBER: "ID number", PAYOUT_NUMBER: "payout number", PHONE: "phone" };
-const FILTERS = [["manual_review", "Needs review"], ["auto_approved", "Auto-approved"], [null, "All"]] as const;
+const STATUS_TONE: Record<string, AdminStatusPillTone> = { manual_review: "amber", rejected: "error" };
+const FILTERS = [["manual_review", "Needs review"], ["auto_approved", "Auto-approved"], ["all", "All"]] as const;
+type FilterKey = (typeof FILTERS)[number][0];
 const FILTER_COUNT = { manual_review: "waiting", auto_approved: "auto-approved", all: "in all" } as const;
 const FILTER_EMPTY = { manual_review: "No seller details waiting.", auto_approved: "No auto-approved seller details.", all: "No seller details yet." } as const;
 const LINK_LIFETIME_MS = 5 * 60_000;
+const REASON_ID = "seller-reject-reason";
 const idLabel = (value: string) => SELLER_ID_TYPES.find((t) => t.value === value)?.label ?? value;
 const statusLabel = (reviewState: string) => STATUS_LABEL[reviewState] ?? reviewState;
+const StatusPill = ({ reviewState, className }: { reviewState: string; className?: string }) => (
+  <AdminStatusPill label={statusLabel(reviewState)} tone={STATUS_TONE[reviewState] ?? "slate"} className={className} />
+);
 const score = (value: number | null) => (value === null ? "Not run" : `${value.toFixed(1)}%`);
 
 // SC-2b: admins review photographers' seller details (ID photos, a selfie
 // holding the ID) on the verifications page, separate from verification itself.
 // AA-I16: manual-review cases first (the server sorts), with the automatic results.
 export function SellerDetailsQueue() {
-  const [status, setStatus] = useState<AdminSellerFilter>("manual_review");
-  const [limit, setLimit] = useState<number>(PAGE_SIZE.ADMIN_INCREMENT);
+  const [rawFilter, setFilter] = useUrlState<string>("sd", "manual_review");
+  const key: FilterKey = FILTERS.find(([k]) => k === rawFilter)?.[0] ?? "manual_review";
+  const status: AdminSellerFilter = key === "all" ? null : key;
+  // Paging belongs to one filter, so a tab click or Back/Forward starts on the first page.
+  const [paging, setPaging] = useState<{ key: FilterKey; limit: number }>({ key, limit: PAGE_SIZE.ADMIN_INCREMENT });
+  const limit = paging.key === key ? paging.limit : PAGE_SIZE.ADMIN_INCREMENT;
   const [openId, setOpenId] = useState<string | null>(null);
   const list = useAdminSellerDetailsList(status, limit);
+  // Absent until the backend sends it (AX-8): the tab then shows no count rather than 0.
+  const waiting = useAdminKpis()?.pendingSellerDetails;
   const rows = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
-  const filter = (next: AdminSellerFilter) => { setStatus(next); setLimit(PAGE_SIZE.ADMIN_INCREMENT); };
 
   return (
     <Slab id="seller-details" number="04" title="Seller details" caption="ID checks before uploads"
-      trailing={<span className="tnum">{total} {FILTER_COUNT[status ?? "all"]}</span>}>
-      <div role="group" aria-label="Filter seller details" className="mb-6 flex flex-wrap gap-2">
-        {FILTERS.map(([value, label]) => (
-          <button key={label} type="button" aria-pressed={status === value} onClick={() => filter(value)}
-            className={cn(BTN_SECONDARY, BTN_SIZE.sm, status === value && "bg-ink text-surface")}>
-            {label}
-          </button>
-        ))}
-      </div>
+      trailing={<span className="tnum">{total} {FILTER_COUNT[key]}</span>}>
+      <AdminStatusTabs label="Filter seller details" value={key} onChange={setFilter}
+        tabs={FILTERS.map(([k, label]) => ({ key: k, label, count: k === "manual_review" ? waiting : undefined }))} />
+      <div className="pt-6">
       {list.isPending ? (
-        <p className="font-sans text-sm text-slate-soft">Loading…</p>
+        <div aria-busy="true" className="space-y-3">
+          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+        </div>
       ) : list.isError ? (
         <div role="alert" className="font-sans text-sm text-ink">
           <p>Couldn&apos;t load seller details.</p>
           <button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-3")}>Try again</button>
         </div>
       ) : rows.length === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">{FILTER_EMPTY[status ?? "all"]}</p>
+        <p className="font-sans text-sm text-slate-soft">{FILTER_EMPTY[key]}</p>
       ) : (
         <>
           <ul className="space-y-3">
@@ -96,15 +110,16 @@ export function SellerDetailsQueue() {
                       {idLabel(row.idType)} · <span className="tnum">{formatLongDate(row.submittedAt, true)}</span>
                     </span>
                   </span>
-                  <span className={cn(KICKER, "shrink-0 text-slate")}>{statusLabel(row.reviewState)}</span>
+                  <StatusPill reviewState={row.reviewState} className="shrink-0" />
                 </button>
               </li>
             ))}
           </ul>
           <LoadMoreButton shown={rows.length} total={total} increment={PAGE_SIZE.ADMIN_INCREMENT}
-            isLoading={list.isFetching} onLoadMore={() => setLimit((n) => n + PAGE_SIZE.ADMIN_INCREMENT)} />
+            isLoading={list.isFetching} onLoadMore={() => setPaging({ key, limit: limit + PAGE_SIZE.ADMIN_INCREMENT })} />
         </>
       )}
+      </div>
       {openId && <SellerDetailsDrawer userId={openId} onClose={() => setOpenId(null)} />}
     </Slab>
   );
@@ -118,6 +133,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState<{ label: string; src: string } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const data = record.data;
   const expiresAt = record.dataUpdatedAt + LINK_LIFETIME_MS;
@@ -132,8 +148,12 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
     if (!data) return;
     setActionError(null);
     const trimmed = reason.trim();
-    if (kind === "reject" && (!trimmed || trimmed.length > 500)) {
-      setReasonError(trimmed ? "Keep the reason under 500 characters." : "Write the reason the photographer will see.");
+    if (kind === "reject" && !trimmed) {
+      setReasonError("Write the reason the photographer will see.");
+      // Reject sits in the sticky footer, far below the box on a long record.
+      const box = document.getElementById(REASON_ID);
+      box?.scrollIntoView({ block: "center" });
+      box?.focus();
       return;
     }
     const isCurrent = captureAuthSession();
@@ -154,9 +174,9 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
   const canApprove = data?.reviewState === "manual_review";
   const canReject = canApprove || data?.reviewState === "auto_approved" || data?.reviewState === "approved";
   return (
-    <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending}
+    <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending || !!zoom}
       kicker="Seller details" title={data?.legalName ?? "Seller details"}
-      rightHeader={data && <span className={cn(KICKER, "inline-flex rounded-full border border-line text-slate px-3 py-0.5")}>{statusLabel(data.reviewState)}</span>}
+      rightHeader={data && <StatusPill reviewState={data.reviewState} />}
       subtitle={data && <p className={cn(KICKER, "text-slate")}>{data.email}</p>}
       actions={data && (
         <>
@@ -185,21 +205,23 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
           )}
           <Details data={data} payoutNames={settings.isError ? "Couldn't load payout accounts" : settings.data?.payouts.map((p) => p.accountName) ?? null} />
           {data.repeatMatches.length > 0 && <RepeatMatches matches={data.repeatMatches} />}
-          <Photos data={data} expired={now >= expiresAt} onReload={() => void record.refetch()} reloading={record.isFetching} />
+          <Photos data={data} expired={now >= expiresAt} onReload={() => void record.refetch()} reloading={record.isFetching}
+            onOpen={(label, src) => setZoom({ label, src })} />
           <Checklist />
           {canReject && (
             <div className="flex flex-col gap-2">
-              <label htmlFor="seller-reject-reason" className="font-sans text-sm text-slate">Reason for rejecting</label>
-              <textarea id="seller-reject-reason" rows={3} maxLength={500} value={reason} disabled={isPending}
-                aria-invalid={reasonError ? true : undefined} aria-describedby={reasonError ? "seller-reject-reason-error" : undefined}
-                onChange={(e) => { setReason(e.target.value); setReasonError(null); }}
-                className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink resize-none" />
+              <AdminTextarea id={REASON_ID} label="Reason for rejecting" required maxLength={500} value={reason} error={reasonError}
+                onChange={(next) => { setReason(next); setReasonError(null); }} />
               <p className="font-sans text-sm text-slate-soft">Sent to the photographer. Their new uploads pause until they send new details.</p>
-              <FieldError message={reasonError} id="seller-reject-reason-error" density="tight" />
             </div>
           )}
         </div>
       )}
+      {/* Drawer is z-50, Modal z-60: the photo opens on top; the drawer's Esc waits while it is open. */}
+      <Modal isOpen={!!zoom} onClose={() => setZoom(null)} title={zoom?.label} className="w-auto max-w-[calc(100vw-3rem)] overflow-auto">
+        {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL outside Next image-domain config. */}
+        {zoom && <img src={zoom.src} alt={zoom.label} draggable={false} className="max-w-none" />}
+      </Modal>
     </AdminDetailDrawer>
   );
 }
@@ -259,7 +281,9 @@ function RepeatMatches({ matches }: { matches: RepeatMatch[] }) {
   );
 }
 
-function Photos({ data, expired, onReload, reloading }: { data: AdminSellerDetails; expired: boolean; onReload: () => void; reloading: boolean }) {
+function Photos({ data, expired, onReload, reloading, onOpen }: {
+  data: AdminSellerDetails; expired: boolean; onReload: () => void; reloading: boolean; onOpen: (label: string, src: string) => void;
+}) {
   const files = data.files;
   const shots = files ? ([
     ["Live selfie (reference)", files.livenessReference],
@@ -281,7 +305,12 @@ function Photos({ data, expired, onReload, reloading }: { data: AdminSellerDetai
           <figure key={label}>
             {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL outside Next image-domain config. */}
             <img src={src} alt={label} draggable={false} className="w-full rounded-xl border border-line bg-bone-deep object-contain" />
-            <figcaption className={cn(KICKER, "mt-2 text-slate-soft")}>{label}</figcaption>
+            <figcaption className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <span className={cn(KICKER, "text-slate-soft")}>{label}</span>
+              <button type="button" disabled={expired} onClick={() => onOpen(label, src)} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+                Open full size<span className="sr-only">: {label}</span>
+              </button>
+            </figcaption>
           </figure>
         ))}
       </div>
