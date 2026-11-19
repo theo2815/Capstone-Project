@@ -528,6 +528,12 @@ interface RelevanceCaseRepository : JpaRepository<RelevanceCase, UUID> {
         pageable: Pageable,
     ): Page<RelevanceCaseRow>
 
+    // AX-8: the admin badge. Current cases a person must look at, each case once: Can't tell with no admin hide yet
+    // (an admin hide keeps the verdict, markAdminHide), or an open appeal.
+    @Query(value = "SELECT count(*) $CASE_FROM WHERE c.stage = 'APPLIED' AND (($CANT_TELL AND c.action = 'NONE') OR $OPEN_APPEAL)",
+        nativeQuery = true)
+    fun countNeedingPerson(): Long
+
     @Query(value = "SELECT $CASE_ROW $CASE_FROM WHERE c.id = :id", nativeQuery = true)
     fun caseRow(@Param("id") id: UUID): RelevanceCaseRow?
 
@@ -560,10 +566,14 @@ private const val CASE_FROM = """FROM relevance_cases c
     JOIN users u ON u.id = br.photographer_id
     LEFT JOIN photographer_settings ps ON ps.user_id = br.photographer_id"""
 
+private const val CANT_TELL = "c.verdict = 'CANT_TELL'"
+
+// RV-3.2 part b: current cases with an open appeal.
+private const val OPEN_APPEAL = "EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'OPEN')"
+
 private const val CASE_TAB =
-    "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND c.verdict = 'CANT_TELL') " +
-        // RV-3.2 part b: current cases with an open appeal.
-        "OR (:tab = 'appeals' AND EXISTS (SELECT 1 FROM relevance_appeals a WHERE a.case_id = c.id AND a.status = 'OPEN')))"
+    "(:tab = 'all' OR (:tab = 'hidden' AND c.action <> 'NONE') OR (:tab = 'cant_tell' AND $CANT_TELL) " +
+        "OR (:tab = 'appeals' AND $OPEN_APPEAL))"
 
 private const val LIVE_HOLD = "FROM relevance_cases c JOIN flags f ON f.id = c.hold_flag_id " +
     "WHERE c.id = :id AND f.status IN ('open', 'escalated') AND f.payout_hold_at IS NOT NULL"

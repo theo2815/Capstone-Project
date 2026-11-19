@@ -1,17 +1,27 @@
 package com.quickpitik.service.admin
 
+import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.dto.admin.AdminKpisDto
 import com.quickpitik.dto.admin.AdminTrendPointDto
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.PayoutCycleStatus
+import com.quickpitik.entity.PayoutReportStatus
+import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutCycleRepository
+import com.quickpitik.repository.PayoutReportRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
+import com.quickpitik.repository.RelevanceAppealRepository
+import com.quickpitik.repository.RelevanceCaseRepository
+import com.quickpitik.repository.SellerDetailsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.removal.PhotoRemovalQueryService
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -34,6 +44,11 @@ class AdminKpiService(
     private val adminDecisionLogRepository: AdminDecisionLogRepository,
     private val jdbcTemplate: JdbcTemplate,
     private val adminDisputeService: AdminDisputeService,
+    private val sellerDetailsRepository: SellerDetailsRepository,
+    private val payoutReportRepository: PayoutReportRepository,
+    private val relevanceCaseRepository: RelevanceCaseRepository,
+    private val relevanceAppealRepository: RelevanceAppealRepository,
+    private val photoRemovalQueryService: PhotoRemovalQueryService,
 ) {
 
     fun kpis(): AdminKpisDto {
@@ -50,7 +65,8 @@ class AdminKpiService(
         val decisionsThisWeek = adminDecisionLogRepository.countLogicalDecisionsBetween(from, to)
         val openDisputes = disputeRepository.countByStatusWire("open")
         val openFlags = flagRepository.countByStatusWire("open")
-        val pendingPayouts = payoutCycleRepository.countByStatusWire(PayoutCycleStatus.PENDING.wire) +
+        val payoutsAwaitingReview = payoutCycleRepository.countByStatusWire(PayoutCycleStatus.PENDING.wire)
+        val pendingPayouts = payoutsAwaitingReview +
             payoutCycleRepository.countByStatusWire(PayoutCycleStatus.SCHEDULED.wire)
         val pendingEventRequests = eventRepository.countByReviewStatusInAndDeletedAtIsNull(
             listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
@@ -69,8 +85,20 @@ class AdminKpiService(
             pendingEventRequests = pendingEventRequests,
             disputesNeedingAdmin = disputeQueue.needsAdmin,
             disputesOverdue = disputeQueue.overdue,
+            pendingSellerDetails = listTotal { sellerDetailsRepository.findForAdmin(SellerDetailsStatus.MANUAL_REVIEW, it) },
+            removalsNeedingAction = photoRemovalQueryService.countNeedingAction(),
+            openPayoutReports = listTotal { payoutReportRepository.pageForAdmin(PayoutReportStatus.OPEN.wire, it) },
+            // `since` only matters to the Repeat filter, which is off here.
+            relevanceHidden = listTotal { relevanceCaseRepository.pageCurrentCases("hidden", false, OffsetDateTime.now(), it) },
+            relevanceCantTell = listTotal { relevanceCaseRepository.pageCurrentCases("cant_tell", false, OffsetDateTime.now(), it) },
+            relevanceAppealsOpen = listTotal { relevanceAppealRepository.pageAppeals("OPEN", it) },
+            relevanceNeedsPerson = relevanceCaseRepository.countNeedingPerson(),
+            payoutsAwaitingReview = payoutsAwaitingReview,
         )
     }
+
+    // AX-8: a one-row page of the list's own query, so the count is that list's `total` by the same predicate.
+    private fun listTotal(page: (Pageable) -> Page<*>): Long = page(OffsetLimitPageable(0, 1)).totalElements
 
     fun trend(daysRaw: Int?): List<AdminTrendPointDto> {
         val days = (daysRaw ?: 30).coerceIn(1, 365)
