@@ -8,6 +8,7 @@ import { adminUserKeys } from "@/hooks/use-admin-users";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { useAuthStore } from "@/store/auth-store";
 import { VerificationsQueue } from "./verifications-queue";
+import { AdminPhotographerCard } from "./admin-photographer-card";
 
 const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -71,4 +72,13 @@ it("a failed first load (even with an empty message) shows an alert with Retry, 
   expect(screen.queryByText("Queue is clear.")).toBeNull();
   expect(screen.queryByText(/^0 (pending|stuck)$/)).toBeNull();
   expect(screen.queryByText(/No photographers stuck/)).toBeNull();
+});
+
+it("a row's completeness counts socials and payouts, the same number as the directory card", () => {
+  const snapshot = { hasCover: true, hasBrandName: true, hasWatermark: true, hasHandle: true, hasRegion: true, socialCount: 0, payoutCount: 0 };
+  mount([{ ...adminUser, settingsSnapshot: snapshot }]);
+  expect(screen.getByText("5 of 7 fields")).toBeInTheDocument();
+  cleanup();
+  render(<AdminPhotographerCard row={{ ...adminUser, verificationStatus: "approved", settingsSnapshot: snapshot }} />);
+  expect(screen.getByText("5/7 fields")).toBeInTheDocument();
 });

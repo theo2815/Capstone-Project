@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { ROUTES } from "@/lib/constants";
-import { cn, safeHttpUrl } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
@@ -31,19 +31,23 @@ import {
   useDrawerVerbs,
 } from "@/hooks/use-admin-keyboard";
 import {
-  PAYOUT_METHOD_LABEL,
-  SOCIAL_PLATFORM_LABEL,
-  SOCIAL_PLATFORM_TILE,
-} from "@/store/photographer-settings-store";
-import {
   type AdminUserRow,
   type PhotographerSettingsSnapshot,
 } from "@/lib/admin-user-registry";
 import {
+  completenessItems,
+  computeCompleteness,
+  snapshotFromSettings,
   useEffectivePhotographerSettings,
-  type EffectivePhotographerSettings,
 } from "@/lib/admin-photographer-view";
-import { formatPayoutNumber } from "@/lib/payout-format";
+import {
+  CompletenessSection,
+  CoverSection,
+  PayoutsSection,
+  PublicUrlSection,
+  SocialsSection,
+  WatermarkSection,
+} from "@/components/admin/photographer-review-sections";
 import { formatMemberSince, sentenceCaseDate } from "@/lib/format";
 import { formatRegionLabel } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
@@ -65,18 +69,6 @@ import { useRegions } from "@/hooks/use-regions";
 // on the right always opens. URL state via ?row=<userId> so refresh and
 // browser-back behave; the drawer mirrors the chip route pattern.
 //
-const SNAPSHOT_FIELDS: ReadonlyArray<{
-  key: keyof PhotographerSettingsSnapshot;
-  label: string;
-  short: string;
-}> = [
-  { key: "hasCover", label: "Cover banner", short: "Cover" },
-  { key: "hasBrandName", label: "Brand name", short: "Brand" },
-  { key: "hasWatermark", label: "Watermark", short: "WM" },
-  { key: "hasHandle", label: "Public handle", short: "Handle" },
-  { key: "hasRegion", label: "Region", short: "Region" },
-];
-
 export function VerificationsQueue() {
   const users = useAdminUsers();
   const effective = users.data ?? EMPTY_ADMIN_USERS;
@@ -623,17 +615,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const effective = settings.data;
   const { regions } = useRegions();
 
-  const liveSnapshot: PhotographerSettingsSnapshot | null = effective
-    ? {
-        hasCover: !!effective.cover,
-        hasBrandName: effective.brandName.trim().length > 0,
-        hasWatermark: !!effective.watermark,
-        hasHandle: effective.handle.trim().length >= 3,
-        hasRegion: !!effective.region,
-        socialCount: effective.socials.length,
-        payoutCount: effective.payouts.length,
-      }
-    : row.settingsSnapshot;
+  const liveSnapshot = effective ? snapshotFromSettings(effective) : row.settingsSnapshot;
 
   const completeness = computeCompleteness(liveSnapshot);
   const resolvedRegion = effective?.region
@@ -735,51 +717,15 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         <PayoutsSection effective={effective} />
       </CollapsibleReviewSection>
 
-      <CollapsibleReviewSection kicker="Settings completeness">
-        <div className="rounded-2xl border border-line bg-bone-deep p-5 md:p-6 space-y-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <CompletenessStrip snapshot={liveSnapshot} />
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-              {completeness.filled}/{completeness.total} fields
-            </p>
-          </div>
-          <ul className="space-y-2">
-            {SNAPSHOT_FIELDS.map((field) => {
-              const filled = !!liveSnapshot?.[field.key];
-              return (
-                <li
-                  key={field.key}
-                  className="flex items-center justify-between gap-4 font-sans text-sm"
-                >
-                  <span className="text-ink">{field.label}</span>
-                  <span
-                    className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] ${
-                      filled ? "text-fresh" : "text-slate-soft"
-                    }`}
-                  >
-                    {filled ? "Filled" : "Missing"}
-                  </span>
-                </li>
-              );
-            })}
-            {liveSnapshot && (
-              <>
-                <li className="flex items-center justify-between gap-4 font-sans text-sm pt-2 border-t border-line">
-                  <span className="text-ink">Social profiles</span>
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-                    {liveSnapshot.socialCount} linked
-                  </span>
-                </li>
-                <li className="flex items-center justify-between gap-4 font-sans text-sm">
-                  <span className="text-ink">Payout methods</span>
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-                    {liveSnapshot.payoutCount} on file
-                  </span>
-                </li>
-              </>
-            )}
-          </ul>
-        </div>
+      <CollapsibleReviewSection
+        kicker={
+          <>
+            Settings completeness ·{" "}
+            <span className="tnum">{completeness.filled}/{completeness.total}</span> fields
+          </>
+        }
+      >
+        <CompletenessSection snapshot={liveSnapshot} />
       </CollapsibleReviewSection>
 
       <CollapsibleReviewSection kicker="Account">
@@ -793,192 +739,6 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         </dl>
       </CollapsibleReviewSection>
     </div>
-  );
-}
-
-function CoverSection({
-  effective,
-}: {
-  effective: EffectivePhotographerSettings | null;
-}) {
-  const cover = effective?.cover ?? null;
-  if (!cover) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        No cover banner uploaded.
-      </p>
-    );
-  }
-  return (
-    <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
-      {cover.kind === "image" ? (
-        // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
-        <img
-          src={cover.url}
-          alt=""
-          className="size-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        <div
-          aria-hidden
-          className="size-full"
-          style={{
-            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function PublicUrlSection({ handle }: { handle: string }) {
-  if (!handle) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">No handle set yet.</p>
-    );
-  }
-  return (
-    <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-line bg-bone-deep px-4 py-3">
-      <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-ink tnum truncate">
-        quickpitik.com/{handle}
-      </p>
-      <Link
-        href={`/${handle}`}
-        target="_blank"
-        rel="noopener"
-        className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-      >
-        Open ↗
-      </Link>
-    </div>
-  );
-}
-
-function WatermarkSection({
-  effective,
-  brand,
-}: {
-  effective: EffectivePhotographerSettings | null;
-  brand: string;
-}) {
-  const watermark = effective?.watermark ?? null;
-  if (!watermark) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">No watermark uploaded.</p>
-    );
-  }
-  return (
-    <div className="rounded-2xl border border-line bg-bone-deep p-6 md:p-8 flex items-center justify-center min-h-[120px]">
-      {watermark.kind === "image" ? (
-        // eslint-disable-next-line @next/next/no-img-element -- data URL preview from photographer settings store; backend serves signed S3 URL.
-        <img
-          src={watermark.dataUrl}
-          alt={`${brand} watermark`}
-          className="max-h-24 max-w-full object-contain"
-          draggable={false}
-        />
-      ) : (
-        <span
-          className="font-mono uppercase tracking-[0.4em] text-2xl md:text-3xl text-ink/70"
-          aria-label={`Watermark label: ${watermark.label}`}
-        >
-          © {watermark.label}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function SocialsSection({
-  effective,
-}: {
-  effective: EffectivePhotographerSettings | null;
-}) {
-  const socials = effective?.socials ?? [];
-  if (socials.length === 0) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        No social profiles linked yet.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-3">
-      {socials.map((social) => (
-        <li
-          key={social.id}
-          className="flex items-center gap-4 border-b border-line pb-3"
-        >
-          <span
-            aria-hidden
-            className="shrink-0 size-10 rounded-xl border border-line bg-bone-deep flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[13px] text-ink"
-          >
-            {SOCIAL_PLATFORM_TILE[social.platform]}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-display text-base text-ink">
-              {SOCIAL_PLATFORM_LABEL[social.platform]}
-            </p>
-            <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-slate-soft mt-0.5 truncate">
-              {social.url}
-            </p>
-          </div>
-          {safeHttpUrl(social.url) && (
-            <a
-              href={safeHttpUrl(social.url)!}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-            >
-              Open ↗
-            </a>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function PayoutsSection({
-  effective,
-}: {
-  effective: EffectivePhotographerSettings | null;
-}) {
-  const payouts = effective?.payouts ?? [];
-  if (payouts.length === 0) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        No payout accounts on file.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-3">
-      {payouts.map((p) => (
-        <li
-          key={p.id}
-          className="flex items-center justify-between gap-4 border-b border-line pb-3"
-        >
-          <div className="min-w-0">
-            <p className="font-display text-base text-ink truncate">
-              {PAYOUT_METHOD_LABEL[p.method]}
-              {p.isPrimary && (
-                <span className="ml-2 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh tnum">
-                  Primary
-                </span>
-              )}
-            </p>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
-              {formatPayoutNumber(p.method, p.accountNumber)}
-            </p>
-          </div>
-          <p className="font-sans text-sm text-slate-soft truncate">
-            {p.accountName}
-          </p>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -1070,19 +830,14 @@ function CompletenessStrip({
       className="flex items-center gap-1.5"
       aria-label="Settings completeness"
     >
-      {SNAPSHOT_FIELDS.map((field) => {
-        const filled = !!snapshot[field.key];
-        return (
-          <span
-            key={field.key}
-            title={`${field.label}${filled ? " ✓" : " — missing"}`}
-            className={`size-2 rounded-full ${
-              filled ? "bg-fresh" : "bg-line"
-            }`}
-            aria-hidden="true"
-          />
-        );
-      })}
+      {completenessItems(snapshot).map((item) => (
+        <span
+          key={item.label}
+          title={`${item.label}${item.filled ? " ✓" : " — missing"}`}
+          className={`size-2 rounded-full ${item.filled ? "bg-fresh" : "bg-line"}`}
+          aria-hidden="true"
+        />
+      ))}
     </div>
   );
 }
@@ -1098,17 +853,6 @@ function CompletenessFraction({
       {c.filled}/{c.total} fields
     </span>
   );
-}
-
-function computeCompleteness(
-  snapshot: PhotographerSettingsSnapshot | null,
-): { filled: number; total: number } {
-  if (!snapshot) return { filled: 0, total: SNAPSHOT_FIELDS.length };
-  const filled = SNAPSHOT_FIELDS.reduce(
-    (acc, field) => acc + (snapshot[field.key] ? 1 : 0),
-    0,
-  );
-  return { filled, total: SNAPSHOT_FIELDS.length };
 }
 
 function QueueEmpty() {

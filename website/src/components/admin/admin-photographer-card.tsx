@@ -2,11 +2,9 @@ import Link from "next/link";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { ROUTES } from "@/lib/constants";
+import { computeCompleteness } from "@/lib/admin-photographer-view";
 import { formatMemberSince } from "@/lib/format";
-import type {
-  AdminUserRow,
-  PhotographerSettingsSnapshot,
-} from "@/lib/admin-user-registry";
+import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { cn } from "@/lib/utils";
 
 interface AdminPhotographerCardProps {
@@ -14,14 +12,6 @@ interface AdminPhotographerCardProps {
   /** Phase 4: J/K keyboard focus indicator. Adds an ink ring + offset. */
   focused?: boolean;
 }
-
-const COMPLETENESS_KEYS: ReadonlyArray<keyof PhotographerSettingsSnapshot> = [
-  "hasCover",
-  "hasBrandName",
-  "hasWatermark",
-  "hasHandle",
-  "hasRegion",
-];
 
 const STATUS_LABEL: Record<AdminUserRow["verificationStatus"], string> = {
   approved: "Approved",
@@ -104,20 +94,4 @@ export function AdminPhotographerCard({
       {inner}
     </Link>
   );
-}
-
-function computeCompleteness(
-  snapshot: PhotographerSettingsSnapshot | null,
-): { filled: number; total: number } {
-  if (!snapshot) return { filled: 0, total: COMPLETENESS_KEYS.length + 2 };
-  const fieldCount = COMPLETENESS_KEYS.reduce(
-    (acc, key) => acc + (snapshot[key] ? 1 : 0),
-    0,
-  );
-  const socials = snapshot.socialCount > 0 ? 1 : 0;
-  const payouts = snapshot.payoutCount > 0 ? 1 : 0;
-  return {
-    filled: fieldCount + socials + payouts,
-    total: COMPLETENESS_KEYS.length + 2,
-  };
 }
