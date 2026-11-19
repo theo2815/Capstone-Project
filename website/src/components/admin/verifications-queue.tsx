@@ -392,11 +392,11 @@ export function VerificationsQueue() {
                         {row.brandName ?? row.name}
                       </Link>
                     </p>
-                    <Kicker as="p" tone="soft" className="mt-1">
+                    <p className="font-sans text-sm text-slate-soft mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
                       <span className="text-slate-soft"> · </span>
                       <CompletenessFraction snapshot={row.settingsSnapshot} />
-                    </Kicker>
+                    </p>
                   </div>
                   <Kicker as="span" tone="soft" className="shrink-0">
                     Self-serve

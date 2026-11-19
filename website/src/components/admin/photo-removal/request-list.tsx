@@ -8,7 +8,7 @@ import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
 import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { ROUTES } from "@/lib/constants";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { REMOVAL_STATUS_LABEL } from "@/lib/admin-removal-labels";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
@@ -85,7 +85,7 @@ export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnl
                   {/* A runner's case has only a system reference; the event and date already identify it. */}
                   <span className="block text-sm text-slate truncate">{runner ? "Filed by the runner" : row.supportReference}</span>
                 </span>
-                <span className="font-mono tnum text-sm text-slate">{verifiedPhotos(row.phaseCounts)} photos · {formatLongDate(row.createdAt)}</span>
+                <span className="font-mono tnum text-sm text-slate">{verifiedPhotos(row.phaseCounts)} photos · {sentenceCaseDate(formatLongDate(row.createdAt))}</span>
                 <AdminStatusPill label={SOURCE_LABEL[row.source ?? "SUPPORT"]} tone={runner ? "ink" : "muted"} />
                 <AdminStatusPill label={REMOVAL_STATUS_LABEL[row.status]} tone={row.status === "DRAFT" ? "amber" : row.status === "OPEN" ? "ink" : "slate"} />
               </Link>

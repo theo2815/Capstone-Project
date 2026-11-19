@@ -23,7 +23,7 @@ import {
   type RelevanceCaseRow,
   type RelevanceTab,
 } from "@/lib/admin-relevance";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { RelevanceCaseBody, RelevanceCaseSubtitle } from "./relevance-case-drawer";
 import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-actions";
 import { RelevanceAppeals } from "./relevance-appeals";
@@ -172,13 +172,13 @@ function CaseRow({ row, onOpen }: { row: RelevanceCaseRow; onOpen: () => void })
         {isWouldHave(row) && <AdminStatusPill label="Would have hidden" tone="amber" />}
       </span>
       <span className="mt-3 block font-display text-base md:text-lg font-bold text-ink">{row.eventName}</span>
-      <span className={`${kicker} mt-1 block text-slate-soft tnum`}>
+      <span className="mt-1 block font-sans text-sm text-slate-soft tnum">
         {row.photographerHandle ? `@${row.photographerHandle}` : row.photographerName}
         {" · "}
         {row.batchPhotos} photos
         {row.junkPercent !== null && ` · ${row.junkPercent}% junk`}
         {" · "}
-        {formatLongDate(row.decidedAt)}
+        {sentenceCaseDate(formatLongDate(row.decidedAt))}
       </span>
     </button>
   );

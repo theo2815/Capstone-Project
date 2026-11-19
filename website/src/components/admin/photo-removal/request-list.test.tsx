@@ -83,3 +83,10 @@ it("ignores inherited object keys in the status and source filters", async () =>
   expect(await screen.findByText("No removal cases yet.")).toBeVisible();
   expect(removalApi.listAdminRemovalRequests).toHaveBeenLastCalledWith({ offset: 0, limit: 20 }, expect.anything());
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("a case row's date is in sentence case", async () => {
+  vi.mocked(removalApi.listAdminRemovalRequests).mockResolvedValue({ items: [{ ...openCase, items: [] }], total: 1, offset: 0, limit: 20 });
+  render(<QueryClientProvider client={client}><RemovalRequestList /></QueryClientProvider>);
+  expect(await screen.findByText(/photos · Oct 08 · 2026/)).toBeInTheDocument();
+});

@@ -18,7 +18,7 @@ import {
 } from "@/lib/admin-flags";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { ROUTES } from "@/lib/constants";
 import {
   BTN_DANGER,
@@ -132,9 +132,9 @@ export function AdminFlagCard({
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <Kicker as="p" id={idLineId} className="tnum">
+            <p id={idLineId} className="font-mono text-[13px] text-slate tnum">
               {flag.id}
-            </Kicker>
+            </p>
             <h3 className="font-display text-lg md:text-xl font-medium text-ink mt-1">
               {interactive ? (
                 <button type="button" onClick={onOpen} aria-describedby={idLineId} className={`${ROW_OPEN_BUTTON} after:rounded-2xl`}>
@@ -152,11 +152,11 @@ export function AdminFlagCard({
 
         {flag.payoutHoldAt && (
           <p className="font-sans text-sm font-medium text-ink tnum">
-            Payouts on hold since {formatLongDate(flag.payoutHoldAt)}
+            Payouts on hold since {sentenceCaseDate(formatLongDate(flag.payoutHoldAt))}
           </p>
         )}
 
-        <Kicker as="p" tone="soft" className="tnum">
+        <p className="font-sans text-sm text-slate-soft tnum">
           {flag.reportedBy === "system"
             ? "System"
             : `@${flag.reportedBy}`}
@@ -179,8 +179,8 @@ export function AdminFlagCard({
               <span className="text-slate-soft"> · </span>
             </>
           )}
-          {formatLongDate(flag.reportedAt)}
-        </Kicker>
+          {sentenceCaseDate(formatLongDate(flag.reportedAt))}
+        </p>
 
         {!isOpen && flag.reviewerNote && (
           <div className="rounded-xl border border-line bg-bone-deep p-4">

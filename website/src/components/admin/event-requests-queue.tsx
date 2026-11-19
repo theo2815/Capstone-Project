@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
 import { isRaceEdit, type AdminEventRow, type RaceEditChange } from "@/lib/api-admin";
 import type { RaceCandidate } from "@/lib/api-photographer";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { getRegion } from "@/lib/ph-regions";
 import { describePricing, raceCheckReasonLine } from "@/lib/photographer-events";
 import { cn } from "@/lib/utils";
@@ -348,14 +348,14 @@ function RequestRow({
             <LogoPlaceholder size="md" label="No cover photo yet" className="h-full" />
           )}
         </div>
-        <Kicker as="p" tone="soft" tnum>
+        <p className="font-sans text-sm text-slate-soft tnum">
           {kind} · {owner}{waiting && <> · {waiting}</>}
-        </Kicker>
+        </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 break-words">
           {row.name}
         </p>
         <p className="font-sans text-sm text-ink-soft mt-1 tnum">
-          {formatLongDate(row.date, true)} · {row.location}
+          {sentenceCaseDate(formatLongDate(row.date, true))} · {row.location}
         </p>
         {isChange && row.pendingChange && !isRaceEdit(row.pendingChange) && (
           <p className="font-sans text-sm text-ink mt-3 tnum">
@@ -500,7 +500,7 @@ function RaceRef({ label, race }: { label: string; race: RaceCandidate }) {
       ) : (
         <>{race.name} (waiting for review)</>
       )}{" "}
-      · {formatLongDate(race.date, true)} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
+      · {sentenceCaseDate(formatLongDate(race.date, true))} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
     </p>
   );
 }

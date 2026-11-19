@@ -245,3 +245,15 @@ it("join confirm closes when the request is gone", async () => {
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(post).not.toHaveBeenCalled();
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("a request card's values are not upper-cased", () => {
+  client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByHandle: "anashoots" }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/· @anashoots/).closest(".uppercase")).toBeNull();
+  expect(screen.getByText(/^Sep 10 · 2026 · /)).toBeInTheDocument();
+  cleanup();
+  client.setQueryData(key, [race]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/· Sep 10 · 2026 · SRP, Cebu City · strong match/)).toBeInTheDocument();
+});

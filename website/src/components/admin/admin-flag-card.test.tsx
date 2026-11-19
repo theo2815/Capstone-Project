@@ -100,3 +100,10 @@ it("an openable card opens through a button named by its title; inner actions do
   await userEvent.click(screen.getByRole("button", { name: flagReasonLabel("inappropriate") }));
   expect(onOpen).toHaveBeenCalledTimes(1);
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("row values are not upper-cased, and the date is in sentence case", () => {
+  renderCard(eventFlag);
+  expect(screen.getByText("flag-9").closest(".uppercase")).toBeNull();
+  expect(screen.getByText(/Nov \d\d · 2026/).closest(".uppercase")).toBeNull();
+});
