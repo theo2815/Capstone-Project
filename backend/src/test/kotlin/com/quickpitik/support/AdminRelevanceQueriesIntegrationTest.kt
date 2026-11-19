@@ -44,6 +44,23 @@ class AdminRelevanceQueriesIntegrationTest : PostgresIntegrationTest() {
         assertNull(cases.caseRow(UUID.randomUUID()))
     }
 
+    // AX-8: the badge counts current cases a person must look at: Can't tell, or an open appeal, each case once.
+    @Test
+    fun `needing a person counts can't tell or open appeals once and never a plain hidden case`() {
+        val before = cases.countNeedingPerson()
+        val both = batch().let { b -> case(b, "APPLIED", "CANT_TELL", "NONE", appliedAt = NOW).also { appeal(b, it, "OPEN") } }
+        case(batch(), "APPLIED", "CANT_TELL", "NONE", appliedAt = NOW)
+        batch().let { b -> appeal(b, case(b, "APPLIED", "JUNK_DUMP", "HIDE_ALL", appliedAt = NOW), "OPEN") }
+        case(batch(), "APPLIED", "JUNK_DUMP", "HIDE_ALL", appliedAt = NOW)
+        batch().let { b -> appeal(b, case(b, "APPLIED", "JUNK_DUMP", "HIDE_ALL", appliedAt = NOW), "LOST") }
+        case(batch(), "CLOSED", "CANT_TELL", "NONE", appliedAt = NOW)
+        case(batch(), "APPLIED", "CANT_TELL", "HIDE_ALL", appliedAt = NOW) // an admin already hid this Can't tell batch
+
+        assertEquals(before + 3, cases.countNeedingPerson())
+        jdbc.update("UPDATE relevance_cases SET stage = 'CLOSED' WHERE id = ?", both)
+        assertEquals(before + 2, cases.countNeedingPerson())
+    }
+
     @Test
     fun `the measured sample leaves out unmeasured, failed, trashed and removal photos and carries no original key`() {
         val b = batch()
@@ -111,6 +128,10 @@ class AdminRelevanceQueriesIntegrationTest : PostgresIntegrationTest() {
             "applied_mode, action, applied_at) VALUES (?, 'QUIET', ?, 600, ?, 300, 30, ?, ?, ?, ?, ?)",
         b.id, NOW, stage, verdict, NOW, action?.let { "RECORD_ONLY" }, action, appliedAt,
     )
+
+    private fun appeal(b: Batch, caseId: UUID, status: String) = jdbc.update(
+        "INSERT INTO relevance_appeals (case_id, batch_id, photographer_id, reason, status) VALUES (?, ?, ?, 'Mine', ?)",
+        caseId, b.id, b.photographer, status)
 
     private fun photo(b: Batch, caseId: UUID, sharpness: Double?, error: String? = null): UUID {
         val photo = id("INSERT INTO photos (event_id, photographer_id, s3_key, price_php, status) VALUES (?, ?, ?, 125, 'LIVE')",
