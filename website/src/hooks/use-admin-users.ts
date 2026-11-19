@@ -60,8 +60,10 @@ export function useAdminPhotographerSettings(id: string | null) {
   });
 }
 
-export function usePendingVerificationsCount() {
-  const rows = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
+/** Null until the list has loaded, so a header never shows a loading or failed 0. */
+export function usePendingVerificationsCount(): number | null {
+  const rows = useAdminUsers().data;
+  if (!rows) return null;
   return rows.filter((row) => row.role === "PHOTOGRAPHER" &&
     row.verificationStatus === "pending" && row.suspendedAt === null).length;
 }

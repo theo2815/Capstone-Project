@@ -1,6 +1,7 @@
 "use client";
 
 import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 
 import {
   VerificationsQueue,
@@ -8,37 +9,35 @@ import {
 import { SellerDetailsQueue } from "@/components/admin/seller-details-queue";
 import { Kicker } from "@/components/ui/kicker";
 
-// Phase 1 admin redesign: /admin/verifications continues to exist as a
-// deep-link / focused-mode route, but the rail surfaces the queue under
-// /admin/inbox (which adds the KPI strip and, in Phase 2, type filter
-// chips for disputes/flags/payouts). The verifications page itself just
-// renders the dedicated header + the shared <VerificationsQueue>.
-
 export default function AdminVerificationsPage() {
   const pendingCount = usePendingVerificationsCount();
+  // An older backend sends no seller-details count: that number is left out, never shown as 0.
+  const sellerDetailsCount = useAdminKpis()?.pendingSellerDetails ?? null;
 
   return (
     <>
-      <Header pendingCount={pendingCount} />
+      <Header pendingCount={pendingCount} sellerDetailsCount={sellerDetailsCount} />
       <VerificationsQueue />
       <SellerDetailsQueue />
     </>
   );
 }
 
-function Header({ pendingCount }: { pendingCount: number }) {
+function Header({ pendingCount, sellerDetailsCount }: { pendingCount: number | null; sellerDetailsCount: number | null }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
-        Verifications · <span className="tnum">{pendingCount}</span> waiting
+        Profiles{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> waiting</>}
+        {sellerDetailsCount !== null && (
+          <> · Seller details · <span className="tnum">{sellerDetailsCount}</span> to review</>
+        )}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Verifications.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Review what each photographer set up. A complete profile goes live by
-        itself once their identity check passes; reject sends them back with
-        a reason.
+        Profiles go live by themselves once the identity check passes. Here
+        you reject a profile, or approve one that was held.
       </p>
     </header>
   );

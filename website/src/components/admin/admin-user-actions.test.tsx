@@ -145,7 +145,7 @@ it("names the pending bulk send back and blocks repeat Enter until it settles", 
   await user.click(screen.getByRole("button", { name: "Reject 1…" })); const dialog = screen.getByRole("dialog"); await user.click(within(dialog).getAllByRole("radio")[0]!); 
   await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Sending back…" })).toHaveAttribute("aria-busy", "true");
-  expect(screen.getByRole("button", { name: /Test Studio — toggle selection/, hidden: true })).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("button", { name: "Test Studio", hidden: true }).closest("article")).toHaveAttribute("aria-busy", "true");
   await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   await act(async () => { request.resolve(adminUser); });
 });
