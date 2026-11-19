@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Kicker } from "@/components/ui/kicker";
 import { useId, useState } from "react";
 import {
   type Flag,
@@ -131,9 +132,9 @@ export function AdminFlagCard({
       <div className="p-5 md:p-6 space-y-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <p id={idLineId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+            <Kicker as="p" id={idLineId} className="tnum">
               {flag.id}
-            </p>
+            </Kicker>
             <h3 className="font-display text-lg md:text-xl font-medium text-ink mt-1">
               {interactive ? (
                 <button type="button" onClick={onOpen} aria-describedby={idLineId} className={`${ROW_OPEN_BUTTON} after:rounded-2xl`}>
@@ -155,7 +156,7 @@ export function AdminFlagCard({
           </p>
         )}
 
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+        <Kicker as="p" tone="soft" className="tnum">
           {flag.reportedBy === "system"
             ? "System"
             : `@${flag.reportedBy}`}
@@ -179,13 +180,13 @@ export function AdminFlagCard({
             </>
           )}
           {formatLongDate(flag.reportedAt)}
-        </p>
+        </Kicker>
 
         {!isOpen && flag.reviewerNote && (
           <div className="rounded-xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Reviewer note
-            </p>
+            </Kicker>
             <p className="font-sans text-sm text-ink-soft mt-1">
               {flag.reviewerNote}
             </p>

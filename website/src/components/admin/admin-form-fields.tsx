@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChangeEvent, type ReactNode } from "react";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +13,7 @@ import { cn } from "@/lib/utils";
 // length-capped field, warning-text hint when input is invalid.
 
 const LABEL_CLS =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft block";
+  `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft block`;
 const COUNTER_CLS =
   "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-right tnum";
 const HINT_CLS =

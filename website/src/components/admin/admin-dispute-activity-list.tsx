@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   DISPUTE_RESOLUTION_LABEL,
@@ -44,13 +45,13 @@ export function AdminDisputeActivityList({ activity }: AdminDisputeActivityListP
           className="flex items-start justify-between gap-4 border-b border-line pb-3"
         >
           <div className="min-w-0 flex-1">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+            <Kicker as="p" tone="soft" className="tnum">
               {formatSalesDate(entry.decidedAt)}
               {entry.resolution &&
                 ` · ${DISPUTE_RESOLUTION_LABEL[entry.resolution]}`}
               {entry.refundAmount !== null &&
                 ` · ${formatPrice(entry.refundAmount)}`}
-            </p>
+            </Kicker>
             {entry.reason && (
               <p className="font-sans text-sm text-slate mt-1">
                 {entry.reason}
@@ -58,7 +59,7 @@ export function AdminDisputeActivityList({ activity }: AdminDisputeActivityListP
             )}
           </div>
           <span
-            className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 mt-1 ${decisionTone(entry.decision)}`}
+            className={`font-mono uppercase ${KICKER_SIZE_CLASS.sm} shrink-0 mt-1 ${decisionTone(entry.decision)}`}
           >
             {DECISION_LABEL[entry.decision]}
           </span>

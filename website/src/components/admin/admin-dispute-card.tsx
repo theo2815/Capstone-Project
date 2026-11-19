@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from "react";
+import { Kicker } from "@/components/ui/kicker";
 import {
   type Dispute,
   DISPUTE_ATTENTION_LABEL,
@@ -61,28 +62,28 @@ export function AdminDisputeCard({
                 @{dispute.photographerHandle}
               </button>
             </h3>
-            <p id={idLineId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+            <Kicker as="p" id={idLineId} className="tnum">
               {dispute.id}
-            </p>
+            </Kicker>
           </div>
           <p className="font-sans text-sm text-slate mt-2 truncate">
             {DISPUTE_REASON_LABEL[dispute.reason]}
           </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
+          <Kicker as="p" tone="soft" className="mt-1 tnum">
             Order {dispute.orderId}
             <span className="text-slate-soft"> · </span>
             {formatAge(dispute.reportedAt)}
-          </p>
+          </Kicker>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
           <AdminStatusPill
             label={DISPUTE_STATUS_LABEL[dispute.status]}
             tone={disputeStatusTone(dispute.status)}
           />
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
+          <Kicker as="p" className="text-ink tnum">
             {amountText}
             <span className="text-slate-soft"> · {paymentLabel}</span>
-          </p>
+          </Kicker>
         </div>
       </div>
       {(attentionLabel || dispute.dueAt) && (

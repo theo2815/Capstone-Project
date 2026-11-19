@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -391,15 +392,15 @@ export function VerificationsQueue() {
                         {row.brandName ?? row.name}
                       </Link>
                     </p>
-                    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1">
+                    <Kicker as="p" tone="soft" className="mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
                       <span className="text-slate-soft"> · </span>
                       <CompletenessFraction snapshot={row.settingsSnapshot} />
-                    </p>
+                    </Kicker>
                   </div>
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
+                  <Kicker as="span" tone="soft" className="shrink-0">
                     Self-serve
-                  </span>
+                  </Kicker>
                 </li>
               ))}
             </ul>
@@ -447,12 +448,12 @@ export function VerificationsQueue() {
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
           rightHeader={
-            <span className="inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border border-line text-slate px-3 py-0.5">
+            <span className={`inline-flex items-center font-mono uppercase ${KICKER_SIZE_CLASS.sm} rounded-full border border-line text-slate px-3 py-0.5`}>
               Pending
             </span>
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+            <Kicker as="p">
               {openRow.handle ? `@${openRow.handle}` : "No handle yet"}
               {(openRow.region || openRow.city) && (
                 <>
@@ -464,7 +465,7 @@ export function VerificationsQueue() {
               <span className="tnum">
                 Joined {formatMemberSince(openRow.createdAt)}
               </span>
-            </p>
+            </Kicker>
           }
           actions={
             <>
@@ -653,9 +654,9 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           <p className="font-display text-lg md:text-xl text-ink truncate">
             {row.brandName ?? row.name}
           </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
+          <Kicker as="p" tone="soft" className="truncate">
             {row.email}
-          </p>
+          </Kicker>
         </div>
       </div>
 
@@ -753,13 +754,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink tnum`
             : "font-sans text-sm text-ink"
         }`}
       >

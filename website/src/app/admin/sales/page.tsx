@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
@@ -182,7 +182,7 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
 
       <Link
         href={ROUTES.ADMIN_DISPUTES}
-        className="inline-flex items-center gap-2 self-start font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
+        className={`inline-flex items-center gap-2 self-start font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink hover:text-fresh transition-colors`}
       >
         Open disputes queue →
       </Link>

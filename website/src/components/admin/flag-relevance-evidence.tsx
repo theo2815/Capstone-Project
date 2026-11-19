@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { Modal } from "@/components/ui/modal";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { PAGE_SIZE } from "@/lib/pagination-config";
@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 const MAX_SAMPLES = 12;
 
 const labelCls =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
+  `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
 const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm}`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} px-3`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;

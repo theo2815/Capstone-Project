@@ -7,7 +7,7 @@ import {
   isRouteActive,
   useAdminRouteCounts,
 } from "@/components/admin/admin-rail";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { queuePath, useAdminAttentionTarget } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +45,7 @@ export function AdminMobileStrip() {
                   href={route.href}
                   aria-current={isActive ? "page" : undefined}
                   className={cn(
-                    "inline-flex items-center gap-2 px-3 min-h-[44px] rounded-full border font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
+                    `inline-flex items-center gap-2 px-3 min-h-[44px] rounded-full border font-mono uppercase ${KICKER_SIZE_CLASS.sm} transition-colors`,
                     isActive
                       ? "border-ink text-ink bg-ink/5"
                       : "border-line text-slate hover:text-ink",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
@@ -274,13 +274,13 @@ export function DisputesQueue() {
 function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   return (
-    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+    <Kicker as="p" tone="soft" className="tnum">
       {eventName}
       <span className="text-slate-soft"> · </span>
       Order total {formatPrice(dispute.orderSnapshot.total)}
       <span className="text-slate-soft"> · </span>
       Reported {formatLongDate(dispute.reportedAt)}
-    </p>
+    </Kicker>
   );
 }
 
@@ -320,9 +320,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <Kicker as="p" tone="soft" className="mb-3">
           Claim
         </Kicker>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           Reason: {DISPUTE_REASON_LABEL[dispute.reason]}
-        </p>
+        </Kicker>
         <p className="font-sans text-sm md:text-base text-ink-soft mt-3 whitespace-pre-line">
           {dispute.note}
         </p>
@@ -380,17 +380,17 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         </Kicker>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Runner
-            </p>
+            </Kicker>
             <p className="font-display text-lg text-ink mt-2">
               @{dispute.runnerHandle}
             </p>
           </div>
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Photographer
-            </p>
+            </Kicker>
             <p className="font-display text-lg text-ink mt-2">
               @{dispute.photographerHandle}
             </p>
@@ -530,13 +530,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink tnum`
             : "font-sans text-sm text-ink tnum"
         }`}
       >
@@ -559,9 +559,9 @@ function ResolutionNote({
   if (!resolution) return null;
   return (
     <div className="rounded-xl border border-line bg-bone-deep p-4 mb-4">
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         Closed before live decision logging started
-      </p>
+      </Kicker>
       <p className="font-sans text-sm text-ink-soft mt-2">
         {DISPUTE_RESOLUTION_LABEL[resolution]}
         {refundAmount !== null && ` · ${formatPrice(refundAmount)} refunded`}

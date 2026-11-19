@@ -161,7 +161,8 @@ function ToastItem({ toast }: { toast: ToastT }) {
           type="button"
           onClick={() => dismiss(toast.id)}
           aria-label="Dismiss notification"
-          className="size-5 rounded-full text-slate-soft hover:text-ink transition-colors flex items-center justify-center"
+          // 44 px hit area; the negative margin keeps the 20 px footprint the row was laid out for.
+          className="size-11 -m-3 rounded-full text-slate-soft hover:text-ink transition-colors flex items-center justify-center"
         >
           <svg
             viewBox="0 0 12 12"

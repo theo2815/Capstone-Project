@@ -5,10 +5,13 @@ import { useAdminUsers, EMPTY_ADMIN_USERS, useAdminUserDetail, useAdminPhotograp
 import type { AdminPhotographerSettingsResponse } from "@/lib/api-admin";
 import type { CoverSource } from "@/lib/photographer-registry";
 import type { BrandColor, PayoutAccount, PhotographerRegion, SocialLink } from "@/store/photographer-settings-store";
-import type { WatermarkPreview } from "@/lib/admin-photographer-settings-seed";
 import type { AdminUserRow, PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 import type { AdminStatusPillTone } from "@/components/admin/admin-status-pill";
 import { ROUTES } from "@/lib/constants";
+
+type WatermarkPreview =
+  | { kind: "label"; label: string }
+  | { kind: "image"; dataUrl: string };
 
 export interface EffectivePhotographerSettings {
   brandName: string;

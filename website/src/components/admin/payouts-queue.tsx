@@ -53,8 +53,8 @@ type HoldTarget = SingleHoldTarget | BulkHoldTarget | null;
 type MarkPaidTarget = AdminPayoutCycle;
 
 // Payouts queue body — extracted from /admin/payouts/page.tsx so the
-// universal /admin/inbox can render the same four slabs + bulk-select
-// bar + three confirm modals under the chip filter.
+// universal /admin/inbox can render the same status tabs (one slab for the
+// chosen tab) + bulk-select bar + confirm modals under the chip filter.
 //
 // Selection state is local (Set<string>), never URL or Zustand. The
 // floating bulk bar is `position: fixed` so it docks on whichever page
@@ -735,13 +735,13 @@ function PayoutSlab({
 // the deprecated `weekOf`. No `dateOnly` flag: this is a full ISO timestamp.
 function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
   return (
-    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+    <Kicker as="p" tone="soft" className="tnum">
       {cycle.handle ? `@${cycle.handle}` : "—"}
       <span className="text-slate-soft"> · </span>
       {formatLongDate(cycle.submittedAt)}
       <span className="text-slate-soft"> · </span>
       {formatPrice(cycle.amount)}
-    </p>
+    </Kicker>
   );
 }
 
@@ -886,9 +886,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               {cycle.brandName ?? cycle.photographerName}
             </p>
             {cycle.handle && (
-              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mt-1">
+              <Kicker as="p" className="mt-1">
                 @{cycle.handle}
-              </p>
+              </Kicker>
             )}
           </div>
           {!isReadyToSend && <PayoutAccountCard cycle={cycle} mode="drawer" />}
@@ -905,9 +905,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               {cycle.holdReason}
             </p>
             {cycle.reviewedAt && (
-              <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 tnum">
+              <Kicker as="p" tone="soft" className="mt-2 tnum">
                 Held {formatLongDate(cycle.reviewedAt)}
-              </p>
+              </Kicker>
             )}
           </div>
         </section>
@@ -1036,9 +1036,9 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
         className={`mt-1 ${
           mono

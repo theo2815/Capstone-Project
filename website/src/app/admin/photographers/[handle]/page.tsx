@@ -320,9 +320,9 @@ function DefRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
         title={value}
         className={`mt-1 text-sm text-ink break-all ${mono ? "font-mono" : "font-sans"}`}

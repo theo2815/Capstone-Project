@@ -1,6 +1,7 @@
 "use client";
 
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Kicker } from "@/components/ui/kicker";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
 import {
   AdminFieldHint,
@@ -578,9 +579,9 @@ export function CoverField({
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/45">
+              <Kicker as="span" className="text-bone/45">
                 No cover yet
-              </span>
+              </Kicker>
             </div>
           )}
         </div>

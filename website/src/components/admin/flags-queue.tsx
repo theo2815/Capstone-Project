@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminFlagCard, FlagStatusPill, type FlagCardActions } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
@@ -274,9 +274,9 @@ export function FlagsQueue() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
         {q.length > 0 && ready && (
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
+          <Kicker as="p" tone="soft" className="mt-3 tnum">
             {matchCount} match{matchCount === 1 ? "" : "es"}
-          </p>
+          </Kicker>
         )}
         {missingId && (
           <div role="status" className="mt-6 space-y-3">
@@ -498,7 +498,7 @@ function FlagSlab({
 function FlagSubtitle({ flag }: { flag: Flag }) {
   const eventName = flagEventName(flag);
   return (
-    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+    <Kicker as="p" tone="soft" className="tnum">
       {flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`}
       <span className="text-slate-soft"> · </span>
       @{flag.photographerHandle}
@@ -506,7 +506,7 @@ function FlagSubtitle({ flag }: { flag: Flag }) {
       {eventName}
       <span className="text-slate-soft"> · </span>
       {formatLongDate(flag.reportedAt)}
-    </p>
+    </Kicker>
   );
 }
 
@@ -724,13 +724,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink tnum`
             : "font-sans text-sm text-ink"
         }`}
       >
