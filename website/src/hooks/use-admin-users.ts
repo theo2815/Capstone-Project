@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchAdminUsers, fetchAdminUsersPage, fetchAdminUserDetail, fetchAdminPhotographerSettings,
+  fetchAdminUsers, fetchAdminUsersPage, fetchAdminUserDetail, fetchAdminPhotographerSettings, fetchAdminUserRecord,
   approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
   sendAdminMessage, fetchAdminCommand, type SendAdminMessageInput,
   type AdminUserDetail, type AdminUserStatusFilter,
@@ -23,6 +23,7 @@ export const adminUserKeys = {
   list: (owner: string | null) => [...adminUserKeys.owner(owner), "list"] as const,
   detail: (owner: string | null, id: string | null) => [...adminUserKeys.owner(owner), "detail", id] as const,
   settings: (owner: string | null, id: string | null) => [...adminUserKeys.owner(owner), "settings", id] as const,
+  record: (owner: string | null, id: string | null) => [...adminUserKeys.owner(owner), "record", id] as const,
 };
 
 export function useAdminUsers() {
@@ -71,6 +72,23 @@ export function useAdminPhotographerSettings(id: string | null) {
   return useQuery({
     queryKey: adminUserKeys.settings(user?.id ?? null, id),
     queryFn: () => fetchAdminPhotographerSettings(id!),
+    enabled: user?.role === "ADMIN" && !!id,
+    staleTime: 60_000,
+  });
+}
+
+// AX-27: under the owner prefix, so every user mutation's refresh reaches it; null when an older backend has no route.
+export function useAdminUserRecord(id: string | null) {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: adminUserKeys.record(user?.id ?? null, id),
+    queryFn: async ({ signal }) => {
+      try { return await fetchAdminUserRecord(id!, signal); }
+      catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
     enabled: user?.role === "ADMIN" && !!id,
     staleTime: 60_000,
   });

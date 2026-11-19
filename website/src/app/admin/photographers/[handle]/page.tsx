@@ -24,8 +24,13 @@ import {
   WatermarkSection,
 } from "@/components/admin/photographer-review-sections";
 import { ROUTES } from "@/lib/constants";
-import { formatLongDate, formatMemberSince } from "@/lib/format";
-import { useAdminEvents, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
+import { formatLongDate, formatMemberSince, formatRaceDate, sentenceCaseDate } from "@/lib/format";
+import { useAdminUserRecord } from "@/hooks/use-admin-users";
+import type { AdminPhotographerRecord } from "@/lib/api-admin";
+import { SellerStatusPill } from "@/components/admin/seller-details-queue";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { cn } from "@/lib/utils";
 import {
   BRAND_COLOR_HEX,
   BRAND_COLOR_LABEL,
@@ -40,38 +45,49 @@ export default function AdminPhotographerDetailPage() {
   const raw = Array.isArray(params.handle) ? params.handle[0] : params.handle;
   const handle = (raw ?? "").trim().toLowerCase();
   const { view, loading, error, refetch } = useAdminPhotographerView(handle);
-  const catalog = useAdminEvents().data ?? EMPTY_ADMIN_EVENTS;
+  const record = useAdminUserRecord(view?.row.userId ?? null);
 
-  if (loading && !view) return <p role="status">Loading photographer…</p>;
-  if (error) return <div role="alert">Couldn&apos;t load photographer. <button onClick={() => void refetch()}>Try again</button></div>;
+  if (loading && !view) {
+    return (
+      <div className="space-y-6" role="status" aria-busy="true">
+        <span className="sr-only">Loading photographer…</span>
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-40 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div role="alert" className="space-y-3">
+        <p className="font-sans text-sm text-error">Couldn&apos;t load this photographer. Please try again.</p>
+        <button type="button" onClick={() => void refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (!view) {
     notFound();
   }
 
-  const { row, profile, effectiveSettings, decisions } = view;
+  const { row, effectiveSettings, decisions } = view;
   const displayName =
     effectiveSettings?.brandName?.trim() || row.brandName || row.name;
   const cover: CoverSource =
     effectiveSettings?.cover ??
-    profile?.cover ??
     { kind: "gradient", ...syntheticCoverGradient(row.userId) };
-  const bio =
-    effectiveSettings?.bio?.trim() || profile?.bio || "Bio not set yet.";
-  const memberSinceIso = profile?.memberSince ?? row.createdAt;
+  const bio = effectiveSettings?.bio?.trim() || "Bio not set yet.";
+  const memberSinceIso = row.createdAt;
   const status = photographerStatus(row);
   const publicHandle = effectiveSettings?.handle?.trim() || row.handle || "";
 
   return (
     <>
-      <div className="pb-2">
-        <Link
-          href={ROUTES.ADMIN_PHOTOGRAPHERS}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-        >
-          ← Photographers
-        </Link>
-      </div>
+      <Link href={ROUTES.ADMIN_PHOTOGRAPHERS} className="inline-flex min-h-[44px] items-center text-sm text-slate hover:text-ink">
+        ← Photographers
+      </Link>
 
       <Hero
         cover={cover}
@@ -85,10 +101,13 @@ export default function AdminPhotographerDetailPage() {
         decisionCount={decisions.length}
         brandColor={effectiveSettings?.brandColor}
         avatarUrl={effectiveSettings?.avatarUrl ?? row.avatarUrl ?? null}
+        record={record.data ?? null}
       />
 
+      {/* Actions come first in the DOM, so a phone reaches them before the eight sections; lg moves them to the side. */}
       <div className="mt-10 lg:mt-14 grid lg:grid-cols-[1fr_18rem] lg:gap-12 lg:items-start">
-        <div className="min-w-0">
+        <AdminActionAside row={row} />
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
           <CompletenessSlab
             snapshot={row.settingsSnapshot}
             effective={effectiveSettings}
@@ -106,15 +125,9 @@ export default function AdminPhotographerDetailPage() {
           <WatermarkSlab effective={effectiveSettings} brand={displayName} />
           <SocialsSlab effective={effectiveSettings} />
           <PayoutsSlab effective={effectiveSettings} />
-          <EventsCoveredSlab
-            events={profile?.events ?? []}
-            catalogResolver={(slug) =>
-              catalog.find((e) => e.slug === slug)?.name
-            }
-          />
+          <EventsCoveredSlab record={record.data} failed={record.isError} onRetry={() => void record.refetch()} />
           <ActivitySlab userId={row.userId} />
         </div>
-        <AdminActionAside row={row} />
       </div>
     </>
   );
@@ -134,6 +147,7 @@ function Hero({
   decisionCount,
   brandColor,
   avatarUrl,
+  record,
 }: {
   cover: CoverSource;
   displayName: string;
@@ -146,11 +160,12 @@ function Hero({
   decisionCount: number;
   brandColor?: EffectivePhotographerSettings["brandColor"];
   avatarUrl: string | null;
+  record: AdminPhotographerRecord | null;
 }) {
   const brandHex =
     brandColor && brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
   return (
-    <header>
+    <header className="mt-4 pb-8 md:pb-12 border-b border-line">
       <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
         {cover.kind === "image" ? (
           // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
@@ -181,8 +196,8 @@ function Hero({
           <Kicker as="p">
             Photographer
           </Kicker>
-          <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-            <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5">
+          <div className="mt-3 flex items-baseline gap-3 flex-wrap">
+            <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] flex items-baseline gap-2.5 min-w-0 break-words">
               {brandHex && (
                 <span
                   aria-hidden
@@ -194,21 +209,34 @@ function Hero({
             </h1>
             <AdminStatusPill label={statusLabel} tone={statusTone} />
           </div>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3">
-            {handle ? `@${handle}` : "No handle yet"}
-            <span className="text-slate-soft"> · </span>
-            <span className="tnum">since {formatMemberSince(memberSince)}</span>
-          </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2">
-            {region ?? "Region not set"}
-            <span className="text-slate-soft"> · </span>
-            {city}
-            <span className="text-slate-soft"> · </span>
-            <span className="tnum">{decisionCount}</span>{" "}
-            actions on file
+          <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl break-words">
+            {handle ? `@${handle}` : "No handle yet"} · member since{" "}
+            <span className="tnum">{sentenceCaseDate(formatMemberSince(memberSince))}</span> ·{" "}
+            {region ?? "Region not set"} · {city} · <span className="tnum">{decisionCount}</span> actions on file
           </p>
         </div>
       </div>
+      {/* PD8: what an admin weighs before acting; hidden until the record loads (an older backend has none). */}
+      {record && (
+        <dl className="mt-6 flex flex-wrap gap-x-8 gap-y-4">
+          <div>
+            <dt className="text-sm text-slate">Seller details</dt>
+            <dd className="mt-1">
+              {record.sellerDetailsStatus
+                ? <SellerStatusPill reviewState={record.sellerDetailsStatus} />
+                : <span className="text-sm text-ink">Not submitted</span>}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-slate">Sales</dt>
+            <dd className="mt-1 font-display text-xl font-bold text-ink tnum">{record.salesCount.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-slate">Photos</dt>
+            <dd className="mt-1 font-display text-xl font-bold text-ink tnum">{record.photoCount.toLocaleString()}</dd>
+          </div>
+        </dl>
+      )}
     </header>
   );
 }
@@ -296,7 +324,8 @@ function DefRow({
         {label}
       </dt>
       <dd
-        className={`mt-1 text-sm text-ink truncate ${mono ? "font-mono" : "font-sans"}`}
+        title={value}
+        className={`mt-1 text-sm text-ink break-all ${mono ? "font-mono" : "font-sans"}`}
       >
         {value}
       </dd>
@@ -387,55 +416,57 @@ function PayoutsSlab({
 /* ─────────────── EVENTS COVERED ─────────────── */
 
 function EventsCoveredSlab({
-  events,
-  catalogResolver,
+  record,
+  failed,
+  onRetry,
 }: {
-  events: ReadonlyArray<{
-    eventSlug: string;
-    state: string;
-    photoCount: number;
-    salesCount: number;
-  }>;
-  catalogResolver: (slug: string) => string | undefined;
+  /** Undefined while loading; null when the backend has no record route yet. */
+  record: AdminPhotographerRecord | null | undefined;
+  failed: boolean;
+  onRetry: () => void;
 }) {
+  const total = record?.eventsTotal ?? 0;
   return (
     <CollapsibleReviewSlab
       id="events"
       number="07"
       title="Events covered"
       caption="Race history"
-      trailing={`${events.length} ${events.length === 1 ? "event" : "events"}`}
+      trailing={record ? `${total.toLocaleString()} ${total === 1 ? "event" : "events"}` : undefined}
     >
-      {events.length === 0 ? (
-        <p className="font-sans text-sm text-slate-soft">
-          No events on file yet.
-        </p>
+      {failed && !record ? (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load the events. Please try again.</p>
+          <button type="button" onClick={onRetry} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
+        </div>
+      ) : record === undefined ? (
+        <div className="space-y-3" aria-busy="true">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </div>
+      ) : record === null ? (
+        <p className="font-sans text-sm text-slate-soft">Event history isn&apos;t available yet.</p>
+      ) : record.events.length === 0 ? (
+        <p className="font-sans text-sm text-slate-soft">No events on file yet.</p>
       ) : (
-        <ul className="space-y-3">
-          {events.map((coverage) => {
-            const eventName =
-              catalogResolver(coverage.eventSlug) ?? coverage.eventSlug;
-            return (
-              <li
-                key={coverage.eventSlug}
-                className="flex items-center justify-between gap-4 border-b border-line pb-3"
-              >
-                <div className="min-w-0">
-                  <p className="font-display text-base text-ink truncate">
-                    {eventName}
-                  </p>
-                  <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
-                    {coverage.state.toUpperCase()}
-                    <span className="text-slate-soft"> · </span>
-                    <span>{coverage.photoCount.toLocaleString()} photos</span>
-                    <span className="text-slate-soft"> · </span>
-                    <span>{coverage.salesCount.toLocaleString()} sold</span>
-                  </p>
-                </div>
+        <>
+          {total > record.events.length && (
+            <p className="font-sans text-sm text-slate mb-4 tnum">
+              Showing {record.events.length} of {total.toLocaleString()}, newest first.
+            </p>
+          )}
+          <ul className="space-y-3">
+            {record.events.map((event) => (
+              <li key={event.eventId} className="border-b border-line pb-3 min-w-0">
+                <p className="font-display text-base text-ink break-words">{event.name}</p>
+                <p className="font-sans text-sm text-slate-soft mt-1 tnum">
+                  {sentenceCaseDate(formatRaceDate(event.date))} · {event.visibility === "unlisted" ? "Private" : "Public"} ·{" "}
+                  {event.photoCount.toLocaleString()} photos
+                </p>
               </li>
-            );
-          })}
-        </ul>
+            ))}
+          </ul>
+        </>
       )}
     </CollapsibleReviewSlab>
   );

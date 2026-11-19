@@ -61,6 +61,8 @@ const statusLabel = (reviewState: string) => STATUS_LABEL[reviewState] ?? review
 const StatusPill = ({ reviewState, className }: { reviewState: string; className?: string }) => (
   <AdminStatusPill label={statusLabel(reviewState)} tone={STATUS_TONE[reviewState] ?? "slate"} className={className} />
 );
+// The photographer detail page shows the same seller-details status (AX-27).
+export const SellerStatusPill = StatusPill;
 const score = (value: number | null) => (value === null ? "Not run" : `${value.toFixed(1)}%`);
 
 // SC-2b: admins review photographers' seller details (ID photos, a selfie

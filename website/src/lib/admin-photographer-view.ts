@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { useAdminUsers, EMPTY_ADMIN_USERS, useAdminUserDetail, useAdminPhotographerSettings } from "@/hooks/use-admin-users";
 import type { AdminPhotographerSettingsResponse } from "@/lib/api-admin";
-import { getPhotographerByHandle, type CoverSource } from "@/lib/photographer-registry";
+import type { CoverSource } from "@/lib/photographer-registry";
 import type { BrandColor, PayoutAccount, PhotographerRegion, SocialLink } from "@/store/photographer-settings-store";
 import type { WatermarkPreview } from "@/lib/admin-photographer-settings-seed";
 import type { AdminUserRow, PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
@@ -84,7 +84,6 @@ export function useAdminPhotographerView(handle: string) {
     refetch: () => Promise.all([...(byId ? [] : [users.refetch()]), ...(userId ? [detail.refetch(), settings.refetch()] : [])]),
     view: userId && detail.data ? {
       row: detail.data,
-      profile: getPhotographerByHandle(detail.data.handle ?? ""),
       effectiveSettings,
       decisions: detail.data.decisionLog,
     } : null,
