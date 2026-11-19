@@ -18,6 +18,8 @@ import { type AdminStatusPillTone } from "./admin-status-pill";
 
 interface AdminPayoutRowProps {
   cycle: AdminPayoutCycle;
+  /** False on tabs with no bulk action (Paid, Closed): no checkbox. */
+  selectable?: boolean;
   submitting: boolean;
   pendingLabel?: string | null;
   selected: boolean;
@@ -33,7 +35,8 @@ interface AdminPayoutRowProps {
   onMarkProcessing: () => void;
 }
 
-function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
+/** Status colour for payout rows and the payout drawer pill (one helper for both). */
+export function payoutStatusTone(status: AdminPayoutStatus): AdminStatusPillTone {
   switch (status) {
     case "pending_review":
       return "amber";
@@ -67,6 +70,7 @@ function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
 // of selection state. Inner controls sit above the cover (relative z-10).
 export function AdminPayoutRow({
   cycle,
+  selectable = true,
   submitting,
   pendingLabel,
   selected,
@@ -88,23 +92,27 @@ export function AdminPayoutRow({
       data-row-id={cycle.id}
       className={cn(
         "group relative cursor-pointer px-4 py-3 transition-colors",
-        // One table row: stacked on phones, the shared column grid from md up.
+        // One table row: stacked while the table is narrow, the shared column grid once it is wide (@5xl, a container query).
         "flex flex-wrap items-start gap-x-4 gap-y-2",
-        "md:grid md:items-center md:gap-x-4",
+        "@5xl:grid @5xl:items-center @5xl:gap-x-4",
         PAYOUT_TABLE_COLUMNS,
         selected ? "bg-fresh-tint/50" : "hover:bg-bone-deep/50",
         focused && "ring-2 ring-inset ring-ink",
       )}
     >
-      <input
-        type="checkbox"
-        aria-label={`Select payout ${cycle.id}`}
-        checked={selected}
-        disabled={submitting}
-        onChange={onToggleSelect}
-        className="relative z-10 mt-1 md:mt-0 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-      />
-      <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] md:basis-auto">
+      {selectable ? (
+        <input
+          type="checkbox"
+          aria-label={`Select payout ${cycle.id}`}
+          checked={selected}
+          disabled={submitting}
+          onChange={onToggleSelect}
+          className="relative z-10 mt-1 @5xl:mt-0 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        />
+      ) : (
+        <span aria-hidden="true" className="hidden @5xl:block" />
+      )}
+      <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] @5xl:basis-auto">
         <h3 className="font-display text-base font-semibold text-ink truncate">
           <button type="button" onClick={onActivate} aria-describedby={hintId} className={cn(ROW_OPEN_BUTTON, "block w-full truncate")}>
             {subjectLabel}
@@ -136,13 +144,13 @@ export function AdminPayoutRow({
       {/* Request time, matching the photographer's own view: see the note on
           PayoutSubtitle in payouts-queue.tsx. */}
       <Cell label="Requested" className="text-ink-soft whitespace-nowrap">{sentenceCaseDate(formatLongDate(cycle.submittedAt))}</Cell>
-      <Cell label="Sales" className="md:text-right font-mono tnum text-[13px] text-ink-soft">{cycle.itemCount}</Cell>
-      <Cell label="Amount" className="md:text-right font-mono tnum text-[14px] font-medium text-ink">{formatPrice(cycle.amount)}</Cell>
+      <Cell label="Sales" className="@5xl:text-right font-mono tnum text-[13px] text-ink-soft">{cycle.itemCount}</Cell>
+      <Cell label="Amount" className="@5xl:text-right font-mono tnum text-[14px] font-medium text-ink">{formatPrice(cycle.amount)}</Cell>
       <Cell label="Method" className="text-ink-soft">{payoutMethodLabel(cycle.method)}</Cell>
       <Cell label="Status">
         <StatusDot status={cycle.status} />
       </Cell>
-      <div className="flex items-center justify-end gap-1 w-full md:w-auto">
+      <div className="flex items-center justify-end gap-1 w-full min-w-0 @5xl:w-auto">
         {submitting && <p role="status" aria-busy="true" className="font-sans text-sm text-slate mr-2">{pendingLabel}</p>}
         <RowActions
           submitting={submitting}
@@ -169,17 +177,20 @@ export function AdminPayoutRow({
   );
 }
 
-/** Column template shared by the payout rows and their header (md and up).
+/** Column template shared by the payout rows and their header, once the table
+ *  is at least 64rem wide (@5xl container query: the fixed tracks alone take
+ *  about 45rem, so below that the photographer column collapsed to 0, and
+ *  at 56rem it still spilled; measured in AX-29).
  *  Fixed status and actions tracks: an `auto` track sized differently in the
  *  header and in each row, so the headings drifted off their columns. */
 export const PAYOUT_TABLE_COLUMNS =
-  "md:grid-cols-[1rem_minmax(0,2fr)_minmax(0,1fr)_3.5rem_7.5rem_minmax(0,0.9fr)_8.5rem_16rem]";
+  "@5xl:grid-cols-[1rem_minmax(0,2fr)_minmax(0,1fr)_3.5rem_7.5rem_minmax(0,0.9fr)_8.5rem_16rem]";
 
 /** Column headings for the payout table; each row cell also names itself for screen readers. */
 export function PayoutTableHeader() {
   const H = "font-mono uppercase tracking-[0.12em] text-[12px] text-slate";
   return (
-    <div aria-hidden="true" className={cn("hidden md:grid md:items-center md:gap-x-4 px-4 py-3 border-b border-line", PAYOUT_TABLE_COLUMNS)}>
+    <div aria-hidden="true" className={cn("hidden @5xl:grid @5xl:items-center @5xl:gap-x-4 px-4 py-3 border-b border-line", PAYOUT_TABLE_COLUMNS)}>
       <span />
       <span className={H}>Photographer</span>
       <span className={H}>Requested</span>
@@ -194,9 +205,9 @@ export function PayoutTableHeader() {
 
 function Cell({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn("font-sans text-sm basis-[45%] md:basis-auto min-w-0", className)}>
-      {/* Visible on phones; on desktop only screen readers hear it, since the header row names the column. */}
-      <span className="md:sr-only font-mono uppercase tracking-[0.12em] text-[12px] text-slate-soft block">{label}</span>
+    <div className={cn("font-sans text-sm basis-[45%] @5xl:basis-auto min-w-0", className)}>
+      {/* Visible while stacked; in the wide table only screen readers hear it, since the header row names the column. */}
+      <span className="@5xl:sr-only font-mono uppercase tracking-[0.12em] text-[12px] text-slate-soft block">{label}</span>
       {children}
     </div>
   );
@@ -215,7 +226,7 @@ const STATUS_TEXT: Record<AdminStatusPillTone, string> = {
 // than an outlined pill inside a table. The dot takes the text colour.
 function StatusDot({ status }: { status: AdminPayoutStatus }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-sm whitespace-nowrap", STATUS_TEXT[statusTone(status)])}>
+    <span className={cn("inline-flex items-center gap-1.5 text-sm whitespace-nowrap", STATUS_TEXT[payoutStatusTone(status)])}>
       <span aria-hidden="true" className="size-[7px] rounded-full bg-current" />
       {ADMIN_PAYOUT_STATUS_LABEL[status]}
     </span>
@@ -276,7 +287,7 @@ function RowActions({
     return null;
   }
   return (
-    <div className="relative z-10 flex items-center gap-2 flex-wrap justify-end">
+    <div className="relative z-10 min-w-0 flex items-center gap-2 flex-wrap justify-end">
       {canApprove && (
         <button type="button" disabled={submitting || blocked} onClick={onApprove} className={PILL}>
           Approve

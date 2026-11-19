@@ -11,7 +11,7 @@ import type { PayoutMethod } from "@/store/photographer-settings-store";
 // Focal card for the approved-state drawer. The admin has approved the cycle
 // — money still has to leave their bank by hand. This card surfaces the
 // three things needed to do that transfer:
-//   1. How much (big tnum amount, fresh).
+//   1. How much (big tnum amount, ink: the button below is the one green).
 //   2. Where (account name + method + raw digits in mono, copy-to-clipboard).
 //   3. A jump-out into the right payment web app for the method.
 // Mark-paid stays in the drawer footer — this card just nudges the admin
@@ -45,7 +45,7 @@ export function ReadyToSendCard({ cycle }: { cycle: AdminPayoutCycle }) {
       <Kicker as="p" tone="soft">
         Ready to send
       </Kicker>
-      <p className="font-display text-4xl md:text-5xl font-semibold tracking-tight text-fresh tnum mt-3 leading-none">
+      <p className="font-display text-4xl md:text-5xl font-semibold tracking-tight text-ink tnum mt-3 leading-none">
         {formatPrice(amount)}
       </p>
 

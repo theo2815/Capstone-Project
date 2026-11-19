@@ -50,9 +50,11 @@ it("opens an unrelated payout drawer while a selected row approval is pending", 
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
   const request = deferred<AdminPayoutCycle>();
   const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
+  // The approval runs from another view (the row's own Approve now opens a modal confirm).
+  const actions = renderHook(usePayoutActions, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
   mount();
   await userEvent.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
-  await userEvent.click(screen.getAllByRole("button", { name: "Approve" })[0]);
+  act(() => { void actions.result.current.approve(payoutCycle.id); });
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
   await userEvent.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("cycle-2");
@@ -117,7 +119,9 @@ it("blocks repeated row/drawer approvals while pending and keeps the first appro
   const drawer = screen.getByRole("dialog");
   const approve = within(drawer).getByRole("button", { name: "Approve" });
   await user.click(approve);
+  await user.click(within(screen.getByRole("dialog", { name: "Approve payout" })).getByRole("button", { name: "Approve" }));
   expect(approve).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approving…" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Approve" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
   await user.keyboard("e"); await user.click(approve);
   expect(post).toHaveBeenCalledTimes(1);
@@ -392,4 +396,90 @@ it("clears the ticked payouts when the status tab changes", async () => {
   expect(screen.queryByRole("button", { name: /^Approve \d/ })).not.toBeInTheDocument();
   await user.click(within(tabs).getByRole("button", { name: /Pending review 1/ }));
   expect(screen.getByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeChecked();
+});
+
+// AX-29 (PAY2): every money step asks first, like bulk Approve.
+it.each([
+  ["a row Approve", "pending_review", "approve", "Approve payout"],
+  ["the drawer E key", "pending_review", "approve", "Approve payout"],
+  ["Mark processing", "approved", "mark-processing", "Mark processing"],
+] as const)("%s needs the confirm before anything is sent", async (how, status, action, title) => {
+  const user = userEvent.setup(); seed(status);
+  const post = vi.spyOn(api, "post").mockImplementation(async () => {
+    rows = [{ ...rows[0], status: action === "approve" ? "approved" : "processing" }]; return rows[0];
+  });
+  mount();
+  if (how === "the drawer E key") {
+    await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
+    await user.keyboard("e");
+  } else {
+    await user.click(screen.getByRole("button", { name: how === "a row Approve" ? "Approve" : "Mark processing" }));
+  }
+  expect(post).not.toHaveBeenCalled();
+  const confirm = screen.getByRole("dialog", { name: title });
+  await user.click(within(confirm).getByRole("button", { name: action === "approve" ? "Approve" : "Mark processing" }));
+  await waitFor(() => expect(confirm).not.toBeInTheDocument());
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(post.mock.calls[0][0]).toBe(`/admin/payouts/${payoutCycle.id}/${action}`);
+});
+
+it("a failed single approval keeps the confirm open, and a retry sends once more", async () => {
+  const user = userEvent.setup();
+  const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Unavailable"));
+  mount();
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  const confirm = screen.getByRole("dialog", { name: "Approve payout" });
+  await user.click(within(confirm).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(within(confirm).getByRole("button", { name: "Approve" })).toBeEnabled());
+  expect(confirm).toBeInTheDocument();
+  expect(useToastStore.getState().toasts.at(-1)?.kind).toBe("error");
+  post.mockImplementationOnce(async () => { rows = [{ ...rows[0], status: "approved" }]; return rows[0]; });
+  await user.click(within(confirm).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(confirm).not.toBeInTheDocument());
+  expect(post).toHaveBeenCalledTimes(2);
+});
+
+// AX-29 (PAY3): a money queue never reads "nothing to do" after a failed load.
+it("a failed first load shows an alert, not tabs that read nothing to do", async () => {
+  client.removeQueries({ queryKey: key });
+  vi.mocked(api.get).mockRejectedValueOnce(new Error("Unavailable"));
+  mount();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load payouts");
+  expect(screen.queryByText("No payouts pending review.")).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Payout status" })).not.toBeInTheDocument();
+});
+
+// AX-29 (PAY4): checkboxes only where a bulk action exists, and only for rows still on the tab.
+it.each(["paid", "cancelled"] as const)("no checkbox appears on a %s payout", (status) => {
+  seed(status); mount();
+  expect(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+});
+it("a ticked payout that a refetch moves to another tab drops out of the selection", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
+  mount();
+  await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
+  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  rows = [{ ...payoutCycle, status: "held" }, { ...payoutCycle, id: "cycle-2" }];
+  await act(async () => { await client.invalidateQueries({ queryKey: key }); });
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Approve 1" })).not.toBeInTheDocument());
+});
+
+// AX-29 (PAY5, PAY6): house buttons in the drawer, and values in their real case.
+it("the drawer's Hold and Reject are danger buttons, and Approve is the primary one", async () => {
+  const user = userEvent.setup(); mount();
+  await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
+  const drawer = screen.getByRole("dialog");
+  expect(within(drawer).getByRole("button", { name: "Hold…" })).toHaveClass("text-error", "min-h-[44px]");
+  expect(within(drawer).getByRole("button", { name: "Reject…" })).toHaveClass("text-error");
+  expect(within(drawer).getByRole("button", { name: "Approve" })).toHaveClass("bg-fresh", "min-h-[44px]");
+});
+it("a payment reference renders as typed in the drawer", async () => {
+  const user = userEvent.setup(); seed("paid");
+  rows = [{ ...rows[0], paymentReference: "gc-77b221", paidAt: "2026-09-12T00:00:00Z" }]; client.setQueryData(key, rows);
+  mount();
+  await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
+  const value = within(screen.getByRole("dialog")).getByText("gc-77b221");
+  expect(value).not.toHaveClass("uppercase");
 });
