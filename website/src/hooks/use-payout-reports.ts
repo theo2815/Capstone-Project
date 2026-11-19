@@ -9,8 +9,10 @@ import {
   fetchPhotographerPayoutReports, submitPayoutReport,
   type PhotographerPayoutReportsArgs, type SubmitPayoutReportArgs,
 } from "@/lib/api-photographer-earnings";
-import type { PayoutReport } from "@/lib/admin-payout-reports";
+import type { PayoutReport, PayoutReportStatus } from "@/lib/admin-payout-reports";
 import { useAuthStore } from "@/store/auth-store";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { useToastStore } from "@/store/toast-store";
 import { useAdminMutation } from "./use-admin-mutation";
 
@@ -24,12 +26,15 @@ export const payoutReportKeys = {
     [...payoutReportKeys.photographer, userId, args] as const,
 };
 
-export function useAdminPayoutReports(args: AdminPayoutReportListArgs = {}) {
-  const user = useAuthStore((s) => s.user);
-  return useQuery({
-    queryKey: payoutReportKeys.adminList(user?.id ?? null, args),
-    queryFn: () => fetchAdminPayoutReports(args),
-    enabled: user?.role === "ADMIN",
+// "page" sits before the user id, so settle()'s array patch below skips these
+// paged lists, while its invalidation of payoutReportKeys.admin refreshes them.
+export function useAdminPayoutReportsPage(status: PayoutReportStatus) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useInfiniteList<PayoutReport>({
+    queryKey: [...payoutReportKeys.admin, "page", status, ...session.key],
+    fetchPage: (offset, limit, signal) => fetchAdminPayoutReports({ status, offset, limit }, signal),
+    limit: 50,
+    enabled: session.enabled,
     staleTime: 60_000,
   });
 }
@@ -86,7 +91,8 @@ export function usePayoutReportActions() {
           });
         }
       }
-      const refresh = prefixes.map((queryKey) => qc.invalidateQueries({ queryKey }));
+      // The KPIs carry the open-report count shown on the section header and the rail.
+      const refresh = [...prefixes, ["admin", "kpis"]].map((queryKey) => qc.invalidateQueries({ queryKey }));
       if (label === "submit") await Promise.all(refresh);
       else await Promise.allSettled(refresh);
       return isCurrent();

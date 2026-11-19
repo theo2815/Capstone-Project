@@ -43,7 +43,7 @@ const ADMIN_QUEUES_ALL: readonly AdminQueue[] = [
   { key: "payouts", label: "Payouts", singularLabel: "Payout", inboxType: "payouts", href: ROUTES.ADMIN_PAYOUTS,
     count: (k) => k.payoutsAwaitingReview ?? null },
   { key: "payoutReports", label: "Payout reports", singularLabel: "Payout report", inboxType: "payout-reports",
-    href: `${ROUTES.ADMIN_PAYOUTS}#reports`, count: (k) => k.openPayoutReports ?? null },
+    href: `${ROUTES.ADMIN_PAYOUTS}#payout-reports`, count: (k) => k.openPayoutReports ?? null },
   // Cases a person must decide; the Hidden / Can't tell / Appeals totals are for the page's tab bar.
   { key: "relevance", label: "Photo Relevance", singularLabel: "Photo Relevance", inboxType: "relevance",
     href: ROUTES.ADMIN_RELEVANCE, count: (k) => k.relevanceNeedsPerson ?? null },

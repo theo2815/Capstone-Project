@@ -29,7 +29,7 @@ it.each(["dispute", "report"])("displays another view's pending %s action and re
   const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   const actions = renderHook(() => ({ disputes: useDisputeActions(), reports: usePayoutReportActions() }), { wrapper });
   render(family === "dispute" ? <AdminDisputeActionAside dispute={dispute} runnerHandle="runner" /> : <PayoutReportsSection />, { wrapper });
-  if (family === "report") await user.click(screen.getByRole("button", { name: /report-1/i }));
+  if (family === "report") await user.click(await screen.findByRole("button", { name: /report-1/i }));
   const fail = pendingRequest(family === "dispute" ? "post" : "fetch");
   let pending!: Promise<unknown>;
   act(() => { pending = family === "dispute" ? actions.result.current.disputes.deny(dispute.id, "Reason") : actions.result.current.reports.acknowledge(report.id, "Reply"); });
@@ -288,7 +288,7 @@ it.each(["acknowledge", "resolve"])("keeps payout report %s open on failure and 
   const user = userEvent.setup();
   const invalidate = vi.spyOn(client, "invalidateQueries");
   render(<QueryClientProvider client={client}><PayoutReportsSection /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: /report-1/i }));
+  await user.click(await screen.findByRole("button", { name: /report-1/i }));
   await user.click(screen.getByRole("button", { name: action === "acknowledge" ? "Acknowledge…" : "Resolve…" }));
   const dialog = screen.getByRole("dialog", { name: new RegExp(`${action} · report-1`, "i") });
   const note = "We are investigating the transfer.";
@@ -315,6 +315,7 @@ it.each(["acknowledge", "resolve"])("keeps payout report %s open on failure and 
   expect(dialog).not.toBeInTheDocument();
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "payouts", "reports"] });
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["photographer", "payouts", "reports"] });
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] });
   expect(useToastStore.getState().toasts.map((toast) => toast.kind)).toEqual(["error", "success"]);
 });
 

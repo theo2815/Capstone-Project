@@ -1,10 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE, ROW_OPEN_BUTTON } from "@/components/ui/button-styles";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
+import { ROUTES } from "@/lib/constants";
 import {
   AdminStatusPill,
   type AdminStatusPillTone,
@@ -20,7 +25,7 @@ import {
   type PayoutReport,
   type PayoutReportStatus,
 } from "@/lib/admin-payout-reports";
-import { useAdminPayoutReports, usePayoutReportActions, EMPTY_REPORTS } from "@/hooks/use-payout-reports";
+import { useAdminPayoutReportsPage, usePayoutReportActions } from "@/hooks/use-payout-reports";
 import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
 import { formatLongDate } from "@/lib/format";
@@ -47,14 +52,19 @@ function statusTone(status: PayoutReportStatus): AdminStatusPillTone {
 // focus-mode drawer; drawer footer has the status-conditional verbs;
 // each verb opens a stacked modal that captures the textarea + commits.
 //
-// Reports default-sorted: open first, then acknowledged, then resolved;
-// within each bucket, newest reportedAt first.
+// One status tab at a time (Open by default), paged by the server, newest first.
+
+const STATUSES = Object.keys(PAYOUT_REPORT_STATUS_LABEL) as PayoutReportStatus[];
+const parseStatus = (raw: string): PayoutReportStatus =>
+  STATUSES.includes(raw as PayoutReportStatus) ? (raw as PayoutReportStatus) : "open";
 
 export function PayoutReportsSection() {
   const { acknowledge, resolve, isPending, pendingAction } = usePayoutReportActions();
-  const reportsQuery = useAdminPayoutReports();
-  const serverReports = reportsQuery.data ?? EMPTY_REPORTS;
+  const [status, setStatus] = useUrlState<PayoutReportStatus>("reportStatus", "open", { parse: parseStatus });
+  const list = useAdminPayoutReportsPage(status);
+  const reports = list.items;
   const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
+  const openCount = useAdminKpis()?.openPayoutReports;
   const { showToast } = useToast();
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
@@ -63,21 +73,6 @@ export function PayoutReportsSection() {
     null,
   );
 
-  const reports = useMemo(() => {
-    const order: Record<PayoutReportStatus, number> = {
-      open: 0,
-      acknowledged: 1,
-      resolved: 2,
-    };
-    return [...serverReports].sort((a, b) => {
-      const so = order[a.status] - order[b.status];
-      if (so !== 0) return so;
-      return b.reportedAt.localeCompare(a.reportedAt);
-    });
-  }, [serverReports]);
-
-  const openCount = reports.filter((r) => r.status === "open").length;
-
   const cyclesById = useMemo(() => {
     const merged = serverPayouts;
     const map = new Map<string, (typeof merged)[number]>();
@@ -85,9 +80,14 @@ export function PayoutReportsSection() {
     return map;
   }, [serverPayouts]);
 
+  // The report the admin clicked: a refresh that drops it from this tab must not
+  // close the drawer (and a half-typed reply) under them.
+  const [picked, setPicked] = useState<PayoutReport | null>(null);
   const openReport = useMemo(
-    () => (reportRowId ? reports.find((r) => r.id === reportRowId) ?? null : null),
-    [reportRowId, reports],
+    () => (reportRowId
+      ? reports.find((r) => r.id === reportRowId) ?? (picked?.id === reportRowId ? picked : null)
+      : null),
+    [reportRowId, reports, picked],
   );
 
   async function handleAcknowledge(note: string) {
@@ -95,6 +95,8 @@ export function PayoutReportsSection() {
     const ok = await acknowledge(openReport.id, note);
     if (!ok) return;
     setActionMode(null);
+    // The report has moved to the Acknowledged tab, so it leaves this list.
+    setReportRowId("");
     showToast({
       kind: "success",
       message: `Acknowledged · ${openReport.id}`,
@@ -115,42 +117,58 @@ export function PayoutReportsSection() {
 
   return (
     <Slab
-      id="reports"
+      id="payout-reports"
       number="06"
       title="Reports from photographers"
       caption="Filed against payouts they didn't receive or expect"
-      trailing={
-        openCount > 0
-          ? `${openCount} open · ${reports.length} total`
-          : `${reports.length} total`
-      }
-      collapsed={reportsQuery.isSuccess && reports.length === 0}
+      trailing={openCount !== undefined ? <span className="tnum">{openCount} open</span> : undefined}
     >
-      {reportsQuery.isPending ? <p role="status">Loading reports…</p> :
-        reportsQuery.isError && !reportsQuery.data ? (
+      <AdminStatusTabs
+        label="Report status"
+        tabs={STATUSES.map((key) => ({
+          key,
+          label: PAYOUT_REPORT_STATUS_LABEL[key],
+          count: key === "open" ? openCount : undefined,
+        }))}
+        value={status}
+        onChange={setStatus}
+      />
+      <div className="mt-6">
+      {list.isLoading ? <p role="status">Loading reports…</p> :
+        list.error && reports.length === 0 ? (
           <div role="alert" className="space-y-4">
             <p>Couldn&apos;t load payout reports.</p>
-            <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void reportsQuery.refetch()}>
+            <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={list.refetch}>
               Try again
             </button>
           </div>
         ) : reports.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">
-          No photographer reports yet.
+          No {PAYOUT_REPORT_STATUS_LABEL[status].toLowerCase()} reports.
         </p>
       ) : (
-        <ul className="space-y-3">
-          {reports.map((report) => (
-            <li key={report.id}>
-              <ReportRow
-                report={report}
-                cycleAmount={cyclesById.get(report.payoutCycleId)?.amount}
-                onOpen={() => setReportRowId(report.id)}
-              />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="space-y-3">
+            {reports.map((report) => (
+              <li key={report.id}>
+                <ReportRow
+                  report={report}
+                  cycleAmount={cyclesById.get(report.payoutCycleId)?.amount}
+                  onOpen={() => { setPicked(report); setReportRowId(report.id); }}
+                />
+              </li>
+            ))}
+          </ul>
+          <LoadMoreButton
+            shown={reports.length}
+            total={list.total}
+            increment={50}
+            onLoadMore={list.fetchNextPage}
+            isLoading={list.isFetchingNextPage}
+          />
+        </>
       )}
+      </div>
 
       {openReport && (
         <AdminDetailDrawer
@@ -166,7 +184,7 @@ export function PayoutReportsSection() {
             />
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum break-words">
               {openReport.handle ? `@${openReport.handle}` : "—"}
               <span className="text-slate-soft"> · </span>
               {PAYOUT_REPORT_REASON_LABEL[openReport.reason]}
@@ -213,13 +231,21 @@ interface ReportRowProps {
   onOpen: () => void;
 }
 
+function CycleLink({ cycleId }: { cycleId: string }) {
+  return (
+    <Link
+      href={`${ROUTES.ADMIN_PAYOUTS}?row=${encodeURIComponent(cycleId)}`}
+      className="relative z-10 font-mono tnum underline underline-offset-2 hover:text-ink"
+    >
+      {cycleId}
+    </Link>
+  );
+}
+
+// AX-4 row pattern: the title button covers the card; the cycle link sits above it.
 function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="w-full text-left rounded-2xl border border-line bg-bone hover:bg-bone-deep/60 transition-colors px-4 py-4 md:px-5 md:py-5"
-    >
+    <article className="relative rounded-2xl border border-line bg-bone hover:bg-bone-deep/60 transition-colors px-4 py-4 md:px-5 md:py-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
@@ -231,20 +257,24 @@ function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
               {report.id}
             </Kicker>
           </div>
-          <p className="font-display text-base md:text-lg text-ink mt-2">
-            {report.photographerName}
+          <h3 className="font-display text-base md:text-lg text-ink mt-2">
+            <button type="button" onClick={onOpen} aria-label={`${report.photographerName}, report ${report.id}`} className={ROW_OPEN_BUTTON}>
+              {report.photographerName}
+            </button>
+            {/* The space lets the handle wrap as a whole word after the name button. */}
+            {report.handle && " "}
             {report.handle && (
-              <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft ml-2">
+              <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft ml-1 break-words">
                 @{report.handle}
               </span>
             )}
-          </p>
-          <p className="font-sans text-sm text-ink-soft mt-1.5">
+          </h3>
+          <p className="font-sans text-sm text-ink-soft mt-1.5 break-words">
             <span className="text-ink">
               {PAYOUT_REPORT_REASON_LABEL[report.reason]}
             </span>
             <span className="text-slate-soft"> · </span>
-            <span className="font-mono tnum">{report.payoutCycleId}</span>
+            <CycleLink cycleId={report.payoutCycleId} />
             {cycleAmount !== undefined && (
               <>
                 <span className="text-slate-soft"> · </span>
@@ -262,7 +292,7 @@ function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
           {formatLongDate(report.reportedAt)}
         </Kicker>
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -288,7 +318,7 @@ function ReportActions({ report, submitting, onAcknowledge, onResolve }: ReportA
           type="button"
           onClick={onAcknowledge}
           disabled={submitting}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
         >
           Acknowledge…
         </button>
@@ -297,7 +327,7 @@ function ReportActions({ report, submitting, onAcknowledge, onResolve }: ReportA
         type="button"
         onClick={onResolve}
         disabled={submitting}
-        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
       >
         Resolve…
       </button>
@@ -318,8 +348,8 @@ function ReportDetailBody({ report, cycleAmount }: ReportDetailBodyProps) {
           Cycle
         </Kicker>
         <div className="rounded-2xl border border-line bg-bone-deep p-4">
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
-            {report.payoutCycleId}
+          <p className="text-[14px] text-ink break-words">
+            <CycleLink cycleId={report.payoutCycleId} />
           </p>
           {cycleAmount !== undefined && (
             <Kicker as="p" tone="soft" tnum className="mt-2">
