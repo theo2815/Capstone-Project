@@ -16,15 +16,17 @@ import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import type { SectionGuideEntry } from "@/lib/section-guide";
 import {
+  ADMIN_QUEUES,
+  queuePath,
+  sumPresent,
   useAdminAttentionTarget,
   useAdminQueueCounts,
 } from "@/lib/admin-queues";
 import { cn } from "@/lib/utils";
-import { useOpenRelevanceAppealsCount } from "@/hooks/use-admin-relevance";
 
 const RAIL_TIPS_STORAGE_KEY = "qp:admin:rail-tips-disabled";
 
-type AdminRouteGroup = "queues" | "catalog" | "reports";
+type AdminRouteGroup = "queues" | "catalog" | "reports" | "account";
 
 export interface AdminRoute {
   readonly href: string;
@@ -32,16 +34,12 @@ export interface AdminRoute {
   readonly number: string;
   readonly group: AdminRouteGroup;
   readonly nestedPrefix?: string;
-  // Extra paths that should also activate this row (e.g. legacy
-  // /admin/verifications activating the Inbox row when accessed directly).
-  readonly aliasPrefixes?: readonly string[];
 }
 
-// Phase 1 admin redesign — Inbox-led order, grouped 2026-05-08 into the
-// editorial-data sidebar pattern. QUEUES (5) carry live counts and the
-// breathing attention dot; CATALOG (2) and REPORTS (1) are router-only.
-// Numbers mirror admin-section-guide.ts so the rail and tooltip headings
-// stay in sync.
+// Queue rows follow ADMIN_QUEUES (lib/admin-queues.ts) and carry live counts
+// and the breathing attention dot; Catalog, Reports and Account are
+// router-only. Numbers mirror admin-section-guide.ts so the rail and tooltip
+// headings stay in sync.
 const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
   {
     href: ROUTES.ADMIN_INBOX,
@@ -49,7 +47,6 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     number: "01",
     group: "queues",
     nestedPrefix: ROUTES.ADMIN_INBOX,
-    aliasPrefixes: [ROUTES.ADMIN_VERIFICATIONS],
   },
   {
     href: ROUTES.ADMIN_DISPUTES,
@@ -66,8 +63,8 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     nestedPrefix: ROUTES.ADMIN_FLAGS,
   },
   {
-    href: ROUTES.ADMIN_PAYOUTS,
-    label: "Payouts",
+    href: ROUTES.ADMIN_VERIFICATIONS,
+    label: "Verifications",
     number: "04",
     group: "queues",
   },
@@ -78,50 +75,56 @@ const ADMIN_ROUTES_ALL: ReadonlyArray<AdminRoute> = [
     group: "queues",
   },
   {
+    href: ROUTES.ADMIN_PAYOUTS,
+    label: "Payouts",
+    number: "06",
+    group: "queues",
+  },
+  {
     href: ROUTES.ADMIN_RELEVANCE,
     label: "Photo Relevance",
-    number: "06",
+    number: "07",
     group: "queues",
     nestedPrefix: ROUTES.ADMIN_RELEVANCE,
   },
   {
+    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+    label: "Photo removals",
+    number: "08",
+    group: "queues",
+    nestedPrefix: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
+  },
+  {
     href: ROUTES.ADMIN_EVENTS,
     label: "Events",
-    number: "07",
+    number: "09",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_EVENTS,
   },
   {
     href: ROUTES.ADMIN_PHOTOGRAPHERS,
     label: "Photographers",
-    number: "08",
+    number: "10",
     group: "catalog",
     nestedPrefix: ROUTES.ADMIN_PHOTOGRAPHERS,
   },
   {
-    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
-    label: "Photo removals",
-    number: "09",
-    group: "catalog",
-    nestedPrefix: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS,
-  },
-  {
     href: ROUTES.ADMIN_OVERVIEW,
     label: "Overview",
-    number: "10",
+    number: "11",
     group: "reports",
   },
   {
     href: ROUTES.ADMIN_SALES,
     label: "Sales",
-    number: "11",
+    number: "12",
     group: "reports",
   },
   {
     href: ROUTES.ADMIN_SECURITY,
     label: "Security",
-    number: "12",
-    group: "reports",
+    number: "13",
+    group: "account",
     nestedPrefix: ROUTES.ADMIN_SECURITY,
   },
 ];
@@ -134,8 +137,8 @@ export const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
   ? ADMIN_ROUTES_ALL
   : ADMIN_ROUTES_ALL.filter((r) => r.href !== ROUTES.ADMIN_FLAGS);
 
-// Persistent rail for /admin/*. Editorial-data sidebar — three semantic
-// groups (queues, catalog, reports) with mono numerals and live counts on
+// Persistent rail for /admin/*. Editorial-data sidebar — four semantic
+// groups (queues, catalog, reports, account) with mono numerals and live counts on
 // queue rows. Sign-out lives in the SiteHeader's UserMenu (shared with all
 // roles); profile/account routes don't apply to admin context.
 //
@@ -185,6 +188,7 @@ export function AdminRail() {
   const queueRoutes = ADMIN_ROUTES.filter((r) => r.group === "queues");
   const catalogRoutes = ADMIN_ROUTES.filter((r) => r.group === "catalog");
   const reportRoutes = ADMIN_ROUTES.filter((r) => r.group === "reports");
+  const accountRoutes = ADMIN_ROUTES.filter((r) => r.group === "account");
 
   return (
     <aside className="hidden md:block md:sticky md:top-20 md:self-start pt-6 md:pt-10 pb-6 md:pb-8 md:max-h-[calc(100vh-5rem)] md:overflow-y-auto">
@@ -200,7 +204,7 @@ export function AdminRail() {
             size="sm"
             tnum
           >
-            {allClear ? "Queues · all clear" : `Queues · ${queueTotal} open`}
+            {queueTotal === null ? "Queues" : allClear ? "Queues · all clear" : `Queues · ${queueTotal} open`}
           </Kicker>
           <ul className="mt-4 space-y-3">
             {queueRoutes.map((route) => (
@@ -209,7 +213,7 @@ export function AdminRail() {
                 route={route}
                 isActive={isRouteActive(pathname, route)}
                 isAttention={
-                  attention !== null && attention.href === route.href
+                  attention !== null && queuePath(attention.href) === route.href
                 }
                 count={getCountForHref(route.href)}
                 guide={getAdminSectionGuideByHref(route.href)}
@@ -244,6 +248,25 @@ export function AdminRail() {
           </Kicker>
           <ul className="mt-4 space-y-3">
             {reportRoutes.map((route) => (
+              <RailRow
+                key={route.href}
+                route={route}
+                isActive={isRouteActive(pathname, route)}
+                isAttention={false}
+                count={null}
+                guide={getAdminSectionGuideByHref(route.href)}
+                tipsDisabled={tipsDisabled}
+              />
+            ))}
+          </ul>
+        </div>
+
+        <div>
+          <Kicker as="p" size="sm">
+            Account
+          </Kicker>
+          <ul className="mt-4 space-y-3">
+            {accountRoutes.map((route) => (
               <RailRow
                 key={route.href}
                 route={route}
@@ -404,9 +427,15 @@ function RailRow({
                 ? `Hide tip for ${route.label}`
                 : `Show tip for ${route.label}`
             }
-            className="shrink-0 size-5 rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors flex items-center justify-center font-mono text-[12px] leading-none focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone [@media(hover:hover)]:hidden"
+            className="group/tip shrink-0 size-11 -my-3 flex items-center justify-end rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh [@media(hover:hover)]:hidden"
           >
-            <span aria-hidden="true">{pinned ? "−" : "?"}</span>
+            {/* 44 px hit area inside the row (-my-3 keeps the row height); the visible disc stays size-5 at the right edge. */}
+            <span
+              aria-hidden="true"
+              className="size-5 rounded-full border border-line text-slate group-hover/tip:text-ink group-hover/tip:border-ink transition-colors flex items-center justify-center font-mono text-[12px] leading-none"
+            >
+              {pinned ? "−" : "?"}
+            </span>
           </button>
         )}
       </div>
@@ -418,33 +447,19 @@ function RailRow({
 }
 
 // Live per-route queue counts, shared by the rail and the mobile strip.
+// A row counts every queue on its page (Verifications = verifications + seller
+// details; Payouts = payouts + reports); the Inbox row shows the total.
 export function useAdminRouteCounts() {
-  const counts = useAdminQueueCounts();
-  // RV-3.5: Photo Relevance counts its open appeals (the server's list total).
-  const openAppeals = useOpenRelevanceAppealsCount();
-  // The total adds up the items that show a count here, so the open appeals join it.
-  const queueTotal = counts.total + openAppeals;
+  const { byKey, total } = useAdminQueueCounts();
 
   function getCountForHref(href: string): number | null {
-    switch (href) {
-      case ROUTES.ADMIN_INBOX:
-        return counts.inbox;
-      case ROUTES.ADMIN_DISPUTES:
-        return counts.disputes;
-      case ROUTES.ADMIN_FLAGS:
-        return counts.flags;
-      case ROUTES.ADMIN_PAYOUTS:
-        return counts.payouts;
-      case ROUTES.ADMIN_EVENT_REQUESTS:
-        return counts.events;
-      case ROUTES.ADMIN_RELEVANCE:
-        return openAppeals;
-      default:
-        return null;
-    }
+    if (href === ROUTES.ADMIN_INBOX) return total;
+    return sumPresent(
+      ADMIN_QUEUES.filter((q) => queuePath(q.href) === href).map((q) => byKey[q.key]),
+    );
   }
 
-  return { queueTotal, getCountForHref };
+  return { queueTotal: total, getCountForHref };
 }
 
 export function isRouteActive(
@@ -452,13 +467,6 @@ export function isRouteActive(
   route: AdminRoute,
 ): boolean {
   if (!pathname) return false;
-  if (route.aliasPrefixes) {
-    for (const prefix of route.aliasPrefixes) {
-      if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
-        return true;
-      }
-    }
-  }
   if (route.nestedPrefix) {
     return (
       pathname === route.href || pathname.startsWith(`${route.nestedPrefix}/`)

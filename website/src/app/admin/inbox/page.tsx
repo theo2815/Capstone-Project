@@ -1,6 +1,6 @@
 "use client";
 
-import { useAdminRouteCounts } from "@/components/admin/admin-rail";
+import { useAdminQueueCounts } from "@/lib/admin-queues";
 
 import { AdminKpiStrip } from "@/components/admin/admin-kpi-strip";
 import {
@@ -35,7 +35,7 @@ export default function AdminInboxPage() {
     ? activeRaw
     : "verifications";
   // The same total as the rail's "Queues · N open", so the two never disagree.
-  const pendingCount = useAdminRouteCounts().queueTotal;
+  const pendingCount = useAdminQueueCounts().total;
 
   return (
     <>
@@ -55,11 +55,11 @@ export default function AdminInboxPage() {
   );
 }
 
-function Header({ pendingCount }: { pendingCount: number }) {
+function Header({ pendingCount }: { pendingCount: number | null }) {
   return (
     <header className="pb-6 md:pb-8">
       <Kicker as="p">
-        Inbox · <span className="tnum">{pendingCount}</span> open
+        Inbox{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> open</>}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Today.
