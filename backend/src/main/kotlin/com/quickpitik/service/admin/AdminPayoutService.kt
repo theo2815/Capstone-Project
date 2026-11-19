@@ -10,6 +10,7 @@ import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminPayoutAccountSnapshotDto
 import com.quickpitik.dto.admin.AdminPayoutCycleDto
 import com.quickpitik.dto.admin.AdminPayoutQrDto
+import com.quickpitik.dto.admin.AdminStatusCountsDto
 import com.quickpitik.dto.admin.BulkPayoutItemResultDto
 import com.quickpitik.dto.admin.BulkPayoutResultDto
 import com.quickpitik.dto.admin.BulkPayoutsRequest
@@ -84,14 +85,36 @@ class AdminPayoutService(
         search: String?,
         params: PaginationParams,
     ): PaginatedResponse<AdminPayoutCycleDto> {
-        val statusWire = statusFilter
-            ?.takeIf { it.isNotBlank() }
-            ?.let { mapAdminStatusFilter(it) }
         val searchTerm = search?.trim()?.lowercase().orEmpty()
-        val page = payoutCycleRepository.pageForAdmin(statusWire, searchTerm, OffsetLimitPageable(params))
+        val page = payoutCycleRepository.pageForAdmin(parseStatusFilter(statusFilter), searchTerm, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
         return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    // GET /admin/payouts/counts (AX-10): one entry per admin status, keyed as the list's `status`.
+    @Transactional(readOnly = true)
+    fun counts(search: String?): AdminStatusCountsDto {
+        val found = payoutCycleRepository.countByStatusForAdmin(search?.trim()?.lowercase().orEmpty())
+            .associate { it.status to it.total }
+        return AdminStatusCountsDto(PayoutCycleStatus.entries.associate { adminStatusKey(it) to (found[it.wire] ?: 0L) })
+    }
+
+    private fun adminStatusKey(status: PayoutCycleStatus) =
+        if (status == PayoutCycleStatus.PENDING) "pending_review" else status.wire
+
+    // AX-10: `status` may be a comma list (one website tab = a group). No value, or one unknown
+    // value, means every status, as before; an unknown value inside a list is a 400.
+    private fun parseStatusFilter(raw: String?): List<String> {
+        val all = PayoutCycleStatus.entries.map { it.wire }
+        val tokens = raw.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (tokens.size <= 1) return tokens.singleOrNull()?.let { mapAdminStatusFilter(it) }?.let(::listOf) ?: all
+        return tokens.map { token ->
+            mapAdminStatusFilter(token) ?: throw ValidationException(
+                message = "Unknown payout status '$token'. Use ${PayoutCycleStatus.entries.joinToString(" / ") { adminStatusKey(it) }}",
+                field = "status",
+            )
+        }.distinct()
     }
 
     fun approve(adminId: UUID, payoutId: String): AdminPayoutCycleDto {

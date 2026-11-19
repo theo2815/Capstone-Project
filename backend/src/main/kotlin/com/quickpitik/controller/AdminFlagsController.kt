@@ -3,6 +3,7 @@ package com.quickpitik.controller
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminFlagDto
+import com.quickpitik.dto.admin.AdminStatusCountsDto
 import com.quickpitik.dto.admin.FlagActionRequest
 import com.quickpitik.dto.admin.HiddenPhotoDto
 import com.quickpitik.dto.admin.HideBatchRequest
@@ -36,6 +37,10 @@ class AdminFlagsController(
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<AdminFlagDto> =
         adminFlagService.list(status, q, PaginationParams.of(offset, limit))
+
+    // Tab counts for the same q (AX-10).
+    @GetMapping("/counts")
+    fun counts(@RequestParam(required = false) q: String?): AdminStatusCountsDto = adminFlagService.counts(q)
 
     @PostMapping("/{flagId}/resolve")
     fun resolve(

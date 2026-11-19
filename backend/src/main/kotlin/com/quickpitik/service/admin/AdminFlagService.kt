@@ -8,6 +8,7 @@ import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminFlagDto
+import com.quickpitik.dto.admin.AdminStatusCountsDto
 import com.quickpitik.dto.admin.CopySampleDto
 import com.quickpitik.dto.admin.DateSampleDto
 import com.quickpitik.dto.admin.FlagPhotoSnapshotDto
@@ -85,6 +86,15 @@ class AdminFlagService(
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
         return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    // GET /admin/flags/counts (AX-10): one entry per flag status, with the list's search.
+    @Transactional(readOnly = true)
+    fun counts(query: String?): AdminStatusCountsDto {
+        ensureEnabled()
+        val q = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
+        val found = flagRepository.countByStatusForAdmin(q).associate { it.status to it.total }
+        return AdminStatusCountsDto(FlagStatus.entries.associate { it.wire to (found[it.wire] ?: 0L) })
     }
 
     // Transitions: OPEN → hide / dismiss / resolve / escalate; ESCALATED → hide /

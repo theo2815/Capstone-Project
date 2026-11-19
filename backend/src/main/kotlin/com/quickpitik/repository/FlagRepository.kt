@@ -17,21 +17,23 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
     @Query(
         """
         SELECT f FROM Flag f
-        WHERE (:statusWire IS NULL OR f.statusWire = :statusWire)
-          AND (:query = '' OR LOWER(f.reason) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(f.note) LIKE LOWER(CONCAT('%', :query, '%')))
+        WHERE (:statusWire IS NULL OR f.statusWire = :statusWire) AND ($ADMIN_FLAG_SEARCH)
         ORDER BY f.createdAt DESC, f.id ASC
         """,
-        countQuery = """
-        SELECT COUNT(f) FROM Flag f
-        WHERE (:statusWire IS NULL OR f.statusWire = :statusWire)
-          AND (:query = '' OR LOWER(f.reason) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(f.note) LIKE LOWER(CONCAT('%', :query, '%')))
-        """,
+        countQuery = "SELECT COUNT(f) FROM Flag f WHERE (:statusWire IS NULL OR f.statusWire = :statusWire) AND ($ADMIN_FLAG_SEARCH)",
     )
     fun pageForAdmin(
         @Param("statusWire") statusWire: String?,
         @Param("query") query: String?,
         pageable: Pageable,
     ): Page<Flag>
+
+    // The admin flags tab counts (AX-10): the list's own search, one row per status present.
+    @Query(
+        "SELECT new com.quickpitik.repository.StatusCountRow(f.statusWire, COUNT(f)) FROM Flag f " +
+            "WHERE ($ADMIN_FLAG_SEARCH) GROUP BY f.statusWire",
+    )
+    fun countByStatusForAdmin(@Param("query") query: String): List<StatusCountRow>
 
     @Query("SELECT f.targetId FROM Flag f WHERE f.id = :id AND f.targetKindWire = 'photo'")
     fun findPhotoId(@Param("id") id: UUID): UUID?
@@ -193,3 +195,23 @@ interface HiddenPhotoCount {
     val eventId: UUID
     val hidden: Long
 }
+
+private const val FLAG_CONTAINS = "LIKE LOWER(CONCAT('%', :query, '%'))"
+
+// The admin flag search (AX-10): reason, note, the exact flag id, the reporter's name or
+// handle, and the photographer's handle. The photographer is found as
+// AdminFlagService.hydrateMany finds it: the photo's owner, the event's creator (or
+// submitter), or the flagged user.
+private const val ADMIN_FLAG_SEARCH = """
+    :query = ''
+    OR LOWER(f.reason) $FLAG_CONTAINS
+    OR LOWER(f.note) $FLAG_CONTAINS
+    OR CAST(f.id AS String) = LOWER(:query)
+    OR EXISTS (SELECT 1 FROM User u WHERE u.id = f.reporterId AND LOWER(u.name) $FLAG_CONTAINS)
+    OR EXISTS (SELECT 1 FROM PhotographerSettings s WHERE LOWER(s.handle) $FLAG_CONTAINS AND (
+        s.userId = f.reporterId
+        OR (f.targetKindWire = 'user' AND s.userId = f.targetId)
+        OR (f.targetKindWire = 'photo' AND EXISTS (SELECT 1 FROM Photo p WHERE p.id = f.targetId AND p.photographerId = s.userId))
+        OR (f.targetKindWire = 'event' AND EXISTS (SELECT 1 FROM Event e WHERE e.id = f.targetId
+            AND COALESCE(e.createdBy, e.submittedBy) = s.userId))))
+"""

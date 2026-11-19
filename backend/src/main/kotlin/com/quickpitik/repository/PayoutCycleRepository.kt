@@ -120,26 +120,32 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String>, PayoutCycl
     )
     fun sumReservedByPhotographer(@Param("photographerId") photographerId: UUID): BigDecimal
 
-    // Admin payout queue list. The FE filter is one of pending_review |
-    // approved | held | paid; we map "pending_review" → DB "pending" since
-    // the DB enum is shared with the photographer-facing surface (which
-    // uses "pending" / "scheduled" — admin only acts on "pending" rows).
+    // Admin payout queue list. The service maps the FE's statuses to DB wires
+    // ("pending_review" → "pending"; the DB enum is shared with the photographer
+    // surface) and passes every wire for "no filter" (AX-10: a tab asks for its group).
     @Query(
         """
         SELECT c FROM PayoutCycle c
-        WHERE (:statusWire IS NULL OR c.statusWire = :statusWire)
-          AND (:search = '' OR LOWER(c.id) LIKE CONCAT('%', :search, '%'))
+        WHERE c.statusWire IN :statusWires AND $ADMIN_PAYOUT_SEARCH
         ORDER BY c.weekOf DESC, c.id ASC
         """,
-        countQuery = """
-        SELECT COUNT(c) FROM PayoutCycle c
-        WHERE (:statusWire IS NULL OR c.statusWire = :statusWire)
-          AND (:search = '' OR LOWER(c.id) LIKE CONCAT('%', :search, '%'))
-        """,
+        countQuery = "SELECT COUNT(c) FROM PayoutCycle c WHERE c.statusWire IN :statusWires AND $ADMIN_PAYOUT_SEARCH",
     )
     fun pageForAdmin(
-        @Param("statusWire") statusWire: String?,
+        @Param("statusWires") statusWires: Collection<String>,
         @Param("search") search: String,
         pageable: Pageable,
     ): Page<PayoutCycle>
+
+    // The admin payouts tab counts (AX-10): the list's own search, one row per status present.
+    @Query(
+        "SELECT new com.quickpitik.repository.StatusCountRow(c.statusWire, COUNT(c)) FROM PayoutCycle c " +
+            "WHERE $ADMIN_PAYOUT_SEARCH GROUP BY c.statusWire",
+    )
+    fun countByStatusForAdmin(@Param("search") search: String): List<StatusCountRow>
 }
+
+private const val ADMIN_PAYOUT_SEARCH = "(:search = '' OR LOWER(c.id) LIKE CONCAT('%', :search, '%'))"
+
+// One status and how many rows have it; the admin payouts and flags counts routes (AX-10).
+data class StatusCountRow(val status: String, val total: Long)
