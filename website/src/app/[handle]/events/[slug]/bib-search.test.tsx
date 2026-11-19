@@ -67,8 +67,9 @@ it("a bib finds every match of this photographer on the server, not only loaded 
 
   expect(await screen.findByRole("heading", { name: /We found\s*3\s*photos/ })).toBeInTheDocument();
   expect(listSpy).toHaveBeenCalledWith("shooter", "nrw", expect.objectContaining({ bib: "10342" }), expect.anything());
-  // The counter follows the bib list (3 of 3, so the "all loaded" line), not the gallery's 60 of 3,026.
-  expect(screen.getByText("All 3 loaded")).toBeInTheDocument();
+  // The counter follows the bib list (3 of 3: complete, so no load-more and no "all loaded" line), not the gallery's 60 of 3,026.
+  expect(screen.queryByRole("button", { name: /Load \d+ more/ })).not.toBeInTheDocument();
+  expect(screen.queryByText("All 3 loaded")).not.toBeInTheDocument();
   expect(screen.queryByText(/Showing 60 of 3,026/)).not.toBeInTheDocument();
 });
 

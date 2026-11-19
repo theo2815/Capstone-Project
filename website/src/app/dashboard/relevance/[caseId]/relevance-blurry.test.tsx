@@ -45,7 +45,9 @@ it("shows the whole blurry-photos note above the grid", async () => {
   expect(await screen.findByText(/They are still on sale\. Review them, and hide any you do not want to sell\. You can show them again later\./)).toBeVisible();
   const review = await toReview();
   expect(await within(review).findAllByText("Looks blurry")).toHaveLength(2);
-  expect(within(review).getByText(/Showing 2 of 2|All 2 loaded/)).toBeInTheDocument();
+  // Two photos fit in one page: no load-more and no "All 2 loaded" line under them.
+  expect(within(review).queryByRole("button", { name: /Load \d+ more/ })).not.toBeInTheDocument();
+  expect(within(review).queryByText(/All 2 loaded/)).not.toBeInTheDocument();
 });
 
 it("hiding selected blurry photos waits for the server", async () => {

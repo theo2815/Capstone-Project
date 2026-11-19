@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +24,8 @@ interface LoadMoreButtonProps {
 
 // Quiet Studio load-more primitive used across runner + photographer surfaces.
 // Renders nothing when total === 0 (let the parent's empty-state component speak).
-// When shown >= total > 0, renders a single soft-tone terminal kicker instead of the button.
+// When shown >= total > 0, renders a single soft-tone terminal kicker instead of the button,
+// unless the list was complete from the start (then nothing: there was nothing to load).
 // One-fresh-per-viewport: the button uses ink, never fresh — load-more is utility chrome.
 export function LoadMoreButton({
   shown,
@@ -37,12 +39,21 @@ export function LoadMoreButton({
   isLoading = false,
   className,
 }: LoadMoreButtonProps) {
+  // A list that was complete from the start never offered "Load more", so
+  // "All 2 loaded" under two rows is noise. Remember whether it ever did.
+  const [offered, setOffered] = useState(shown < total);
+  useEffect(() => {
+    if (shown < total) setOffered(true);
+  }, [shown, total]);
+
   if (total <= 0) return null;
 
   const remaining = Math.max(0, total - shown);
   const stepSize = Math.min(increment, remaining);
 
   const allLoaded = shown >= total;
+  // An explicit terminalLabel is a message of its own, so it always shows.
+  if (allLoaded && !offered && terminalLabel === undefined) return null;
   const buttonLabel = label ?? `Load ${stepSize} more`;
   const countText = countLabel ?? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}`;
   const terminalText = terminalLabel ?? `All ${total.toLocaleString()} loaded`;
