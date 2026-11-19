@@ -10,6 +10,16 @@ import java.math.BigDecimal
 import java.time.OffsetDateTime
 import java.util.UUID
 
+// GMV at the list price (M-16), one home for kpis, the sales trend and top photographers.
+private const val LIST_GROSS_SUM = """ROUND(COALESCE(SUM(oi.price_php_at_purchase * CASE
+                   WHEN t.is_refund = false THEN 1
+                   ELSE (t.amount_kept_php + t.discount_php)
+                        / NULLIF(s.amount_kept_php + s.discount_php, 0)
+               END), 0), 2)"""
+private const val LIST_GROSS_FROM = """transactions t
+        JOIN order_items oi ON oi.order_id = t.order_id AND oi.photo_id = t.photo_id
+        LEFT JOIN transactions s ON s.id = t.refund_of"""
+
 interface TransactionRepository : JpaRepository<Transaction, UUID> {
 
     fun findByPhotographerIdAndPhotoIdAndOrderIdIn(
@@ -160,14 +170,8 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
     // if `is_refund AND refund_of IS NULL` rows ever exist in prod.
     @Query(
         value = """
-        SELECT ROUND(COALESCE(SUM(oi.price_php_at_purchase * CASE
-                   WHEN t.is_refund = false THEN 1
-                   ELSE (t.amount_kept_php + t.discount_php)
-                        / NULLIF(s.amount_kept_php + s.discount_php, 0)
-               END), 0), 2)
-        FROM transactions t
-        JOIN order_items oi ON oi.order_id = t.order_id AND oi.photo_id = t.photo_id
-        LEFT JOIN transactions s ON s.id = t.refund_of
+        SELECT $LIST_GROSS_SUM
+        FROM $LIST_GROSS_FROM
         WHERE t.paid_at >= :from AND t.paid_at < :to
         """,
         nativeQuery = true,
@@ -176,6 +180,27 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         @Param("from") from: OffsetDateTime,
         @Param("to") to: OffsetDateTime,
     ): BigDecimal
+
+    // AX-12 top photographers: the same list gross per photographer, plus the
+    // sale count countSalesInWindow uses. Rows of (photographerId, gmv, salesCount).
+    @Query(
+        value = """
+        SELECT t.photographer_id, $LIST_GROSS_SUM AS gmv,
+               COUNT(*) FILTER (WHERE t.is_refund = false) AS sales
+        FROM $LIST_GROSS_FROM
+        WHERE t.paid_at >= :from AND t.paid_at < :to
+        GROUP BY t.photographer_id
+        HAVING $LIST_GROSS_SUM > 0
+        ORDER BY gmv DESC, t.photographer_id
+        LIMIT :limit
+        """,
+        nativeQuery = true,
+    )
+    fun listGrossByPhotographerInWindow(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+        @Param("limit") limit: Int,
+    ): List<Array<Any>>
 
     // Per-photographer net kept amount + non-refund sale count for a single
     // week window. Drives the admin "Generate cycles" action — one row per

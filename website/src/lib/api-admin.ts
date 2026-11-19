@@ -98,6 +98,14 @@ export interface AdminKpis {
   relevanceHidden?: number;
   relevanceCantTell?: number;
   relevanceAppealsOpen?: number;
+  /** AX-8: Photo Relevance cases a person must decide (Can't tell, or an open appeal), counted once. */
+  relevanceNeedsPerson?: number;
+  /** AX-8: payout cycles on the page's Review tab (PENDING only). */
+  payoutsAwaitingReview?: number;
+  /** AX-8: open payout problem reports. */
+  openPayoutReports?: number;
+  /** AX-8: photo removal cases that need an admin. */
+  removalsNeedingAction?: number;
 }
 
 export interface AdminTrendPoint {
@@ -175,6 +183,14 @@ function buildUsersQs(args: AdminUserListArgs): string {
   return p.toString();
 }
 
+// One page; since AX-43 the server filters status before paging and q matches name, email, handle and brand.
+export function fetchAdminUsersPage(
+  args: AdminUserListArgs,
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<AdminUserRow>> {
+  return api.get<PaginatedResponse<AdminUserRow>>(`/admin/users?${buildUsersQs(args)}`, { signal });
+}
+
 // Directory consumers filter locally, so load every unfiltered page. Explicit
 // pagination/filter callers retain the endpoint's page semantics.
 export async function fetchAdminUsers(
@@ -186,9 +202,7 @@ export async function fetchAdminUsers(
   const paged = args.offset !== undefined || args.limit !== undefined || args.status !== undefined;
   while (true) {
     signal?.throwIfAborted();
-    const page = await api.get<PaginatedResponse<AdminUserRow>>(
-      `/admin/users?${buildUsersQs({ ...args, offset })}`,
-    );
+    const page = await fetchAdminUsersPage({ ...args, offset });
     signal?.throwIfAborted();
     rows.push(...page.items);
     offset += page.items.length;
@@ -202,6 +216,21 @@ export async function fetchAdminUserDetail(
   return api.get<AdminUserDetail>(
     `/admin/users/${encodeURIComponent(userId)}`,
   );
+}
+
+// AX-13: an admin's view of a photographer's events and totals, whatever their status.
+export interface AdminPhotographerRecord {
+  /** Newest first, at most 200; drafts and private events included. */
+  events: Array<{ eventId: string; name: string; date: string; visibility: "public" | "unlisted"; photoCount: number }>;
+  eventsTotal: number;
+  /** Seller-details reviewState; null when none was submitted. */
+  sellerDetailsStatus: string | null;
+  salesCount: number;
+  photoCount: number;
+}
+
+export function fetchAdminUserRecord(userId: string, signal?: AbortSignal): Promise<AdminPhotographerRecord> {
+  return api.get<AdminPhotographerRecord>(`/admin/users/${encodeURIComponent(userId)}/record`, { signal });
 }
 
 // F-NEW-1 — full photographer-settings read for admin review surfaces.
@@ -679,15 +708,16 @@ export interface AdminPayoutReportListArgs {
 
 export async function fetchAdminPayoutReports(
   args: AdminPayoutReportListArgs = {},
-): Promise<PayoutReport[]> {
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<PayoutReport>> {
   const p = new URLSearchParams();
   if (args.status) p.set("status", args.status);
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
-  const res = await api.get<PaginatedResponse<PayoutReport>>(
+  return api.get<PaginatedResponse<PayoutReport>>(
     `/admin/payouts/reports?${p.toString()}`,
+    { signal },
   );
-  return res.items;
 }
 
 export async function acknowledgePayoutReport(

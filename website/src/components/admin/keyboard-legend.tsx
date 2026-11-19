@@ -10,15 +10,18 @@ interface ShortcutRow {
   scope: "Queue" | "Drawer" | "Anywhere";
 }
 
+// The palette opens on Cmd+K or Ctrl+K (useCommandPaletteShortcut); show the one this keyboard has.
+// The legend renders only when open, so reading navigator here never runs on the server.
+const isApple = () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
 const ROWS: ShortcutRow[] = [
-  { label: "Open command palette", keys: ["⌘", "K"], scope: "Anywhere" },
+  { label: "Open command palette", keys: ["MOD", "K"], scope: "Anywhere" },
   { label: "Navigate rows", keys: ["J", "K"], scope: "Queue" },
   { label: "Open focused row", keys: ["Enter"], scope: "Queue" },
   { label: "Focus search", keys: ["/"], scope: "Queue" },
   { label: "Approve", keys: ["E"], scope: "Drawer" },
   { label: "Reject", keys: ["R"], scope: "Drawer" },
   { label: "Hide", keys: ["H"], scope: "Drawer" },
-  { label: "Suspend", keys: ["S"], scope: "Drawer" },
   { label: "Close drawer / modal", keys: ["Esc"], scope: "Anywhere" },
   { label: "Toggle this legend", keys: ["?"], scope: "Anywhere" },
 ];
@@ -28,13 +31,14 @@ const ROWS: ShortcutRow[] = [
 // any drawer or queue surface. Triggered by the global `?` shortcut (see
 // useAdminLegendShortcut) and by the bottom-right <KeyboardHintPill>.
 //
-// Verbs are scope-aware — pressing E/R/H/S inside a drawer only fires
+// Verbs are scope-aware — pressing E/R/H inside a drawer only fires
 // when the queue has wired the verb (e.g. Approve runs in pending
 // payouts; Hide runs only inside an open flag drawer). The
 // modal copy makes that clear so users don't expect blanket coverage.
 export function KeyboardLegend() {
   const open = useAdminLegendStore((s) => s.open);
   const setOpen = useAdminLegendStore((s) => s.setOpen);
+  const mod = open && isApple() ? "⌘" : "Ctrl";
   return (
     <Modal
       isOpen={open}
@@ -59,7 +63,7 @@ export function KeyboardLegend() {
                   key={i}
                   className="font-mono text-[12px] text-ink rounded-md border border-line bg-bone-deep px-2 py-1 min-w-[2rem] text-center"
                 >
-                  {k}
+                  {k === "MOD" ? mod : k}
                 </kbd>
               ))}
             </div>
@@ -67,7 +71,7 @@ export function KeyboardLegend() {
         ))}
       </ul>
       <p className="font-sans text-[13px] text-slate-soft mt-6">
-        ⌘K (Ctrl+K on Windows / Linux) opens the command palette — search
+        {mod} K opens the command palette — search
         every page, queue row, and photographer in one place. Verbs only
         fire when the open drawer has that action available; outside a
         drawer, verb keys are ignored.

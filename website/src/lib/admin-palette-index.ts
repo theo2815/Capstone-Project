@@ -1,4 +1,7 @@
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import { ADMIN_ROUTES } from "@/components/admin/admin-rail";
+import { ADMIN_QUEUES, queuePath } from "@/lib/admin-queues";
+import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
 import {
   DISPUTE_REASON_LABEL,
@@ -81,101 +84,39 @@ interface PageSeed {
   title: string;
   subtitle: string;
   route: string;
-  /** Extra terms folded into haystack — e.g. "inbox" for verifications so
-   *  typing "inbox verifications" or "vrf" both land on the same entry. */
+  /** Extra terms folded into haystack, so "dsp" or "gmv" still land on the page. */
   keywords: string[];
 }
 
+// Search words the titles and rail tooltips do not carry.
+const KEYWORDS: Record<string, string[]> = {
+  [ROUTES.ADMIN_OVERVIEW]: ["dashboard", "kpi", "metrics", "home"],
+  [ROUTES.ADMIN_INBOX]: ["today", "stream"],
+  [ROUTES.ADMIN_VERIFICATIONS]: ["approve", "reject", "pending", "vrf"],
+  [ROUTES.ADMIN_DISPUTES]: ["refund", "claim", "dsp"],
+  [ROUTES.ADMIN_FLAGS]: ["moderation", "report", "flg"],
+  [ROUTES.ADMIN_PAYOUTS]: ["approve", "hold", "pay"],
+  [ROUTES.ADMIN_RELEVANCE]: ["junk", "blurry", "copied", "wrong event", "alerts"],
+  [ROUTES.ADMIN_PHOTOGRAPHERS]: ["directory", "users", "people"],
+  [ROUTES.ADMIN_EVENTS]: ["registry", "races"],
+  [ROUTES.ADMIN_SALES]: ["revenue", "money", "gmv", "earnings", "cut", "income"],
+  [ROUTES.ADMIN_SECURITY]: ["two-step", "2fa", "mfa", "sign-in"],
+  [`${ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS}/new`]: ["create", "add", "takedown", "case"],
+};
+
+// Every rail page (ADMIN_ROUTES), the queues that live inside another page (seller details,
+// payout reports), and the removal intake form.
 const PAGE_SEEDS: ReadonlyArray<PageSeed> = [
-  {
-    id: "page:overview",
-    title: "Overview",
-    subtitle: "Admin dashboard · KPIs and platform health",
-    route: ROUTES.ADMIN_OVERVIEW,
-    keywords: ["dashboard", "kpi", "metrics", "home"],
-  },
-  {
-    id: "page:inbox",
-    title: "Inbox",
-    subtitle: "Today · all four queues in one stream",
-    route: ROUTES.ADMIN_INBOX,
-    keywords: ["today", "stream"],
-  },
-  {
-    id: "page:verifications",
-    title: "Verifications",
-    subtitle: "Photographer onboarding decisions",
-    route: `${ROUTES.ADMIN_INBOX}?type=verifications`,
-    keywords: ["inbox", "approve", "reject", "pending", "vrf"],
-  },
-  {
-    id: "page:verifications-direct",
-    title: "Verifications (focus mode)",
-    subtitle: "Standalone queue page with full hero",
-    route: ROUTES.ADMIN_VERIFICATIONS,
-    keywords: ["focus"],
-  },
-  {
-    id: "page:disputes",
-    title: "Disputes",
-    subtitle: "Refund + delivery claims",
-    route: `${ROUTES.ADMIN_INBOX}?type=disputes`,
-    keywords: ["inbox", "refund", "claim", "dsp"],
-  },
-  ...(ADMIN_FLAGS_ENABLED
-    ? [
-        {
-          id: "page:flags",
-          title: "Flags",
-          subtitle: "Content moderation queue",
-          route: `${ROUTES.ADMIN_INBOX}?type=flags`,
-          keywords: ["inbox", "moderation", "report", "flg"],
-        } as PageSeed,
-      ]
-    : []),
-  {
-    id: "page:payouts",
-    title: "Payouts",
-    subtitle: "Photographer payout requests",
-    route: `${ROUTES.ADMIN_INBOX}?type=payouts`,
-    keywords: ["inbox", "approve", "hold", "pay"],
-  },
-  {
-    id: "page:relevance",
-    title: "Photo Relevance",
-    subtitle: "Batch checks · junk, wrong event, copied photos",
-    route: ROUTES.ADMIN_RELEVANCE,
-    keywords: ["relevance", "junk", "blurry", "copied", "wrong event", "alerts"],
-  },
-  {
-    id: "page:photographers",
-    title: "Photographers",
-    subtitle: "Directory · all profiles by status",
-    route: ROUTES.ADMIN_PHOTOGRAPHERS,
-    keywords: ["directory", "users", "people"],
-  },
-  {
-    id: "page:events",
-    title: "Events",
-    subtitle: "Admin-curated event registry",
-    route: ROUTES.ADMIN_EVENTS,
-    keywords: ["registry", "races"],
-  },
-  {
-    id: "page:events-new",
-    title: "Events · New",
-    subtitle: "Create a new event",
-    route: `${ROUTES.ADMIN_EVENTS}/new`,
-    keywords: ["create", "add", "event"],
-  },
-  {
-    id: "page:sales",
-    title: "Sales",
-    subtitle: "Revenue intelligence · GMV, platform cut, top performers",
-    route: ROUTES.ADMIN_SALES,
-    keywords: ["revenue", "money", "gmv", "earnings", "cut", "income"],
-  },
-];
+  ...ADMIN_ROUTES.map((r) => ({ id: `page:${r.href.split("/").pop()}`, title: r.label, href: r.href })),
+  ...ADMIN_QUEUES.filter((q) => q.href.includes("#")).map((q) => ({ id: `page:${q.inboxType}`, title: q.label, href: q.href })),
+  { id: "page:photo-removal-new", title: "New removal request", href: `${ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS}/new` },
+].map(({ id, title, href }) => ({
+  id,
+  title,
+  subtitle: getAdminSectionGuideByHref(queuePath(href))?.body ?? "",
+  route: href,
+  keywords: KEYWORDS[href] ?? [],
+}));
 
 function buildPageEntries(): PaletteEntry[] {
   return PAGE_SEEDS.map((p) => ({

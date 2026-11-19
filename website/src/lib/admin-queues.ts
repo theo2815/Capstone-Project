@@ -1,117 +1,99 @@
-import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
-import {
-  useAdminFlags,
-  useAdminKpis,
-} from "@/hooks/use-admin-data";
-import { usePendingVerificationsCount } from "@/hooks/use-admin-users";
-import { ROUTES } from "@/lib/constants";
+import { useAdminKpis } from "@/hooks/use-admin-data";
+import type { AdminKpis } from "@/lib/api-admin";
+import { ADMIN_FLAGS_ENABLED, ROUTES } from "@/lib/constants";
 
-// One-fresh-per-viewport rule: at most ONE rail row carries the breathing
-// fresh attention dot. Priority order:
-//   1. Disputes  — money + customer-facing
-//   2. Flags     — content moderation, time-sensitive
-//   3. Verifications — photographer-onboarding-blocking
-//   4. Event requests — a photographer's event is invisible until decided (V46)
-//   5. Payouts   — request-based, lowest urgency
-// First non-zero queue wins.
-//
-// useAdminAttentionTarget / useAdminQueueCounts are hooks because the
-// payouts count now hydrates from BE via useAdminPayouts (React Query).
-// Dispute/event counts come from backend KPIs; verification counts subscribe
-// to the canonical user directory.
+// The one list of admin queues. Its order is the priority order: the rail
+// counts, the phone strip, the KPI strip and the single breathing attention
+// dot (one-fresh-per-viewport) all read it. Every count comes from
+// GET /admin/kpis; a field an older backend does not send gives null (no badge).
+// Adding a queue means one entry here plus its Inbox content.
 
-export interface AdminAttentionTarget {
+export type AdminQueueKey =
+  | "disputes"
+  | "flags"
+  | "verifications"
+  | "sellerDetails"
+  | "eventRequests"
+  | "payouts"
+  | "payoutReports"
+  | "relevance"
+  | "removals";
+
+export interface AdminQueue {
+  key: AdminQueueKey;
+  label: string;
+  singularLabel: string;
+  inboxType: string;
   href: string;
-  count: number;
-  label: "Disputes" | "Flags" | "Verifications" | "Event requests" | "Payouts";
+  count: (kpis: AdminKpis) => number | null;
 }
 
-export function useAdminAttentionTarget(): AdminAttentionTarget | null {
-  const pendingVerifications = usePendingVerificationsCount();
-  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
-  // BE-hydrated; useAdminFlags is a no-op when the feature gate is off.
-  const openFlags = useAdminFlags({ status: "open" })?.total ?? 0;
-  const kpis = useAdminKpis();
-  const pendingEventRequests = kpis?.pendingEventRequests ?? 0;
+const ADMIN_QUEUES_ALL: readonly AdminQueue[] = [
+  { key: "disputes", label: "Disputes", singularLabel: "Dispute", inboxType: "disputes", href: ROUTES.ADMIN_DISPUTES,
+    count: (k) => k.disputesNeedingAdmin ?? k.openDisputes },
+  { key: "flags", label: "Flags", singularLabel: "Flag", inboxType: "flags", href: ROUTES.ADMIN_FLAGS,
+    count: (k) => k.openFlags },
+  { key: "verifications", label: "Verifications", singularLabel: "Verification", inboxType: "verifications",
+    href: ROUTES.ADMIN_VERIFICATIONS, count: (k) => k.pendingVerifications },
+  { key: "sellerDetails", label: "Seller details", singularLabel: "Seller details", inboxType: "seller-details",
+    href: `${ROUTES.ADMIN_VERIFICATIONS}#seller-details`, count: (k) => k.pendingSellerDetails ?? null },
+  { key: "eventRequests", label: "Event requests", singularLabel: "Event request", inboxType: "events",
+    href: ROUTES.ADMIN_EVENT_REQUESTS, count: (k) => k.pendingEventRequests },
+  // The page's Review tab (PENDING), not pendingPayouts (PENDING + SCHEDULED).
+  { key: "payouts", label: "Payouts", singularLabel: "Payout", inboxType: "payouts", href: ROUTES.ADMIN_PAYOUTS,
+    count: (k) => k.payoutsAwaitingReview ?? null },
+  { key: "payoutReports", label: "Payout reports", singularLabel: "Payout report", inboxType: "payout-reports",
+    href: `${ROUTES.ADMIN_PAYOUTS}#payout-reports`, count: (k) => k.openPayoutReports ?? null },
+  // Cases a person must decide; the Hidden / Can't tell / Appeals totals are for the page's tab bar.
+  { key: "relevance", label: "Photo Relevance", singularLabel: "Photo Relevance", inboxType: "relevance",
+    href: ROUTES.ADMIN_RELEVANCE, count: (k) => k.relevanceNeedsPerson ?? null },
+  { key: "removals", label: "Photo removals", singularLabel: "Photo removal", inboxType: "removals",
+    href: ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS, count: (k) => k.removalsNeedingAction ?? null },
+];
 
-  const openDisputes = kpis?.disputesNeedingAdmin ?? kpis?.openDisputes ?? 0;
-  if (openDisputes > 0) {
-    return {
-      href: ROUTES.ADMIN_DISPUTES,
-      count: openDisputes,
-      label: "Disputes",
-    };
-  }
+// Same gate as the rail's Flags row.
+export const ADMIN_QUEUES: readonly AdminQueue[] = ADMIN_FLAGS_ENABLED
+  ? ADMIN_QUEUES_ALL
+  : ADMIN_QUEUES_ALL.filter((q) => q.key !== "flags");
 
-  if (openFlags > 0) {
-    return {
-      href: ROUTES.ADMIN_FLAGS,
-      count: openFlags,
-      label: "Flags",
-    };
-  }
+/** The page a queue href lives on, without its in-page anchor. */
+export function queuePath(href: string): string {
+  return href.split("#")[0];
+}
 
-  // Verifications — attention dot lights up the Inbox row, since Inbox is
-  // the new daily home for the verifications queue (Phase 1 admin redesign).
-  // /admin/verifications still exists as a deep-link route but no longer
-  // appears in the rail.
-  if (pendingVerifications > 0) {
-    return {
-      href: ROUTES.ADMIN_INBOX,
-      count: pendingVerifications,
-      label: "Verifications",
-    };
-  }
-
-  if (pendingEventRequests > 0) {
-    return {
-      href: ROUTES.ADMIN_EVENT_REQUESTS,
-      count: pendingEventRequests,
-      label: "Event requests",
-    };
-  }
-
-  // Payouts — count the canonical backend rows.
-  const pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
-  if (pendingPayouts > 0) {
-    return {
-      href: ROUTES.ADMIN_PAYOUTS,
-      count: pendingPayouts,
-      label: "Payouts",
-    };
-  }
-
-  return null;
+/** The sum of the present counts, or null when none is present. */
+export function sumPresent(counts: readonly (number | null)[]): number | null {
+  const present = counts.filter((c): c is number => c !== null);
+  return present.length ? present.reduce((a, b) => a + b, 0) : null;
 }
 
 export interface AdminQueueCounts {
-  inbox: number;
-  disputes: number;
-  flags: number;
-  events: number;
-  payouts: number;
-  total: number;
+  byKey: Record<AdminQueueKey, number | null>;
+  /** The sum of the present counts; null while none is present (loading, or an old backend). */
+  total: number | null;
 }
 
-// Per-queue counts for the editorial-data rail. Consumed by <AdminRail>
-// to render the row-level count and the "QUEUES · N open / all clear"
-// summary line.
 export function useAdminQueueCounts(): AdminQueueCounts {
-  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
-  const flags = useAdminFlags({ status: "open" })?.total ?? 0;
   const kpis = useAdminKpis();
-  const events = kpis?.pendingEventRequests ?? 0;
+  const byKey = Object.fromEntries(
+    ADMIN_QUEUES_ALL.map((q) => [q.key, kpis && ADMIN_QUEUES.includes(q) ? q.count(kpis) : null]),
+  ) as Record<AdminQueueKey, number | null>;
+  return { byKey, total: sumPresent(Object.values(byKey)) };
+}
 
-  const disputes = kpis?.disputesNeedingAdmin ?? kpis?.openDisputes ?? 0;
-  const payouts = serverPayouts.filter((p) => p.status === "pending_review").length;
-  const inbox = usePendingVerificationsCount();
+export interface AdminAttentionTarget {
+  key: AdminQueueKey;
+  href: string;
+  count: number;
+  label: string;
+}
 
-  return {
-    inbox,
-    disputes,
-    flags,
-    events,
-    payouts,
-    total: inbox + disputes + flags + events + payouts,
-  };
+/** The first queue in the order with work waiting, or null. */
+export function useAdminAttentionTarget(): AdminAttentionTarget | null {
+  const { byKey } = useAdminQueueCounts();
+  for (const q of ADMIN_QUEUES) {
+    const count = byKey[q.key];
+    if (count !== null && count > 0) return { key: q.key, href: q.href, count, label: q.label };
+  }
+  return null;
 }

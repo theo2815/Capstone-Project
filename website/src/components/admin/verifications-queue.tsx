@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BTN_DANGER,
+  BTN_GHOST,
   BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
+  ROW_OPEN_BUTTON,
 } from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { safeHttpUrl } from "@/lib/utils";
+import { ROUTES } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
@@ -27,19 +31,23 @@ import {
   useDrawerVerbs,
 } from "@/hooks/use-admin-keyboard";
 import {
-  PAYOUT_METHOD_LABEL,
-  SOCIAL_PLATFORM_LABEL,
-  SOCIAL_PLATFORM_TILE,
-} from "@/store/photographer-settings-store";
-import {
   type AdminUserRow,
   type PhotographerSettingsSnapshot,
 } from "@/lib/admin-user-registry";
 import {
+  completenessItems,
+  computeCompleteness,
+  snapshotFromSettings,
   useEffectivePhotographerSettings,
-  type EffectivePhotographerSettings,
 } from "@/lib/admin-photographer-view";
-import { formatPayoutNumber } from "@/lib/payout-format";
+import {
+  CompletenessSection,
+  CoverSection,
+  PayoutsSection,
+  PublicUrlSection,
+  SocialsSection,
+  WatermarkSection,
+} from "@/components/admin/photographer-review-sections";
 import { formatMemberSince, sentenceCaseDate } from "@/lib/format";
 import { formatRegionLabel } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
@@ -61,23 +69,10 @@ import { useRegions } from "@/hooks/use-regions";
 // on the right always opens. URL state via ?row=<userId> so refresh and
 // browser-back behave; the drawer mirrors the chip route pattern.
 //
-const SNAPSHOT_FIELDS: ReadonlyArray<{
-  key: keyof PhotographerSettingsSnapshot;
-  label: string;
-  short: string;
-}> = [
-  { key: "hasCover", label: "Cover banner", short: "Cover" },
-  { key: "hasBrandName", label: "Brand name", short: "Brand" },
-  { key: "hasWatermark", label: "Watermark", short: "WM" },
-  { key: "hasHandle", label: "Public handle", short: "Handle" },
-  { key: "hasRegion", label: "Region", short: "Region" },
-];
-
 export function VerificationsQueue() {
   const users = useAdminUsers();
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch } = users;
-  const error = users.error?.message;
   const { reject, approveHeld, verifyBatch, isPending: actionPending } = useAdminUserActions();
   const { showToast } = useToast();
 
@@ -102,7 +97,8 @@ export function VerificationsQueue() {
     () =>
       effective.filter(
         (u) =>
-          u.role === "PHOTOGRAPHER" && u.verificationStatus === "incomplete",
+          // Suspended photographers are left out, as in the directory.
+          u.role === "PHOTOGRAPHER" && u.verificationStatus === "incomplete" && u.suspendedAt === null,
       ),
     [effective],
   );
@@ -166,6 +162,7 @@ export function VerificationsQueue() {
   }, [selected, bulkRejectOpen, drawerRejectOpen, openRow, submitting]);
 
   const selectionActive = selected.size > 0;
+  const allSelected = pending.length > 0 && pending.every((p) => selected.has(p.userId));
 
   // Keyboard nav covers the Open queue only — the Incomplete and Recent
   // decisions slabs are read-only listings, not openable rows.
@@ -292,7 +289,9 @@ export function VerificationsQueue() {
   // cached rows to show. After the initial fetch lands, the SWR-style cache
   // keeps the queue visible while background revalidations run.
   const showFirstLoad = loading && effective.length === 0;
-  const showError = !!error && effective.length === 0;
+  const showError = users.isError && effective.length === 0;
+  // No list yet: show no counts and no "nothing here" copy, which would read as a real zero.
+  const noList = showFirstLoad || showError;
 
   return (
     <>
@@ -303,22 +302,22 @@ export function VerificationsQueue() {
           <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Try again</button>
         </div>
       )}
-      {(showFirstLoad || showError) && (
-        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-          {showFirstLoad
-            ? "Loading admin queue…"
-            : (
-              <span className="inline-flex items-center gap-3">
-                <span>Couldn&apos;t load queue — {error}</span>
-                <button
-                  type="button"
-                  onClick={() => void refetch()}
-                  className="text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
-                >
-                  Retry
-                </button>
-              </span>
-            )}
+      {showFirstLoad && (
+        <div className="space-y-4" aria-busy="true">
+          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}
+        </div>
+      )}
+      {showError && (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load the verifications. Please try again.</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={users.isFetching}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            Retry
+          </button>
         </div>
       )}
       <Slab
@@ -326,11 +325,22 @@ export function VerificationsQueue() {
         number="01"
         title="Open queue"
         caption="Awaiting review"
-        trailing={`${pending.length} pending`}
+        trailing={noList ? undefined : `${pending.length} pending`}
       >
         {pending.length === 0 ? (
-          <QueueEmpty />
+          !noList && <QueueEmpty />
         ) : (
+          <>
+          <label className="mb-2 inline-flex min-h-11 cursor-pointer items-center gap-3 font-sans text-sm text-ink">
+            <input
+              type="checkbox"
+              disabled={submitting}
+              checked={allSelected}
+              onChange={() => (allSelected ? clearSelection() : setSelected(new Set(rowIds)))}
+              className="size-4 accent-ink cursor-pointer disabled:cursor-not-allowed"
+            />
+            Select all
+          </label>
           <ul className="space-y-4">
             {pending.map((row) => (
               <li key={row.userId}>
@@ -347,6 +357,7 @@ export function VerificationsQueue() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </Slab>
 
@@ -355,11 +366,11 @@ export function VerificationsQueue() {
         number="02"
         title="Incomplete"
         caption="Settings still missing fields"
-        trailing={`${incomplete.length} stuck`}
+        trailing={noList ? undefined : `${incomplete.length} stuck`}
         collapsed={incomplete.length === 0}
       >
         {incomplete.length === 0 ? (
-          <p className="font-sans text-sm text-slate-soft">
+          !noList && <p className="font-sans text-sm text-slate-soft">
             No photographers stuck on incomplete settings right now.
           </p>
         ) : (
@@ -372,7 +383,13 @@ export function VerificationsQueue() {
                 >
                   <div className="min-w-0">
                     <p className="font-display text-base text-ink truncate">
-                      {row.brandName ?? row.name}
+                      {/* Same target as the directory card: the detail page needs a handle. */}
+                      <Link
+                        href={row.handle ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${row.handle}` : ROUTES.ADMIN_PHOTOGRAPHERS}
+                        className="underline decoration-line underline-offset-4 hover:decoration-ink"
+                      >
+                        {row.brandName ?? row.name}
+                      </Link>
                     </p>
                     <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
@@ -402,6 +419,8 @@ export function VerificationsQueue() {
         <AdminDecisionsTimeline />
       </Slab>
 
+      {/* Room at the end, so the fixed bulk bar never covers what is last on the page (as on Payouts). */}
+      {selectionActive && <div aria-hidden="true" className="h-36" />}
       <VerificationsBulkBar
         submitting={submitting}
         count={selected.size}
@@ -514,48 +533,41 @@ function PendingRow({
   onOpenDrawer: () => void;
 }) {
   const completeness = computeCompleteness(row.settingsSnapshot);
+  const title = row.brandName ?? row.name;
+  const hintId = useId();
 
-  function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onActivate();
-    }
-  }
-
+  // Row pattern from AX-4: the title button covers the row (ROW_OPEN_BUTTON); inner controls sit above it.
   return (
     <article
-      role="button"
-      aria-disabled={disabled}
       aria-busy={disabled}
-      tabIndex={0}
       data-row-id={row.userId}
-      aria-label={`${row.brandName ?? row.name}${
-        selectionActive ? " — toggle selection" : " — open review"
-      }`}
-      onClick={onActivate}
-      onKeyDown={handleArticleKeyDown}
-      className={`group rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
+      className={`group relative rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
         selected ? "border-ink" : "border-line hover:border-ink"
       } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
     >
       <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">
-        <input
-          type="checkbox"
-          disabled={disabled}
-          checked={selected}
-          onChange={onToggleSelect}
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`Select ${row.brandName ?? row.name}`}
-          className="mt-2 size-4 accent-ink shrink-0 cursor-pointer"
-        />
+        {/* The label gives the 16 px checkbox a 44 px hit area; the negative margin keeps the row's layout. */}
+        <label className="relative z-10 -mx-3.5 -my-1.5 flex size-11 shrink-0 cursor-pointer items-center justify-center">
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={selected}
+            onChange={onToggleSelect}
+            aria-label={`Select ${title}`}
+            className="size-4 accent-ink cursor-pointer disabled:cursor-not-allowed"
+          />
+        </label>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-3 flex-wrap">
                 {/* Proposal 11: name leads; details are sentence case, mono only for the handle and numbers. */}
                 <h3 className="font-display text-xl font-semibold text-ink truncate">
-                  {row.brandName ?? row.name}
+                  <button type="button" onClick={onActivate} aria-describedby={hintId} className={ROW_OPEN_BUTTON}>
+                    {title}
+                  </button>
                 </h3>
+                <span id={hintId} className="sr-only">{selectionActive ? "Toggles selection" : "Opens the review"}</span>
                 <p className="font-mono text-[13px] text-slate">
                   @{row.handle ?? "—"}
                 </p>
@@ -576,19 +588,16 @@ function PendingRow({
               </div>
               <p className="font-sans text-sm text-ink-soft mt-2">
                 Waits for the identity check. Decide it under{" "}
-                <Link className="underline" href="/admin/verifications#seller-details" onClick={(e) => e.stopPropagation()}>Seller details</Link>.
+                <Link className="relative z-10 underline" href={`${ROUTES.ADMIN_VERIFICATIONS}#seller-details`}>Seller details</Link>.
               </p>
             </div>
 
             <button
               type="button"
               disabled={disabled}
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenDrawer();
-              }}
-              aria-label={`Open review for ${row.brandName ?? row.name}`}
-              className="disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
+              onClick={onOpenDrawer}
+              aria-label={`Open review for ${title}`}
+              className="relative z-10 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ›
@@ -606,17 +615,7 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const effective = settings.data;
   const { regions } = useRegions();
 
-  const liveSnapshot: PhotographerSettingsSnapshot | null = effective
-    ? {
-        hasCover: !!effective.cover,
-        hasBrandName: effective.brandName.trim().length > 0,
-        hasWatermark: !!effective.watermark,
-        hasHandle: effective.handle.trim().length >= 3,
-        hasRegion: !!effective.region,
-        socialCount: effective.socials.length,
-        payoutCount: effective.payouts.length,
-      }
-    : row.settingsSnapshot;
+  const liveSnapshot = effective ? snapshotFromSettings(effective) : row.settingsSnapshot;
 
   const completeness = computeCompleteness(liveSnapshot);
   const resolvedRegion = effective?.region
@@ -718,51 +717,15 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         <PayoutsSection effective={effective} />
       </CollapsibleReviewSection>
 
-      <CollapsibleReviewSection kicker="Settings completeness">
-        <div className="rounded-2xl border border-line bg-bone-deep p-5 md:p-6 space-y-4">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <CompletenessStrip snapshot={liveSnapshot} />
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-              {completeness.filled}/{completeness.total} fields
-            </p>
-          </div>
-          <ul className="space-y-2">
-            {SNAPSHOT_FIELDS.map((field) => {
-              const filled = !!liveSnapshot?.[field.key];
-              return (
-                <li
-                  key={field.key}
-                  className="flex items-center justify-between gap-4 font-sans text-sm"
-                >
-                  <span className="text-ink">{field.label}</span>
-                  <span
-                    className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] ${
-                      filled ? "text-fresh" : "text-slate-soft"
-                    }`}
-                  >
-                    {filled ? "Filled" : "Missing"}
-                  </span>
-                </li>
-              );
-            })}
-            {liveSnapshot && (
-              <>
-                <li className="flex items-center justify-between gap-4 font-sans text-sm pt-2 border-t border-line">
-                  <span className="text-ink">Social profiles</span>
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-                    {liveSnapshot.socialCount} linked
-                  </span>
-                </li>
-                <li className="flex items-center justify-between gap-4 font-sans text-sm">
-                  <span className="text-ink">Payout methods</span>
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-                    {liveSnapshot.payoutCount} on file
-                  </span>
-                </li>
-              </>
-            )}
-          </ul>
-        </div>
+      <CollapsibleReviewSection
+        kicker={
+          <>
+            Settings completeness ·{" "}
+            <span className="tnum">{completeness.filled}/{completeness.total}</span> fields
+          </>
+        }
+      >
+        <CompletenessSection snapshot={liveSnapshot} />
       </CollapsibleReviewSection>
 
       <CollapsibleReviewSection kicker="Account">
@@ -776,192 +739,6 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         </dl>
       </CollapsibleReviewSection>
     </div>
-  );
-}
-
-function CoverSection({
-  effective,
-}: {
-  effective: EffectivePhotographerSettings | null;
-}) {
-  const cover = effective?.cover ?? null;
-  if (!cover) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        No cover banner uploaded.
-      </p>
-    );
-  }
-  return (
-    <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
-      {cover.kind === "image" ? (
-        // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
-        <img
-          src={cover.url}
-          alt=""
-          className="size-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        <div
-          aria-hidden
-          className="size-full"
-          style={{
-            background: `linear-gradient(135deg, ${cover.from}, ${cover.to})`,
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function PublicUrlSection({ handle }: { handle: string }) {
-  if (!handle) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">No handle set yet.</p>
-    );
-  }
-  return (
-    <div className="flex items-center justify-between gap-4 flex-wrap rounded-2xl border border-line bg-bone-deep px-4 py-3">
-      <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-ink tnum truncate">
-        quickpitik.com/{handle}
-      </p>
-      <Link
-        href={`/${handle}`}
-        target="_blank"
-        rel="noopener"
-        className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-      >
-        Open ↗
-      </Link>
-    </div>
-  );
-}
-
-function WatermarkSection({
-  effective,
-  brand,
-}: {
-  effective: EffectivePhotographerSettings | null;
-  brand: string;
-}) {
-  const watermark = effective?.watermark ?? null;
-  if (!watermark) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">No watermark uploaded.</p>
-    );
-  }
-  return (
-    <div className="rounded-2xl border border-line bg-bone-deep p-6 md:p-8 flex items-center justify-center min-h-[120px]">
-      {watermark.kind === "image" ? (
-        // eslint-disable-next-line @next/next/no-img-element -- data URL preview from photographer settings store; backend serves signed S3 URL.
-        <img
-          src={watermark.dataUrl}
-          alt={`${brand} watermark`}
-          className="max-h-24 max-w-full object-contain"
-          draggable={false}
-        />
-      ) : (
-        <span
-          className="font-mono uppercase tracking-[0.4em] text-2xl md:text-3xl text-ink/70"
-          aria-label={`Watermark label: ${watermark.label}`}
-        >
-          © {watermark.label}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function SocialsSection({
-  effective,
-}: {
-  effective: EffectivePhotographerSettings | null;
-}) {
-  const socials = effective?.socials ?? [];
-  if (socials.length === 0) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        No social profiles linked yet.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-3">
-      {socials.map((social) => (
-        <li
-          key={social.id}
-          className="flex items-center gap-4 border-b border-line pb-3"
-        >
-          <span
-            aria-hidden
-            className="shrink-0 size-10 rounded-xl border border-line bg-bone-deep flex items-center justify-center font-mono uppercase tracking-[0.15em] text-[13px] text-ink"
-          >
-            {SOCIAL_PLATFORM_TILE[social.platform]}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="font-display text-base text-ink">
-              {SOCIAL_PLATFORM_LABEL[social.platform]}
-            </p>
-            <p className="font-mono text-[13px] min-[400px]:text-[14px] md:text-[13px] text-slate-soft mt-0.5 truncate">
-              {social.url}
-            </p>
-          </div>
-          {safeHttpUrl(social.url) && (
-            <a
-              href={safeHttpUrl(social.url)!}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
-            >
-              Open ↗
-            </a>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function PayoutsSection({
-  effective,
-}: {
-  effective: EffectivePhotographerSettings | null;
-}) {
-  const payouts = effective?.payouts ?? [];
-  if (payouts.length === 0) {
-    return (
-      <p className="font-sans text-sm text-slate-soft">
-        No payout accounts on file.
-      </p>
-    );
-  }
-  return (
-    <ul className="space-y-3">
-      {payouts.map((p) => (
-        <li
-          key={p.id}
-          className="flex items-center justify-between gap-4 border-b border-line pb-3"
-        >
-          <div className="min-w-0">
-            <p className="font-display text-base text-ink truncate">
-              {PAYOUT_METHOD_LABEL[p.method]}
-              {p.isPrimary && (
-                <span className="ml-2 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh tnum">
-                  Primary
-                </span>
-              )}
-            </p>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
-              {formatPayoutNumber(p.method, p.accountNumber)}
-            </p>
-          </div>
-          <p className="font-sans text-sm text-slate-soft truncate">
-            {p.accountName}
-          </p>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -1021,7 +798,7 @@ function VerificationsBulkBar({
             disabled={submitting}
                   aria-busy={submitting}
             onClick={onReject}
-            className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
+            className={cn(BTN_DANGER, BTN_SIZE.sm)}
           >
             Reject {count}…
           </button>
@@ -1030,7 +807,7 @@ function VerificationsBulkBar({
             disabled={submitting}
                   aria-busy={submitting}
             onClick={onClear}
-            className="disabled:opacity-50 disabled:cursor-not-allowed font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
+            className={cn(BTN_GHOST, BTN_SIZE.sm)}
           >
             Clear
           </button>
@@ -1053,19 +830,14 @@ function CompletenessStrip({
       className="flex items-center gap-1.5"
       aria-label="Settings completeness"
     >
-      {SNAPSHOT_FIELDS.map((field) => {
-        const filled = !!snapshot[field.key];
-        return (
-          <span
-            key={field.key}
-            title={`${field.label}${filled ? " ✓" : " — missing"}`}
-            className={`size-2 rounded-full ${
-              filled ? "bg-fresh" : "bg-line"
-            }`}
-            aria-hidden="true"
-          />
-        );
-      })}
+      {completenessItems(snapshot).map((item) => (
+        <span
+          key={item.label}
+          title={`${item.label}${item.filled ? " ✓" : " — missing"}`}
+          className={`size-2 rounded-full ${item.filled ? "bg-fresh" : "bg-line"}`}
+          aria-hidden="true"
+        />
+      ))}
     </div>
   );
 }
@@ -1081,17 +853,6 @@ function CompletenessFraction({
       {c.filled}/{c.total} fields
     </span>
   );
-}
-
-function computeCompleteness(
-  snapshot: PhotographerSettingsSnapshot | null,
-): { filled: number; total: number } {
-  if (!snapshot) return { filled: 0, total: SNAPSHOT_FIELDS.length };
-  const filled = SNAPSHOT_FIELDS.reduce(
-    (acc, field) => acc + (snapshot[field.key] ? 1 : 0),
-    0,
-  );
-  return { filled, total: SNAPSHOT_FIELDS.length };
 }
 
 function QueueEmpty() {

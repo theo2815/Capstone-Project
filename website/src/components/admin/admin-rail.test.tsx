@@ -1,49 +1,69 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { AdminKpis } from "@/lib/api-admin";
 import { AdminRail } from "./admin-rail";
 import { AdminMobileStrip } from "./admin-mobile-strip";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/admin/relevance" }));
-vi.mock("@/lib/admin-queues", () => ({
-  useAdminAttentionTarget: () => null,
-  useAdminQueueCounts: () => ({ inbox: 0, disputes: 0, flags: 0, payouts: 0, events: 0, total: 0 }),
-}));
+const path = vi.hoisted(() => ({ value: "/admin/relevance" }));
+vi.mock("next/navigation", () => ({ usePathname: () => path.value }));
 
-// RV-3.5: the open appeals count on the Photo Relevance item.
-const appeals = vi.hoisted(() => ({ open: 0 }));
-vi.mock("@/hooks/use-admin-relevance", () => ({ useOpenRelevanceAppealsCount: () => appeals.open }));
+const kpis = vi.hoisted(() => ({ value: null as AdminKpis | null }));
+vi.mock("@/hooks/use-admin-data", () => ({ useAdminKpis: () => kpis.value }));
 
-afterEach(() => { cleanup(); appeals.open = 0; });
+const base: AdminKpis = {
+  pendingVerifications: 0, approvedPhotographers: 0, suspended: 0, liveEvents: 0,
+  decisionsThisWeek: 0, openDisputes: 0, openFlags: 0, pendingPayouts: 0, pendingEventRequests: 0,
+};
 
-it("the rail shows the open appeals on the Photo Relevance item", () => {
-  appeals.open = 3;
+afterEach(() => { cleanup(); path.value = "/admin/relevance"; kpis.value = null; });
+
+const rowNames = () => screen.getAllByRole("link").map((l) => l.textContent?.replace(/\d+/g, "").trim());
+
+it("the rail groups the rows: queues first, Security last under Account", () => {
   render(<AdminRail />);
-  const link = screen.getByRole("link", { name: /Photo Relevance/ });
-  expect(within(link).getByLabelText("3 open")).toHaveTextContent("3");
+  expect(rowNames()).toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts",
+    "Photo Relevance", "Photo removals", "Events", "Photographers", "Overview", "Sales", "Security"]);
+  const account = screen.getByText("Account").parentElement!;
+  expect(within(account).getByRole("link", { name: /Security/ })).toHaveAttribute("href", "/admin/security");
 });
 
-it("the rail shows the Photo Relevance item", () => {
+it("the Verifications row is active on /admin/verifications, and Inbox is not", () => {
+  path.value = "/admin/verifications";
   render(<AdminRail />);
-  const link = screen.getByRole("link", { name: /Photo Relevance/ });
-  expect(link).toHaveAttribute("href", "/admin/relevance");
-  expect(link).toHaveAttribute("aria-current", "page");
-  expect(within(link).getByText("06")).toBeInTheDocument();
-  // It sits with the queues, after Event requests, and leaves every other row as it was.
-  const names = screen.getAllByRole("link").map((l) => l.textContent?.replace(/\d+/g, "").trim());
-  expect(names).toEqual(["Inbox", "Disputes", "Flags", "Payouts", "Event requests", "Photo Relevance",
-    "Events", "Photographers", "Photo removals", "Overview", "Sales", "Security"]);
+  expect(screen.getByRole("link", { name: /Verifications/ })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("link", { name: /Inbox/ })).not.toHaveAttribute("aria-current");
 });
 
-it("the mobile strip shows the Photo Relevance item", () => {
-  render(<AdminMobileStrip />);
-  const link = screen.getByRole("link", { name: /Photo Relevance/ });
-  expect(link).toHaveAttribute("href", "/admin/relevance");
-  expect(link).toHaveAttribute("aria-current", "page");
+it("Photo removals shows its count, and Payouts adds the open reports", () => {
+  kpis.value = { ...base, removalsNeedingAction: 3, payoutsAwaitingReview: 2, pendingPayouts: 9, openPayoutReports: 1 };
+  render(<AdminRail />);
+  expect(within(screen.getByRole("link", { name: /Photo removals/ })).getByLabelText("3 open")).toHaveTextContent("3");
+  expect(within(screen.getByRole("link", { name: /Payouts/ })).getByLabelText("3 open")).toHaveTextContent("3");
+  expect(within(screen.getByRole("link", { name: /Inbox/ })).getByLabelText("6 open")).toBeInTheDocument();
+  expect(screen.getByText("Queues · 6 open")).toBeInTheDocument();
 });
 
-it("the rail's queue total counts the open appeals", () => {
-  appeals.open = 2;
+it("Photo Relevance counts the cases that need a person", () => {
+  kpis.value = { ...base, relevanceNeedsPerson: 4, relevanceHidden: 40, relevanceAppealsOpen: 1 };
   render(<AdminRail />);
-  expect(screen.getByText("Queues · 2 open")).toBeInTheDocument();
-  expect(screen.queryByText("Queues · all clear")).not.toBeInTheDocument();
+  expect(within(screen.getByRole("link", { name: /Photo Relevance/ })).getByLabelText("4 open")).toBeInTheDocument();
+});
+
+it("an old backend without the new fields shows no badges and no crash", () => {
+  kpis.value = base;
+  render(<AdminRail />);
+  expect(screen.queryByLabelText(/open$/)).not.toBeInTheDocument();
+  expect(screen.getByText("Queues · all clear")).toBeInTheDocument();
+});
+
+it("the mobile strip opens with the open total, then the queues, a divider, then the rest", () => {
+  kpis.value = { ...base, openDisputes: 2 };
+  const { container } = render(<AdminMobileStrip />);
+  const items = [...container.querySelectorAll("li")];
+  expect(items[0]).toHaveTextContent("2 open");
+  const divider = items.findIndex((li) => li.getAttribute("data-divider") !== null);
+  expect(items.slice(1, divider).map((li) => li.textContent?.replace(/\d+/g, "").trim()))
+    .toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts", "Photo Relevance", "Photo removals"]);
+  expect(items[divider + 1]).toHaveTextContent("Events");
+  for (const link of screen.getAllByRole("link")) expect(link.className).toContain("min-h-[44px]");
 });

@@ -9,7 +9,9 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.admin.AdminEventCountsDto
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
+import com.quickpitik.dto.admin.AdminEventStateCounts
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.CreateAdminEventRequest
 import com.quickpitik.dto.admin.UpdateAdminEventRequest
@@ -83,6 +85,9 @@ class AdminEventService(
         stateFilter: String?,
         review: String?,
         params: PaginationParams,
+        q: String? = null,
+        dateFrom: String? = null,
+        dateTo: String? = null,
     ): PaginatedResponse<AdminListEventDto> {
         if (review.equals("queue", ignoreCase = true)) {
             // Photographer-owned events awaiting a decision (V46): initial
@@ -101,21 +106,39 @@ class AdminEventService(
             }
             return PaginatedResponse.of(items, rows.size.toLong(), params)
         }
-        val pageable = OffsetLimitPageable(params)
+        val f = ListFilter.of(q, dateFrom, dateTo)
         val page = eventRepository.pageForAdmin(
-            search = "",
-            dateFrom = LocalDate.of(1900, 1, 1),
-            dateTo = LocalDate.of(9999, 12, 31),
-            pageable = pageable,
+            f.search, f.from, f.to, stateFilter?.trim()?.lowercase().orEmpty(), LocalDate.now(PH_ZONE),
+            OffsetLimitPageable(params),
         )
         val owners = resolveOwners(page.content)
-        val items = page.content
-            .map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy], owners[it.submittedBy]) }
-            .let { rows ->
-                if (stateFilter.isNullOrBlank()) rows
-                else rows.filter { it.state == stateFilter.trim().lowercase() }
-            }
+        val items = page.content.map { eventDtoMapper.toAdminListDto(it, owners[it.createdBy], owners[it.submittedBy]) }
         return PaginatedResponse.of(items, page.totalElements, params)
+    }
+
+    // AX-9: the events tab counts for the same search and dates as the list.
+    @Transactional(readOnly = true)
+    fun counts(q: String?, dateFrom: String?, dateTo: String?): AdminEventCountsDto {
+        val f = ListFilter.of(q, dateFrom, dateTo)
+        val today = LocalDate.now(PH_ZONE)
+        fun n(state: String) = eventRepository.countForAdmin(f.search, f.from, f.to, state, today)
+        return AdminEventCountsDto(AdminEventStateCounts(n("upcoming"), n("live"), n("open"), n("past")))
+    }
+
+    private class ListFilter(val search: String, val from: LocalDate, val to: LocalDate) {
+        companion object {
+            fun of(q: String?, dateFrom: String?, dateTo: String?) = ListFilter(
+                q?.trim()?.take(100).orEmpty(),
+                date(dateFrom, "dateFrom") ?: LocalDate.of(1900, 1, 1),
+                date(dateTo, "dateTo") ?: LocalDate.of(9999, 12, 31),
+            )
+
+            private fun date(raw: String?, field: String): LocalDate? = raw?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                runCatching { LocalDate.parse(it) }.getOrElse {
+                    throw ValidationException(code = ErrorCodes.VALIDATION_ERROR, message = "$field must be ISO yyyy-MM-dd", field = field)
+                }
+            }
+        }
     }
 
     // AA-R7: the admin create form's duplicate warning. Read-only, no lock; a stale answer only

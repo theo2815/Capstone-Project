@@ -2,6 +2,7 @@ package com.quickpitik.repository
 
 import com.quickpitik.entity.EventPhotographer
 import com.quickpitik.entity.EventPhotographerId
+import com.quickpitik.entity.EventVisibility
 import com.quickpitik.entity.RacePriceChange
 import com.quickpitik.dto.admin.AdminRacePriceDto
 import jakarta.persistence.LockModeType
@@ -13,6 +14,7 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -77,6 +79,24 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("withUploadsOnly") withUploadsOnly: Boolean,
         pageable: Pageable,
     ): Page<EventPhotographer>
+
+    // AX-13 admin record: every event the photographer is on, drafts and private ones included.
+    @Query("""
+        SELECT e.id AS eventId, e.name AS name, e.date AS date, e.visibility AS visibility, ep.photoCount AS photoCount
+        FROM EventPhotographer ep JOIN Event e ON e.id = ep.id.eventId
+        WHERE ep.id.photographerId = :photographerId AND e.deletedAt IS NULL
+        ORDER BY e.date DESC, e.id ASC
+    """)
+    fun findAdminRecordEvents(@Param("photographerId") photographerId: UUID, pageable: Pageable): List<AdminRecordEventRow>
+
+    // Same rows as findAdminRecordEvents, uncapped.
+    @Query("""
+        SELECT COUNT(ep) AS eventsTotal, COALESCE(SUM(ep.salesCount), 0) AS salesCount,
+               COALESCE(SUM(ep.photoCount), 0) AS photoCount
+        FROM EventPhotographer ep JOIN Event e ON e.id = ep.id.eventId
+        WHERE ep.id.photographerId = :photographerId AND e.deletedAt IS NULL
+    """)
+    fun adminRecordTotals(@Param("photographerId") photographerId: UUID): AdminRecordTotalsRow
 
     // Pageable-bounded: the sole caller is the UNAUTHENTICATED public profile,
     // which caps at its own MAX_PUBLIC_EVENTS (newest coverage first).
@@ -250,4 +270,18 @@ interface EventPhotographerRepository : JpaRepository<EventPhotographer, EventPh
         @Param("saleDelta") saleDelta: Int,
         @Param("keptDelta") keptDelta: BigDecimal,
     ): Int
+}
+
+interface AdminRecordEventRow {
+    val eventId: UUID
+    val name: String
+    val date: LocalDate
+    val visibility: EventVisibility
+    val photoCount: Int
+}
+
+interface AdminRecordTotalsRow {
+    val eventsTotal: Long
+    val salesCount: Long
+    val photoCount: Long
 }

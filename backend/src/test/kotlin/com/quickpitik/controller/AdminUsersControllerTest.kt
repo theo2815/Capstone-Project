@@ -1,9 +1,11 @@
 package com.quickpitik.controller
 
+import com.quickpitik.dto.admin.AdminPhotographerRecordDto
 import com.quickpitik.dto.admin.AdminUserRowDto
 import com.quickpitik.entity.Role
 import com.quickpitik.exception.GlobalExceptionHandler
 import com.quickpitik.security.AuthPrincipal
+import com.quickpitik.service.admin.AdminPhotographerRecordService
 import com.quickpitik.service.admin.AdminUserService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
@@ -17,7 +19,9 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import java.util.UUID
@@ -27,10 +31,11 @@ import kotlin.test.assertFailsWith
 class AdminUsersControllerTest {
 
     private val service = Mockito.mock(AdminUserService::class.java)
+    private val recordService = Mockito.mock(AdminPhotographerRecordService::class.java)
     private val adminId = UUID.randomUUID()
     private val userId = UUID.randomUUID()
 
-    private val secured = ProxyFactory(AdminUsersController(service)).apply {
+    private val secured = ProxyFactory(AdminUsersController(service, recordService)).apply {
         isProxyTargetClass = true
         addAdvice(AuthorizationManagerBeforeMethodInterceptor.preAuthorize())
     }.proxy as AdminUsersController
@@ -60,6 +65,24 @@ class AdminUsersControllerTest {
             .andExpect(status().isOk)
 
         Mockito.verify(service).approveHeld(adminId, userId, 4)
+    }
+
+    @Test
+    fun `the record route returns the photographer record`() {
+        Mockito.`when`(recordService.record(userId)).thenReturn(AdminPhotographerRecordDto(emptyList(), 0, "approved", 2, 9))
+        signIn(Role.ADMIN)
+
+        mvc.perform(get("/api/v1/admin/users/$userId/record"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.sellerDetailsStatus").value("approved"))
+            .andExpect(jsonPath("$.photoCount").value(9))
+    }
+
+    @Test
+    fun `a non-admin is refused the record`() {
+        signIn(Role.RUNNER)
+        assertFailsWith<AccessDeniedException> { secured.record(userId) }
+        Mockito.verifyNoInteractions(recordService)
     }
 
     @Test

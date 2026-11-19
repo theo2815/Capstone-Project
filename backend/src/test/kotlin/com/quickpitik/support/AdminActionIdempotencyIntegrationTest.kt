@@ -414,7 +414,7 @@ class AdminActionIdempotencyIntegrationTest : PostgresIntegrationTest() {
         val principal = AuthPrincipal(actor, "fixture@test.local", users.findById(actor).orElseThrow().role)
         SecurityContextHolder.getContext().authentication = UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
-            val mvc = MockMvcBuilders.standaloneSetup(AdminUsersController(admin))
+            val mvc = MockMvcBuilders.standaloneSetup(AdminUsersController(admin, org.mockito.Mockito.mock(com.quickpitik.service.admin.AdminPhotographerRecordService::class.java)))
                 .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
                 .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
             val request = post("/api/v1/admin/users/$target/message").contentType(MediaType.APPLICATION_JSON)

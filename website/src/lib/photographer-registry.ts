@@ -39,17 +39,6 @@ export interface PhotographerProfile {
   events: ReadonlyArray<PhotographerEventCoverage>;
 }
 
-export const PHOTOGRAPHER_REGISTRY: ReadonlyArray<PhotographerProfile> = [];
-
-const REGISTRY_BY_HANDLE: Record<string, PhotographerProfile> =
-  Object.fromEntries(PHOTOGRAPHER_REGISTRY.map((p) => [p.handle, p]));
-
-export function getPhotographerByHandle(
-  handle: string,
-): PhotographerProfile | null {
-  return REGISTRY_BY_HANDLE[handle.trim().toLowerCase()] ?? null;
-}
-
 export function getPhotographerCoverage(
   profile: PhotographerProfile,
   eventSlug: string,

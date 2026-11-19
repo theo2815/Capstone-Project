@@ -19,6 +19,17 @@ data class AdminKpisDto(
     // No defaults: this DTO is built in one place, so the compiler checks the wiring.
     val disputesNeedingAdmin: Long,
     val disputesOverdue: Long,
+    // AX-8: queue counts, each equal to its admin list's total. The three relevance tab totals are for the
+    // tab bar only (Hidden never reaches 0); relevanceNeedsPerson is the badge. payoutsAwaitingReview is
+    // the Payouts "pending review" tab (PENDING only), unlike pendingPayouts (PENDING + SCHEDULED).
+    val pendingSellerDetails: Long,
+    val removalsNeedingAction: Long,
+    val openPayoutReports: Long,
+    val relevanceHidden: Long,
+    val relevanceCantTell: Long,
+    val relevanceAppealsOpen: Long,
+    val relevanceNeedsPerson: Long,
+    val payoutsAwaitingReview: Long,
 )
 
 // Mirrors AdminTrendPoint. Day-bucketed counts for the kpi-trend chart.
@@ -27,4 +38,5 @@ data class AdminTrendPointDto(
     val decisions: Long,
     val disputes: Long,
     val payouts: Long,
+    val uploads: Long,
 )

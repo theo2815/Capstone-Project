@@ -443,6 +443,8 @@ class PhotoRemovalDecisionIntegrationTest : PostgresIntegrationTest() {
         } }
         assertEquals(listOf(case.id), queries.list(admin.id, event.id, RemovalRequestStatus.RESOLVING, true, 0, 100).items.map { it.id })
         assertTrue(queries.list(admin.id, event.id, RemovalRequestStatus.RESOLVED, null, 0, 100).items.isEmpty())
+        // AX-8: the admin KPI badge is the unfiltered "Needs action" list's total, reopened cleanup included.
+        assertEquals(queries.list(admin.id, null, null, true, 0, 1).total, queries.countNeedingAction())
     }
 
     @Test fun `owner filtered list and other owner case status agree with reopened cleanup`() {

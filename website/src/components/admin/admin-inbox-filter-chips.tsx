@@ -1,94 +1,27 @@
 "use client";
 
-import { useUnseenRelevanceAlerts } from "@/hooks/use-admin-relevance";
-import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
+import { ADMIN_QUEUES, useAdminQueueCounts, type AdminQueue } from "@/lib/admin-queues";
+import { ROUTES } from "@/lib/constants";
 
-export type InboxQueueType =
-  | "verifications"
-  | "events"
-  | "disputes"
-  | "flags"
-  | "payouts"
-  | "relevance";
+export type InboxQueueType = AdminQueue["inboxType"];
 
-const INBOX_QUEUE_TYPES_ALL: readonly InboxQueueType[] = [
-  "verifications",
-  "events",
-  "disputes",
-  "flags",
-  "payouts",
-  "relevance",
-] as const;
-
-// Flags chip is hidden when the v1 feature gate is off — see constants.ts.
-export const INBOX_QUEUE_TYPES: readonly InboxQueueType[] = ADMIN_FLAGS_ENABLED
-  ? INBOX_QUEUE_TYPES_ALL
-  : INBOX_QUEUE_TYPES_ALL.filter((t) => t !== "flags");
-
-const LABEL: Record<InboxQueueType, string> = {
-  verifications: "Verifications",
-  events: "Event requests",
-  disputes: "Disputes",
-  flags: "Flags",
-  payouts: "Payouts",
-  relevance: "Relevance alerts",
-};
-
-interface AdminInboxFilterChipsProps {
-  value: InboxQueueType;
-  onChange: (next: InboxQueueType) => void;
-}
-
-// Inbox queue-type filter chips. Sits between the KPI strip and the
-// active queue body. Active chip is ink-filled; inactive chips are
-// bone-bordered. Counts are deliberately omitted — the KPI strip
-// directly above already carries them, and doubling up adds visual
-// noise. Comfort-floor mono type, wraps on small screens.
-export function AdminInboxFilterChips({
-  value,
-  onChange,
-}: AdminInboxFilterChipsProps) {
-  // Only the relevance chip carries a count: its alerts live nowhere else in the inbox (no KPI tile).
-  const unseen = useUnseenRelevanceAlerts().total;
+// Inbox queue chips: every queue in ADMIN_QUEUES, in its order, with its KPI count.
+export function AdminInboxFilterChips({ value }: { value: InboxQueueType }) {
+  const router = useRouter();
+  const { byKey } = useAdminQueueCounts();
   return (
-    <div
-      role="tablist"
-      aria-label="Inbox queue filter"
-      // One scrolling row on phones, faded at the right edge so it reads as scrollable; wraps from md up.
-      className="flex flex-nowrap md:flex-wrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden gap-2 pt-6 md:pt-8 [&>button]:shrink-0 [&>button]:whitespace-nowrap [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none] after:content-[''] after:w-[15%] after:shrink-0 md:after:hidden"
-    >
-      {INBOX_QUEUE_TYPES.map((type) => {
-        const active = value === type;
-        return (
-          <button
-            key={type}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(type)}
-            className={cn(
-              "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
-              active
-                ? "bg-ink text-bone border border-ink"
-                : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
-            )}
-          >
-            {LABEL[type]}
-            {type === "relevance" && unseen > 0 && (
-              <>
-                {" "}
-                <span className="tnum">{unseen}</span>
-                <span className="sr-only"> unseen</span>
-              </>
-            )}
-          </button>
-        );
-      })}
-    </div>
+    <AdminStatusTabs
+      label="Inbox queue filter"
+      tabs={ADMIN_QUEUES.map((q) => ({ key: q.inboxType, label: q.label, count: byKey[q.key] ?? undefined }))}
+      value={value}
+      // The Inbox owns only `type`: a switch drops the last list's own params (row, status, offset…).
+      onChange={(next) => router.replace(`${ROUTES.ADMIN_INBOX}?type=${next}`, { scroll: false })}
+    />
   );
 }
 
 export function isInboxQueueType(raw: string): raw is InboxQueueType {
-  return (INBOX_QUEUE_TYPES as readonly string[]).includes(raw);
+  return ADMIN_QUEUES.some((q) => q.inboxType === raw);
 }

@@ -10,7 +10,7 @@ import { admin, dispute, report } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
 import { adminDisputeKeys, useAdminDispute, useAdminDisputes, useDisputeActions } from "./use-admin-disputes";
-import { payoutReportKeys, useAdminPayoutReports, usePhotographerPayoutReports, usePayoutReportActions } from "./use-payout-reports";
+import { payoutReportKeys, useAdminPayoutReportsPage, usePhotographerPayoutReports, usePayoutReportActions } from "./use-payout-reports";
 
 const reason = "Reviewed the evidence.";
 const resolution = { resolution: "refund_partial" as const, refundAmount: 25, reason };
@@ -176,11 +176,11 @@ it("shows manual-review feedback and refreshes disputes after a rejected refund"
   await waitFor(() => expect(result.current.detail.data).toEqual(manualReview));
 });
 
-it.each(["resolve dispute", "resolve report"])("cancels an older list read before applying %s, then accepts later server changes", async (action) => {
+it.each(["resolve dispute"])("cancels an older list read before applying %s, then accepts later server changes", async (action) => {
   const isDispute = action === "resolve dispute";
   const base = isDispute ? dispute : report;
   const confirmed = isDispute ? confirmedDispute : confirmedReport;
-  const useRead = isDispute ? useAdminDisputes : useAdminPayoutReports;
+  const useRead = useAdminDisputes;
   const oldRead = deferred<unknown>();
   vi.spyOn(api, "get").mockReturnValueOnce(oldRead.promise).mockResolvedValue({ items: [confirmed] });
   vi.spyOn(api, isDispute ? "post" : "fetch").mockResolvedValueOnce(confirmed);
@@ -200,6 +200,25 @@ it.each(["resolve dispute", "resolve report"])("cancels an older list read befor
   vi.mocked(api.get).mockResolvedValueOnce({ items: [later] });
   await act(async () => { await result.current.query.refetch(); });
   await waitFor(() => expect(result.current.query.data).toEqual([later]));
+});
+
+// AX-31: the admin report list is paged; its refresh after the action cancels a background read in flight.
+it("cancels an older paged report read before applying resolve report", async () => {
+  const page = (rows: PayoutReport[]) => ({ items: rows, total: rows.length, offset: 0, limit: 50 });
+  const oldRead = deferred<unknown>();
+  vi.spyOn(api, "get").mockResolvedValueOnce(page([report])).mockReturnValueOnce(oldRead.promise).mockResolvedValue(page([]));
+  vi.spyOn(api, "fetch").mockResolvedValueOnce(confirmedReport);
+  const { result } = renderHook(() => ({
+    list: useAdminPayoutReportsPage("open"),
+    run: useActionRunner("resolve report"),
+  }), { wrapper: Wrapper });
+
+  await waitFor(() => expect(result.current.list.items).toEqual([report]));
+  act(() => { result.current.list.refetch(); });
+  await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+  await act(async () => { expect(await result.current.run()).toBe(true); });
+  await act(async () => { oldRead.resolve(page([report])); });
+  expect(result.current.list.items).toEqual([]);
 });
 
 describe.each(["resolve dispute", "resolve report"])("stale session: %s", (action) => {

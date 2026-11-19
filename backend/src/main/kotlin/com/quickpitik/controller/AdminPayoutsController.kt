@@ -5,6 +5,7 @@ import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminPayoutCycleDto
+import com.quickpitik.dto.admin.AdminStatusCountsDto
 import com.quickpitik.dto.admin.BulkPayoutResultDto
 import com.quickpitik.dto.admin.BulkPayoutsRequest
 import com.quickpitik.dto.admin.GenerateCyclesResultDto
@@ -47,6 +48,10 @@ class AdminPayoutsController(
         @RequestParam(required = false) limit: Int?,
     ): PaginatedResponse<AdminPayoutCycleDto> =
         adminPayoutService.list(status, q, PaginationParams.of(offset, limit))
+
+    // Tab counts for the same q (AX-10).
+    @GetMapping("/counts")
+    fun counts(@RequestParam(required = false) q: String?): AdminStatusCountsDto = adminPayoutService.counts(q)
 
     @PostMapping("/{payoutId}/approve")
     fun approve(

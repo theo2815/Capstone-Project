@@ -2,11 +2,12 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchAdminUsers, fetchAdminUserDetail, fetchAdminPhotographerSettings,
+  fetchAdminUsers, fetchAdminUsersPage, fetchAdminUserDetail, fetchAdminPhotographerSettings, fetchAdminUserRecord,
   approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
   sendAdminMessage, fetchAdminCommand, type SendAdminMessageInput,
-  type AdminUserDetail,
+  type AdminUserDetail, type AdminUserStatusFilter,
 } from "@/lib/api-admin";
+import { useInfiniteList } from "./use-infinite-list";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
@@ -22,6 +23,7 @@ export const adminUserKeys = {
   list: (owner: string | null) => [...adminUserKeys.owner(owner), "list"] as const,
   detail: (owner: string | null, id: string | null) => [...adminUserKeys.owner(owner), "detail", id] as const,
   settings: (owner: string | null, id: string | null) => [...adminUserKeys.owner(owner), "settings", id] as const,
+  record: (owner: string | null, id: string | null) => [...adminUserKeys.owner(owner), "record", id] as const,
 };
 
 export function useAdminUsers() {
@@ -29,6 +31,21 @@ export function useAdminUsers() {
   return useQuery({
     queryKey: adminUserKeys.list(user?.id ?? null),
     queryFn: ({ signal }) => fetchAdminUsers({}, signal),
+    enabled: user?.role === "ADMIN",
+    staleTime: 30_000,
+  });
+}
+
+// Under the owner prefix so every user mutation's refresh reaches it; nothing patches that prefix as an array.
+export function useAdminPhotographersPage(status: AdminUserStatusFilter, q: string) {
+  const user = useAuthStore((s) => s.user);
+  return useInfiniteList<AdminUserRow & { id: string }>({
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), "photographers", status, q],
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchAdminUsersPage({ role: "PHOTOGRAPHER", status, q: q || undefined, offset, limit }, signal);
+      return { ...page, items: page.items.map((row) => ({ ...row, id: row.userId })) };
+    },
+    limit: 50,
     enabled: user?.role === "ADMIN",
     staleTime: 30_000,
   });
@@ -60,8 +77,27 @@ export function useAdminPhotographerSettings(id: string | null) {
   });
 }
 
-export function usePendingVerificationsCount() {
-  const rows = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
+// AX-27: under the owner prefix, so every user mutation's refresh reaches it; null when an older backend has no route.
+export function useAdminUserRecord(id: string | null) {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: adminUserKeys.record(user?.id ?? null, id),
+    queryFn: async ({ signal }) => {
+      try { return await fetchAdminUserRecord(id!, signal); }
+      catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    enabled: user?.role === "ADMIN" && !!id,
+    staleTime: 60_000,
+  });
+}
+
+/** Null until the list has loaded, so a header never shows a loading or failed 0. */
+export function usePendingVerificationsCount(): number | null {
+  const rows = useAdminUsers().data;
+  if (!rows) return null;
   return rows.filter((row) => row.role === "PHOTOGRAPHER" &&
     row.verificationStatus === "pending" && row.suspendedAt === null).length;
 }

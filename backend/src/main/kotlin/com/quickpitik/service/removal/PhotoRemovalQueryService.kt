@@ -269,7 +269,17 @@ class PhotoRemovalQueryService(
     fun list(adminId: UUID, eventId: UUID?, status: RemovalRequestStatus?, needsAction: Boolean?, offset: Int?, limit: Int?,
              source: RemovalRequestSource? = null): RemovalPage<PhotoRemovalRequestDto> {
         val params = removalPagination(offset, limit)
-        val filter = Specification<PhotoRemovalRequest> { root, query, cb ->
+        val page = requests.findAll(adminFilter(eventId, status, needsAction, source),
+            OffsetLimitPageable(params, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id"))))
+        return RemovalPage(page.content.map { adminDetail(adminId, it.id).copy(items = emptyList()) },
+            page.totalElements, params.offset, params.limit)
+    }
+
+    // AX-8: the admin KPI badge, the total of the unfiltered "Needs action" list.
+    fun countNeedingAction(): Long = requests.count(adminFilter(null, null, true, null))
+
+    private fun adminFilter(eventId: UUID?, status: RemovalRequestStatus?, needsAction: Boolean?, source: RemovalRequestSource?) =
+        Specification<PhotoRemovalRequest> { root, query, cb ->
             val predicates = mutableListOf<jakarta.persistence.criteria.Predicate>()
             eventId?.let { predicates += cb.equal(root.get<UUID>("eventIdSnapshot"), it) }
             source?.let { predicates += cb.equal(root.get<RemovalRequestSource>("source"), it) }
@@ -305,10 +315,6 @@ class PhotoRemovalQueryService(
             }
             cb.and(*predicates.toTypedArray())
         }
-        val page = requests.findAll(filter, OffsetLimitPageable(params, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by("id"))))
-        return RemovalPage(page.content.map { adminDetail(adminId, it.id).copy(items = emptyList()) },
-            page.totalElements, params.offset, params.limit)
-    }
 
     fun history(adminId: UUID, requestId: UUID, offset: Int?, limit: Int?): RemovalPage<RemovalHistoryDto> {
         if (!requests.existsById(requestId)) removalNotFound()
