@@ -62,14 +62,20 @@ export const COVERED_EVENTS_MAX = 200;
 export function usePhotographerEvents(
   args: { withUploads?: boolean; limit?: number } = {},
 ): PhotographerEventSummary[] | null {
+  return usePhotographerEventsQuery(args).data ?? null;
+}
+
+// Same read with the query state, for callers that must tell "failed" from "loading".
+export function usePhotographerEventsQuery(
+  args: { withUploads?: boolean; limit?: number } = {},
+) {
   const session = usePrivateQuerySession("PHOTOGRAPHER");
-  const query = useQuery<PhotographerEventSummary[]>({
+  return useQuery<PhotographerEventSummary[]>({
     queryKey: ["photographer", "events", args, ...session.key],
     queryFn: ({ signal }) => fetchPhotographerEvents(args, signal).then((r) => r.items),
     enabled: session.enabled,
     staleTime: EVENTS_STALE_MS,
   });
-  return query.data ?? null;
 }
 
 export interface PhotographerEventDetailResult {
@@ -158,14 +164,17 @@ export function usePhotographerEventMetadataVisibility(eventId: string | null) {
 // ───────────────────────────────────────────── Earnings
 
 export function usePhotographerEarnings(): PhotographerEarnings | null {
+  return usePhotographerEarningsQuery().data ?? null;
+}
+
+export function usePhotographerEarningsQuery() {
   const session = usePrivateQuerySession("PHOTOGRAPHER");
-  const query = useQuery<PhotographerEarnings | null>({
+  return useQuery<PhotographerEarnings | null>({
     queryKey: ["photographer", "earnings", ...session.key],
     queryFn: ({ signal }) => fetchPhotographerEarnings(signal),
     enabled: session.enabled,
     staleTime: EARNINGS_STALE_MS,
   });
-  return query.data ?? null;
 }
 
 // The per-event list follows server order and uses raw server offsets, so
@@ -212,14 +221,17 @@ export function usePhotographerPayouts() {
 // /dashboard/billing. Short stale time so the hero reacts quickly after a
 // request is submitted or admin acts on a cycle.
 export function usePhotographerPayoutBalance(): PayoutBalanceResponse | null {
+  return usePhotographerPayoutBalanceQuery().data ?? null;
+}
+
+export function usePhotographerPayoutBalanceQuery() {
   const session = usePrivateQuerySession("PHOTOGRAPHER");
-  const query = useQuery<PayoutBalanceResponse | null>({
+  return useQuery<PayoutBalanceResponse | null>({
     queryKey: ["photographer", "payouts", "balance", ...session.key],
     queryFn: ({ signal }) => fetchPhotographerPayoutBalance(signal),
     enabled: session.enabled,
     staleTime: 30_000,
   });
-  return query.data ?? null;
 }
 
 // ───────────────────────────────────────────── Transactions

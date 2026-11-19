@@ -184,6 +184,13 @@ export function MyEventForm({
     (!typePicker || raceType !== null) &&
     (!isRace || raceEdit || (!!region.regionCode && !!region.provinceCode)) &&
     !busy;
+  // Say why Submit is disabled instead of leaving the user to guess.
+  const missing = [
+    title.trim().length === 0 && "title",
+    location.trim().length === 0 && "location",
+    !dateValid && "date",
+    isRace && !raceEdit && !(region.regionCode && region.provinceCode) && "region and province",
+  ].filter(Boolean) as string[];
 
   const trio: MyEventFields =
     pricingMode === "free"
@@ -517,10 +524,16 @@ export function MyEventForm({
         </p>
       )}
 
+      {missing.length > 0 && (
+        <p id="my-event-missing" className="font-sans text-sm text-slate">
+          Still needed: {missing.join(", ")}.
+        </p>
+      )}
       <div className="flex flex-wrap gap-3 pt-2">
         <button
           type="submit"
           disabled={!canSubmit}
+          aria-describedby={missing.length > 0 ? "my-event-missing" : undefined}
           className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
         >
           {submitLabel}

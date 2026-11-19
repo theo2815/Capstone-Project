@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
 import Link from "next/link";
 import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -91,6 +92,7 @@ export default function FocusedSharePage() {
   // change. Hooks stay above the early returns.
   const [editOpen, setEditOpen] = useState(false);
   const [couponOpen, setCouponOpen] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
 
@@ -151,13 +153,16 @@ export default function FocusedSharePage() {
     queryClient.invalidateQueries({ queryKey: ["photographer", "events"] });
 
   async function handleWithdraw() {
-    if (!liveDetail) return;
+    if (!liveDetail || withdrawing) return;
+    setWithdrawing(true);
     try {
       await updateMyEvent(liveDetail.id, { withdrawPendingChange: true });
       await refreshEvents();
       showToast({ kind: "success", message: "Pricing request withdrawn." });
     } catch {
       showToast({ kind: "error", message: "Couldn't withdraw the request." });
+    } finally {
+      setWithdrawing(false);
     }
   }
 
@@ -220,6 +225,7 @@ export default function FocusedSharePage() {
         onEdit={() => setEditOpen(true)}
         onCoupon={paid ? () => setCouponOpen(true) : undefined}
         onWithdraw={handleWithdraw}
+        withdrawing={withdrawing}
       />
       <Modal
         isOpen={editOpen}
@@ -395,11 +401,13 @@ function OwnedBand({
   onEdit,
   onCoupon,
   onWithdraw,
+  withdrawing,
 }: {
   detail: PhotographerEventDetail;
   onEdit: () => void;
   onCoupon?: () => void;
   onWithdraw: () => void;
+  withdrawing: boolean;
 }) {
   const status = detail.reviewStatus ?? "approved";
   const current = describePricing({
@@ -467,9 +475,10 @@ function OwnedBand({
           <button
             type="button"
             onClick={onWithdraw}
+            disabled={withdrawing}
             className={cn(BTN_GHOST, BTN_SIZE.sm)}
           >
-            Withdraw request
+            {withdrawing ? "Withdrawing…" : "Withdraw request"}
           </button>
         )}
       </div>
@@ -1200,6 +1209,8 @@ function PhotoLibrary({
             <Skeleton key={i} className="h-full w-full rounded-xl row-span-2" />
           ))}
         </div>
+      ) : photos.length === 0 && (list.error || list.isPaused) ? (
+        <LoadError what={section === "active" ? "photos" : "deleted photos"} paused={list.isPaused} onRetry={list.refetch} />
       ) : photos.length === 0 ? (
         section === "active" ? (
           <NoPhotosYet eventId={event.id} />
@@ -1235,6 +1246,9 @@ function PhotoLibrary({
           onLoadMore={list.fetchNextPage}
           isLoading={list.isFetchingNextPage}
         />
+      )}
+      {photos.length > 0 && !!list.error && (
+        <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more photos. Try again.</p>
       )}
 
       {selecting && (
@@ -1317,7 +1331,7 @@ function PurchasedGallery({ eventId, event, free }: { eventId: string; event: { 
     ) : list.error ? (
       <div role="alert"><p>Couldn&apos;t load purchased photos.</p><button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry</button></div>
     ) : photos.length === 0 ? (
-      <p className="font-sans text-base text-slate">No completed purchases yet.</p>
+      <div><p className="font-sans text-base text-slate">No completed purchases yet.</p><p className="mt-2 font-sans text-sm text-slate">Share the event gallery link so runners can find and buy their photos.</p></div>
     ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6 grid-flow-row-dense [grid-auto-rows:96px] md:[grid-auto-rows:140px] lg:[grid-auto-rows:180px]">
         {list.items.map((item, i) => <PhotoTile key={item.photo.id} photo={item.photo} index={i} purchaseCount={item.purchaseCount} onImageState={(img, failed) => failed ? failedImgs.current.add(img) : failedImgs.current.delete(img)} selecting={false} selected={false} onOpen={() => setSelection({ photoId: item.photo.id })} onToggle={() => { }} />)}

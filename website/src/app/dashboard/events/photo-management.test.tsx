@@ -52,6 +52,7 @@ vi.mock('@/lib/api', async (original) => ({ ApiError: (await original<typeof imp
 vi.mock('@/hooks/use-photographer-data', () => ({
   COVERED_EVENTS_MAX: 200,
   usePhotographerEvents: () => mocks.covered,
+  usePhotographerEventsQuery: () => ({ data: mocks.covered, isError: false, isPaused: false }),
   usePhotographerEventDetail: () => ({ isMissing: false, detail: {
     id: 'event-1', slug: 'test-event', name: 'Review Event', date: '2026-09-07',
     location: 'Cebu', state: 'past', photoCount: 1, salesCount: 0, revenueKept: 0,

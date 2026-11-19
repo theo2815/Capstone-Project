@@ -7,7 +7,7 @@ import { Sparkline } from "@/components/dashboard/sparkline";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  usePhotographerEarnings,
+  usePhotographerEarningsQuery,
   usePhotographerEvents,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
@@ -155,7 +155,17 @@ function ProfileCard() {
 // seed made a BE 404 / slow start render fake ₱90k stats as the photographer's
 // real earnings on the dashboard hero.
 function EarningsCard() {
-  const e = usePhotographerEarnings();
+  const query = usePhotographerEarningsQuery();
+  const e = query.data ?? null;
+  if (!e && (query.isError || query.isPaused)) {
+    // The card is a link; the earnings page itself offers Retry.
+    return (
+      <CardShell href={ROUTES.DASHBOARD_EARNINGS}>
+        <CardLabel>View earnings</CardLabel>
+        <CardCaption>Couldn&apos;t load earnings right now.</CardCaption>
+      </CardShell>
+    );
+  }
   if (!e) {
     return (
       <CardShell href={ROUTES.DASHBOARD_EARNINGS}>

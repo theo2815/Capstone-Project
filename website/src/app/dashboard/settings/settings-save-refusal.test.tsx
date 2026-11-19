@@ -10,6 +10,7 @@ import { usePhotographerSettingsStore } from "@/store/photographer-settings-stor
 import { useToastStore } from "@/store/toast-store";
 import SettingsPage from "./page";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/hooks/use-auth", () => ({ useAuth: () => ({ user: null }) }));
 vi.mock("@/hooks/use-regions", () => ({
   useRegions: () => ({ regions: [], isLoading: false, error: null, retry: vi.fn() }),
@@ -109,4 +110,16 @@ it("a refused cover shows the server message; other changes saved", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.getByLabelText("Display name")).toHaveValue("Saved name");
   expect(usePhotographerSettingsStore.getState().cover).toBeNull();
+});
+
+it("Save refuses fields the page marks invalid and sends nothing", async () => {
+  const put = vi.spyOn(api, "put").mockResolvedValue(undefined);
+  openSettings();
+  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "   " } });
+  fireEvent.change(document.getElementById("handle")!, { target: { value: "a b" } });
+  fireEvent.click(screen.getByRole("button", { name: /Save changes/ }));
+
+  expect(await screen.findByText("Fix the display name, public URL before saving.")).toBeInTheDocument();
+  expect(put).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: /Save changes/ })).toBeEnabled();
 });
