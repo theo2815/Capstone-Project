@@ -1016,11 +1016,23 @@ function PhotoLibrary({
             ? `${n} photo${n > 1 ? "s" : ""} moved to Deleted.`
             : `${n} photo${n > 1 ? "s" : ""} restored.`) +
           (remaining > 0 ? ` ${remaining} unchanged. ${result.conflict ?? "Refresh or retry the remaining photos."}` : ""),
+        // Trash is reversible, so offer the way back here instead of a confirm.
+        action: kind === "trash" && n > 0 ? { label: "Undo", onClick: () => void undoTrash(ids.filter((id) => !result.failed.includes(id))) } : undefined,
       });
     } catch {
       showToast({ kind: "error", message: "Something went wrong. Try again." });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function undoTrash(ids: string[]) {
+    try {
+      const result = await restorePhotographerPhotos(eventId, ids);
+      await invalidate();
+      showToast({ kind: "success", message: `${result.affected} photo${result.affected === 1 ? "" : "s"} restored.` });
+    } catch {
+      showToast({ kind: "error", message: "Couldn't undo. Restore them from the Deleted tab." });
     }
   }
 
@@ -1482,13 +1494,14 @@ function SelectionBar({
                 disabled={busy || count === 0}
                 className={cn(BTN_DANGER, BTN_SIZE.sm)}
               >
-                Delete forever
+                {busy ? "Working…" : "Delete forever"}
               </button>
             </>
           )}
           <button
             type="button"
             onClick={onDone}
+            disabled={busy}
             className={cn(BTN_GHOST, BTN_SIZE.sm, "px-3")}
           >
             Done

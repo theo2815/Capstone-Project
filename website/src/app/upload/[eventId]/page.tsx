@@ -500,6 +500,7 @@ function UploadForm({
     () => entries.filter((e) => e.status === "checking"),
     [entries],
   );
+  const waitingCount = entries.filter((e) => e.status === "retry-wait").length;
   const skipped = useMemo(
     () => entries.filter((e) => e.status === "skipped"),
     [entries],
@@ -573,6 +574,11 @@ function UploadForm({
         const uniq = next.filter((n) => !seen.has(n.id));
         return [...prev, ...uniq];
       });
+      const listed = new Set(entries.map((e) => e.id));
+      const repeats = next.filter((n) => listed.has(n.id)).length;
+      if (repeats > 0) {
+        showToast({ kind: "info", message: `${repeats.toLocaleString()} photo${repeats === 1 ? " is" : "s are"} already in the list.` });
+      }
 
       // The row error has to stay short enough to survive `uppercase truncate`,
       // so the actual iPhone fix goes in a toast. Fired once per batch, not
@@ -592,7 +598,7 @@ function UploadForm({
         });
       }
     },
-    [entries.length, showToast],
+    [entries, showToast],
   );
 
   // Bumped on retry AND after the pre-flight check, so the upload effect
@@ -651,6 +657,9 @@ function UploadForm({
       } catch {
         // Leave byHash empty → every file falls through to "queued" and the
         // server-side unique index remains the source of truth.
+        if (!cancelled() && batch.isCurrent()) {
+          showToast({ kind: "info", message: "Couldn't check for photos already uploaded. Uploading them all; the server skips exact copies." });
+        }
       }
       if (cancelled() || !batch.isCurrent()) return;
 
@@ -996,6 +1005,12 @@ function UploadForm({
           />
         </div>
 
+        {/* Rows say this one by one; on a long list they're below the fold. */}
+        {waitingCount > 0 && (
+          <p role="status" className="mt-6 font-sans text-sm text-ink">
+            You&apos;re offline. {waitingCount.toLocaleString()} photo{waitingCount === 1 ? "" : "s"} will resume uploading when you reconnect.
+          </p>
+        )}
         <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
           <span className={atLimit ? "text-error" : "text-slate-soft"}>
             Queued{" "}
@@ -1016,7 +1031,7 @@ function UploadForm({
           )}
           {errored.length > 0 && (
             <span className="text-error">
-              {errored.length} skipped
+              {errored.length} failed
               <button
                 type="button"
                 onClick={clearErrored}

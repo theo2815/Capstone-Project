@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ApiError } from "@/lib/api";
 import type { PhotographerRelevanceCase } from "@/lib/api-photographer";
@@ -21,7 +22,14 @@ export function RelevanceCase({ caseId }: { caseId: string }) {
   const c = query.data;
   const text = c ? caseText(c) : null;
 
-  if (query.isPending) return <p role="status" className="mt-8 text-slate">{CASE_LABELS.loading}</p>;
+  if (query.isPending) return (
+    <div role="status" className="mt-8 space-y-3">
+      <span className="sr-only">{CASE_LABELS.loading}</span>
+      <Skeleton className="h-7 w-64 max-w-full" />
+      <Skeleton className="h-4 w-full max-w-md" />
+      <Skeleton className="h-4 w-80 max-w-full" />
+    </div>
+  );
   // A failed background refresh keeps showing the last server copy. A case with nothing to tell reads as not found.
   if (!c || !text) return (
     <div role="alert" className="mt-8 space-y-4">

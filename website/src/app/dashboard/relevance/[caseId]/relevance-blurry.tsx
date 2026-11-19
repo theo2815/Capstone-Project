@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ApiError } from "@/lib/api";
 import { BLURRY_LABELS, CASE_LABELS } from "@/lib/photographer-relevance-copy";
@@ -48,13 +49,14 @@ export function RelevanceBlurryReview({ caseId }: { caseId: string }) {
 
   return (
     <div className="space-y-10">
+      {!drawn(blurry) && <FieldError id="relevance-blurry-error" message={error} />}
       {drawn(blurry) && <section aria-label={BLURRY_LABELS.review} className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-display text-xl font-extrabold text-ink">{BLURRY_LABELS.review}</h2>
           <div className="flex items-center gap-3">
             {chosen.length > 0 && <Kicker as="p" tone="soft" tnum>{BLURRY_LABELS.selected(chosen.length)}</Kicker>}
             <button type="button" disabled={busy || chosen.length === 0} onClick={() => void send(true, chosen)} className={cn(BTN_PRIMARY, BTN_SIZE.sm)}>
-              {busy ? BLURRY_LABELS.hiding : BLURRY_LABELS.hide}
+              {busy && change.variables?.hide ? BLURRY_LABELS.hiding : BLURRY_LABELS.hide}
             </button>
           </div>
         </div>
@@ -109,7 +111,12 @@ type PhotoList = ReturnType<typeof usePhotographerRelevancePhotos>;
 const drawn = (list: PhotoList) => list.isLoading || (!!list.error && list.items.length === 0) || list.items.length > 0;
 
 function ListState({ list }: { list: PhotoList }) {
-  if (list.isLoading) return <p role="status" className="font-sans text-sm text-slate">{CASE_LABELS.loading}</p>;
+  if (list.isLoading) return (
+    <div role="status" className={GRID}>
+      <span className="sr-only">{CASE_LABELS.loading}</span>
+      {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="aspect-square w-full rounded-xl" />)}
+    </div>
+  );
   if (list.error && list.items.length === 0) return (
     <div role="alert" className="flex flex-wrap items-center gap-3">
       <p className="font-sans text-sm text-ink">{CASE_LABELS.loadFailed}</p>

@@ -2055,8 +2055,8 @@ function BrandSubsection() {
         </div>
 
         <div>
-          <p className="font-sans text-sm text-slate mb-3">Accent color</p>
-          <div className="flex flex-wrap items-center gap-3">
+          <p id="accent-color-label" className="font-sans text-sm text-slate mb-3">Accent color</p>
+          <div role="group" aria-labelledby="accent-color-label" className="flex flex-wrap items-center gap-3">
             {COLOR_ORDER.map((color) => {
               const isActive = brandColor === color;
               return (
@@ -2114,9 +2114,10 @@ function BrandSubsection() {
             rows={3}
             maxLength={BIO_MAX}
             disabled={!editing}
+            aria-describedby="brand-bio-counter"
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors resize-none disabled:text-ink disabled:cursor-not-allowed"
           />
-          <CharCounter current={bio.length} max={BIO_MAX} />
+          <CharCounter id="brand-bio-counter" current={bio.length} max={BIO_MAX} />
         </div>
       </div>
     </div>
@@ -2350,6 +2351,7 @@ function HandleSlab() {
               autoComplete="off"
               spellCheck={false}
               required
+              maxLength={32}
               disabled={!editing}
               aria-describedby={
                 validation && handle.length > 0

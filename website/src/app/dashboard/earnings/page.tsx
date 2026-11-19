@@ -123,8 +123,14 @@ function LifetimeSlab() {
 function BreakdownSlab() {
   const query = usePhotographerEarningsQuery();
   const e = query.data ?? null;
-  // Same read as Lifetime, which already shows the error and Retry.
-  if (!e && loadFailed(query)) return null;
+  // Same read as Lifetime, which already shows the error and Retry; keep the slab so numbering stays 01-02-03.
+  if (!e && loadFailed(query)) {
+    return (
+      <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
+        <p className="font-sans text-base text-slate">Shows once your earnings load.</p>
+      </Slab>
+    );
+  }
   if (!e) {
     return (
       <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
