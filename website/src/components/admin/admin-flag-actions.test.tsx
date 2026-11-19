@@ -7,7 +7,7 @@ import type { Flag } from "@/lib/admin-flags";
 import { admin } from "@/test/fixtures/admin";
 import { useToastStore } from "@/store/toast-store";
 import { useAuthStore } from "@/store/auth-store";
-import { AdminFlagCard } from "./admin-flag-card";
+import { AdminFlagCard, type FlagCardActions } from "./admin-flag-card";
 import { FlagsQueue } from "./flags-queue";
 
 const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
@@ -15,6 +15,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: navigation.repl
 vi.mock("@/lib/constants", async (original) => ({ ...await original<object>(), ADMIN_FLAGS_ENABLED: true }));
 const flag: Flag = { id: "flag-1", photoId: "photo-1", eventId: "event-1", eventName: "Race", photographerHandle: "photographer", reportedBy: "runner", reason: "low_quality", note: "Blurry", status: "open", reportedAt: "2026-09-10T00:00:00Z", reviewedAt: null, reviewedBy: null, reviewerNote: null, photoSnapshot: { alt: "Runner", kmMark: null, bib: null, thumbnailUrl: null }, targetKind: "photo", targetId: "photo-1", payoutHoldAt: null };
 const relevanceFlag: Flag = { ...flag, id: "flag-2", photoId: null, reason: "batch_relevance_low", note: "event e1: copy 5/8", targetKind: "user", targetId: "user-1" };
+const inertActions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onConfirm: vi.fn(async () => true) };
 let client: QueryClient;
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);
@@ -30,10 +31,10 @@ it.each(["card", "drawer"])("%s retains flag reasons on failure and blocks repea
   const user = userEvent.setup();
   let reject!: (error: Error) => void;
   const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, no) => { reject = no; }));
-  render(<QueryClientProvider client={client}>{surface === "card" ? <><AdminFlagCard flag={flag} /><AdminFlagCard flag={flag} /></> : <FlagsQueue />}</QueryClientProvider>);
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
   if (surface === "drawer") await user.click(await screen.findByRole("button", { description: "flag-1" }));
   const scope = surface === "drawer" ? within(await screen.findByRole("dialog")) : screen;
-  await user.click(scope.getAllByRole("button", { name: "Hide…" })[0]!);
+  await user.click((await scope.findAllByRole("button", { name: "Hide…" }))[0]!);
   const dialog = screen.getByRole("dialog", { name: "Hide flag-1" });
   await user.type(within(dialog).getByRole("textbox"), "Keep this explanation");
   const submit = within(dialog).getByRole("button", { name: "Hide photo" });
@@ -73,8 +74,9 @@ it("a refused hold shows the server's reason and can be retried", async () => {
   const user = userEvent.setup();
   const invalidate = vi.spyOn(client, "invalidateQueries");
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(refusal());
-  render(<QueryClientProvider client={client}><AdminFlagCard flag={relevanceFlag} /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: "Hold payouts" }));
+  vi.mocked(api.get).mockResolvedValue({ items: [relevanceFlag], total: 1 });
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
+  await user.click(await screen.findByRole("button", { name: "Hold payouts" }));
   expect(screen.getByText(/Holds this photographer's payouts until you resolve or dismiss this flag/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm hold" }));
   await waitFor(() => expect(useToastStore.getState().toasts.some((t) => t.kind === "error" && t.message === "This flag is already closed.")).toBe(true));
@@ -93,21 +95,23 @@ it.each([
 ])("%s on a relevance flag confirms first, shows a refusal and then goes through", async (open, confirm, url) => {
   const user = userEvent.setup();
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(refusal()).mockResolvedValue(relevanceFlag);
-  render(<QueryClientProvider client={client}><AdminFlagCard flag={relevanceFlag} /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: open }));
+  vi.mocked(api.get).mockResolvedValue({ items: [relevanceFlag], total: 1 });
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
+  await user.click(await screen.findByRole("button", { name: open }));
   expect(post).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: confirm }));
   await waitFor(() => expect(useToastStore.getState().toasts.some((t) => t.message === "This flag is already closed.")).toBe(true));
   await user.click(screen.getByRole("button", { name: confirm }));
   await waitFor(() => expect(screen.queryByRole("button", { name: confirm })).not.toBeInTheDocument());
   expect(post).toHaveBeenLastCalledWith(url, { resolutionNote: null });
+  expect(useToastStore.getState().toasts.some((t) => t.kind === "success")).toBe(true);
 });
 
 it("buttons inside a clickable card do not open it or swallow other keys", async () => {
   const onOpen = vi.fn();
   const seen = vi.fn((e: KeyboardEvent) => e.key);
   window.addEventListener("keydown", seen);
-  render(<QueryClientProvider client={client}><AdminFlagCard flag={relevanceFlag} onOpen={onOpen} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><AdminFlagCard flag={relevanceFlag} actions={inertActions} onOpen={onOpen} /></QueryClientProvider>);
   const button = screen.getByRole("button", { name: "Hold payouts" });
   for (const key of ["Enter", " "]) fireEvent.keyDown(button, { key });
   await userEvent.click(button);

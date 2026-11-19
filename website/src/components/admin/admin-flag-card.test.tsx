@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import { canConfirmHold, canHide, flagReasonLabel, type Flag } from "@/lib/admin-flags";
-import { AdminFlagCard } from "./admin-flag-card";
+import { AdminFlagCard, type FlagCardActions } from "./admin-flag-card";
+
+// The queue owns the action hook and modals; a lone card gets inert ones.
+const actions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onConfirm: vi.fn(async () => true) };
 
 // System flags (SystemFlagService) target events and photographers, not only photos.
 const base: Flag = {
@@ -18,7 +21,7 @@ const userFlag: Flag = { ...base, reason: "profile_image_flagged", targetKind: "
 
 function renderCard(flag: Flag) {
   const client = new QueryClient();
-  render(<QueryClientProvider client={client}><AdminFlagCard flag={flag} /></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><AdminFlagCard flag={flag} actions={actions} /></QueryClientProvider>);
 }
 afterEach(cleanup);
 
@@ -90,7 +93,7 @@ it("other flags have no Resolve button", () => {
 it("an openable card opens through a button named by its title; inner actions do not open it", async () => {
   const onOpen = vi.fn();
   const photoFlag: Flag = { ...base, reason: "inappropriate", targetKind: "photo", targetId: "photo-9", photoId: "photo-9" };
-  const { container } = render(<QueryClientProvider client={new QueryClient()}><AdminFlagCard flag={photoFlag} onOpen={onOpen} /></QueryClientProvider>);
+  const { container } = render(<QueryClientProvider client={new QueryClient()}><AdminFlagCard flag={photoFlag} actions={actions} onOpen={onOpen} /></QueryClientProvider>);
   expect(container.querySelector('[role="button"]')).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(onOpen).not.toHaveBeenCalled();

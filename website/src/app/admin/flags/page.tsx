@@ -45,14 +45,19 @@ function Header({
   openCount,
   hiddenCount,
 }: {
-  openCount: number;
-  hiddenCount: number;
+  openCount: number | null;
+  hiddenCount: number | null;
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
-        Flags · <span className="tnum">{openCount}</span> open ·{" "}
-        <span className="tnum">{hiddenCount}</span> hidden
+        Flags
+        {openCount !== null && hiddenCount !== null && (
+          <>
+            {" "}· <span className="tnum">{openCount}</span> open ·{" "}
+            <span className="tnum">{hiddenCount}</span> hidden
+          </>
+        )}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Flags.

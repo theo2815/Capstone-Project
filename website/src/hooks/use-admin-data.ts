@@ -89,25 +89,30 @@ export function useAdminKpiTrend(
 
 // ───────────────────────────────────────────── Flags
 
-// Returns the page (items + total) so callers can tell when the 200-row
-// cap truncated the list. Gated on ADMIN_FLAGS_ENABLED here, once, so every
+// The page (items + total), so callers can tell when the 200-row cap
+// truncated the list; the full query lets the queue tell loading and failure
+// from an empty list. Gated on ADMIN_FLAGS_ENABLED here, once, so every
 // consumer can call it unconditionally (rules-of-hooks) without firing a
 // request the backend would 403.
-export function useAdminFlags(
-  args: AdminFlagListArgs = {},
-): PaginatedResponse<Flag> | null {
+export function useAdminFlagsQuery(args: AdminFlagListArgs = {}) {
   const session = usePrivateQuerySession("ADMIN");
-  const query = useQuery<PaginatedResponse<Flag>>({
+  return useQuery<PaginatedResponse<Flag>>({
     queryKey: ["admin", "flags", args, ...session.key],
     queryFn: ({ signal }) => fetchAdminFlags(args, signal),
     staleTime: LIST_STALE_MS,
     enabled: session.enabled && ADMIN_FLAGS_ENABLED,
   });
-  return query.data ?? null;
+}
+
+export function useAdminFlags(
+  args: AdminFlagListArgs = {},
+): PaginatedResponse<Flag> | null {
+  return useAdminFlagsQuery(args).data ?? null;
 }
 
 // Flag actions are server-authoritative: no optimistic override, the call
 // awaits the backend and then refetches every flags list + the KPI counts.
+// The flags queue mounts this once and hands it to its cards (FLG6).
 // Callers catch the rejection and show an error toast — a lost moderation
 // action must never look like a success.
 export function useFlagActions() {

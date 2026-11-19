@@ -5,13 +5,15 @@ import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { AdminFlagCard } from "@/components/admin/admin-flag-card";
+import { AdminFlagCard, FlagStatusPill, type FlagCardActions } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
-import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   useAdminFlags,
+  useAdminFlagsQuery,
   useFlagActions,
   EMPTY_FLAGS,
 } from "@/hooks/use-admin-data";
@@ -24,7 +26,6 @@ import {
 } from "@/hooks/use-admin-keyboard";
 import {
   type Flag,
-  type FlagStatus,
   canDismiss,
   canEscalate,
   canConfirmHold,
@@ -49,33 +50,16 @@ const DONE_LABEL = {
   resolve: "Resolved",
 } as const;
 
-const STATUS_LABEL: Record<FlagStatus, string> = {
-  open: "Open",
-  resolved: "Resolved",
-  hidden: "Hidden",
-  dismissed: "Dismissed",
-  escalated: "Escalated",
-};
+const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm}`;
+const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} px-3`;
+const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;
 
-function statusTone(status: FlagStatus): AdminStatusPillTone {
-  switch (status) {
-    case "open":
-      return "amber";
-    case "resolved":
-      return "fresh";
-    case "hidden":
-      return "ink";
-    case "dismissed":
-      return "slate";
-    case "escalated":
-      return "muted";
-  }
-}
+type FlagModal = { kind: "hide" | "escalate" | null; id: string };
 
 // Flags queue body — extracted from /admin/flags/page.tsx so the
 // universal /admin/inbox can render the same search-filtered four slabs.
-// Search state stays internal to the queue (no need to lift it to the
-// page or URL — query is a transient scan tool, not a deep-link target).
+// The search lives in the URL (?q=) so a missing deep link can hand off
+// to a search for its id (FLG1).
 //
 // Phase 3 adds the focus-mode drawer. Card click → drawer with the photo
 // at full width, the report, reviewer-side metadata, and Hide/Dismiss/
@@ -87,17 +71,22 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
 export function FlagsQueue() {
   // Open flags are fetched on their own so the actionable list is never
   // pushed off the end of the newest-first 200-row page by closed history.
-  const openPage = useAdminFlags({ status: "open" });
-  const allPage = useAdminFlags();
+  const openQuery = useAdminFlagsQuery({ status: "open" });
+  const allQuery = useAdminFlagsQuery();
+  const openPage = openQuery.data ?? null;
+  const allPage = allQuery.data ?? null;
   const { hide, dismiss, escalate, resolve, confirmHold, isPending, pendingAction } = useFlagActions();
   const { showToast } = useToast();
 
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
   const [rowId, setRowId] = useUrlState<string>("row", "");
   const submitting = isPending(rowId);
-  const [drawerHideOpen, setDrawerHideOpen] = useState(false);
-  const [drawerEscalateOpen, setDrawerEscalateOpen] = useState(false);
+  // One hide and one escalate modal for the whole queue (FLG6). The id stays
+  // after close so the title does not blank while the modal animates out.
+  const [modal, setModal] = useState<FlagModal>({ kind: null, id: "" });
+  const closeModal = () => setModal((m) => ({ ...m, kind: null }));
   const [drawerConfirm, setDrawerConfirm] = useState<FlagConfirmKind | null>(null);
+  const [missingId, setMissingId] = useState("");
 
   const effective = useMemo(() => {
     const openItems = openPage?.items ?? EMPTY_FLAGS;
@@ -122,9 +111,20 @@ export function FlagsQueue() {
     return byId.get(rowId) ?? null;
   }, [rowId, byId]);
 
+  // Clear a ?row= only once both lists loaded and it is in neither (FLG1).
+  // The notice is for links that never matched, not a drawer whose flag left.
+  // Not while refetching: a stale cached list may not hold a new flag yet.
+  const listsLoaded =
+    openQuery.isSuccess && allQuery.isSuccess && !openQuery.isFetching && !allQuery.isFetching;
+  const shownRowRef = useRef("");
+  if (openRow) shownRowRef.current = openRow.id;
   useEffect(() => {
-    if (rowId && !openRow) setRowId("");
-  }, [rowId, openRow, setRowId]);
+    if (rowId && !openRow && listsLoaded) {
+      if (shownRowRef.current !== rowId) setMissingId(rowId);
+      shownRowRef.current = "";
+      setRowId("");
+    }
+  }, [rowId, openRow, listsLoaded, setRowId]);
 
   // Reset the dismiss-confirm two-step whenever the open row changes (or
   // closes), so a stale "Confirm dismiss" label never carries over to a
@@ -138,6 +138,7 @@ export function FlagsQueue() {
     if (q.length === 0) return effective;
     return effective.filter((f) => {
       return (
+        f.id.toLowerCase().includes(q) ||
         flagReasonLabel(f.reason).toLowerCase().includes(q) ||
         f.photographerHandle.toLowerCase().includes(q) ||
         f.reportedBy.toLowerCase().includes(q) ||
@@ -175,7 +176,7 @@ export function FlagsQueue() {
     [filtered],
   );
 
-  const drawerEscDisabled = submitting || drawerHideOpen || drawerEscalateOpen;
+  const drawerEscDisabled = submitting || modal.kind !== null;
 
   // Pagination — load-more model. Open keeps full visibility — that's
   // the actionable triage list. Read-only history slabs start at 10 and
@@ -233,6 +234,7 @@ export function FlagsQueue() {
   }, [rowId, setFocusedId]);
 
   function handleOpenRow(id: string) {
+    setMissingId("");
     setFocusedId(id);
     setRowId(id);
   }
@@ -243,17 +245,17 @@ export function FlagsQueue() {
     inputRef: searchInputRef,
   });
 
-  async function runDrawerAction(
+  // One runner for card and drawer actions: success toast, or the server's reason.
+  async function runAction(
     verb: keyof typeof DONE_LABEL,
-    action: (id: string) => Promise<boolean>,
-  ) {
-    if (!openRow) return;
-    const id = openRow.id;
+    id: string,
+    action: () => Promise<boolean>,
+  ): Promise<boolean> {
     try {
-      if (!(await action(id))) return false;
-      showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${id}` });
+      if (!(await action())) return false;
+      showToast({ kind: "success", message: `${DONE_LABEL[verb]} · ${id}` });
       // A hold leaves the flag open: stay on it to hide the batch next.
-      if (verb !== "hold") setRowId("");
+      if (verb !== "hold" && id === rowId) setRowId("");
       return true;
     } catch (error) {
       showToast({
@@ -262,29 +264,37 @@ export function FlagsQueue() {
           serverMessage(error) ??
           `Could not ${verb} ${id} — check the current status before retrying.`,
       });
+      return false;
     }
   }
 
-  async function handleDrawerHideSubmit(reason: string | null) {
-    if (await runDrawerAction("hide", (id) => hide(id, reason))) setDrawerHideOpen(false);
+  function confirmAction(id: string, kind: FlagConfirmKind) {
+    if (kind === "hold") return runAction("hold", id, () => confirmHold(id));
+    if (kind === "resolve") return runAction("resolve", id, () => resolve(id));
+    return runAction("dismiss", id, () => dismiss(id));
   }
 
-  async function handleDrawerDismissConfirm() {
-    if (await runDrawerAction("dismiss", (id) => dismiss(id))) setDrawerConfirm(null);
+  const cardActions: FlagCardActions = {
+    isPending,
+    pendingAction,
+    onHide: (id) => setModal({ kind: "hide", id }),
+    onEscalate: (id) => setModal({ kind: "escalate", id }),
+    onConfirm: confirmAction,
+  };
+
+  async function handleHideSubmit(reason: string | null) {
+    const { id } = modal;
+    if (await runAction("hide", id, () => hide(id, reason))) closeModal();
+  }
+
+  async function handleEscalateSubmit(note: string | null) {
+    const { id } = modal;
+    if (await runAction("escalate", id, () => escalate(id, note))) closeModal();
   }
 
   async function handleDrawerConfirm() {
-    if (drawerConfirm === "hold") {
-      if (await runDrawerAction("hold", (id) => confirmHold(id))) setDrawerConfirm(null);
-    } else if (drawerConfirm === "resolve") {
-      if (await runDrawerAction("resolve", (id) => resolve(id))) setDrawerConfirm(null);
-    } else {
-      await handleDrawerDismissConfirm();
-    }
-  }
-
-  async function handleDrawerEscalateSubmit(note: string | null) {
-    if (await runDrawerAction("escalate", (id) => escalate(id, note))) setDrawerEscalateOpen(false);
+    if (!openRow || !drawerConfirm) return;
+    if (await confirmAction(openRow.id, drawerConfirm)) setDrawerConfirm(null);
   }
 
   // Only register H when the flag can still be hidden (open or escalated)
@@ -294,14 +304,16 @@ export function FlagsQueue() {
       openRow !== null &&
       canHide(openRow) &&
       !submitting &&
-      !drawerHideOpen &&
-      !drawerEscalateOpen,
+      modal.kind === null,
     verbs: openRow
       ? {
-          H: () => setDrawerHideOpen(true),
+          H: () => setModal({ kind: "hide", id: openRow.id }),
         }
       : {},
   });
+
+  const loadFailed = openQuery.isError || allQuery.isError;
+  const ready = openPage !== null && allPage !== null;
 
   return (
     <>
@@ -314,7 +326,7 @@ export function FlagsQueue() {
           ref={searchInputRef}
           type="search"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => { setQuery(e.target.value); setMissingId(""); }}
           placeholder="Search by reason, photographer, reporter, or note  ·  /"
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
@@ -328,8 +340,40 @@ export function FlagsQueue() {
             History shows the newest {truncated.shown} of {truncated.total} flags
           </p>
         )}
+        {missingId && (
+          <div role="status" className="mt-6 space-y-3">
+            <p className="font-sans text-sm text-ink-soft">This flag is not in the open list.</p>
+            <button
+              type="button"
+              onClick={() => { setQuery(missingId); setMissingId(""); }}
+              className={secondaryBtn}
+            >
+              Search all flags for {missingId}
+            </button>
+          </div>
+        )}
+        {loadFailed && (
+          <div role="alert" className="mt-6 space-y-3">
+            <p className="font-sans text-sm text-error">Couldn&apos;t load flags. Please try again.</p>
+            <button
+              type="button"
+              onClick={() => { void openQuery.refetch(); void allQuery.refetch(); }}
+              disabled={openQuery.isFetching || allQuery.isFetching}
+              className={secondaryBtn}
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
 
+      {!ready && !loadFailed && (
+        <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-5" aria-busy="true">
+          {[0, 1].map((i) => <Skeleton key={i} className="h-72 w-full rounded-2xl" />)}
+        </div>
+      )}
+
+      {ready && <>
       <FlagSlab
         id="open"
         number="01"
@@ -339,6 +383,7 @@ export function FlagsQueue() {
         rows={open}
         empty="Queue is clear — no open flags."
         onOpenRow={handleOpenRow}
+        actions={cardActions}
         focusedId={focusedId}
         primaryFirst
       />
@@ -351,6 +396,7 @@ export function FlagsQueue() {
         rows={hiddenVisible}
         empty="No hidden photos."
         onOpenRow={handleOpenRow}
+        actions={cardActions}
         focusedId={focusedId}
         loadMore={{
           shown: hiddenVisible.length,
@@ -369,6 +415,7 @@ export function FlagsQueue() {
         rows={dismissedVisible}
         empty="No dismissed flags."
         onOpenRow={handleOpenRow}
+        actions={cardActions}
         focusedId={focusedId}
         loadMore={{
           shown: dismissedVisible.length,
@@ -387,6 +434,7 @@ export function FlagsQueue() {
         rows={escalatedVisible}
         empty="No escalations."
         onOpenRow={handleOpenRow}
+        actions={cardActions}
         focusedId={focusedId}
         loadMore={{
           shown: escalatedVisible.length,
@@ -396,6 +444,7 @@ export function FlagsQueue() {
             setEscalatedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
         }}
       />
+      </>}
 
       {openRow && (
         <AdminDetailDrawer
@@ -404,61 +453,53 @@ export function FlagsQueue() {
           escDisabled={drawerEscDisabled}
           kicker={`Flag · ${openRow.id}`}
           title={flagReasonLabel(openRow.reason)}
-          rightHeader={
-            <AdminStatusPill
-              label={STATUS_LABEL[openRow.status]}
-              tone={statusTone(openRow.status)}
-            />
-          }
+          rightHeader={<FlagStatusPill status={openRow.status} />}
           subtitle={<FlagSubtitle flag={openRow} />}
           actions={
             <FlagDrawerActions
               submitting={submitting}
               flag={openRow}
               confirm={drawerConfirm}
-              onHide={() => setDrawerHideOpen(true)}
+              onHide={() => cardActions.onHide(openRow.id)}
               onToggleConfirm={(kind) =>
                 setDrawerConfirm((c) => (c === kind ? null : kind))
               }
               onConfirm={handleDrawerConfirm}
-              onEscalate={() => setDrawerEscalateOpen(true)}
+              onEscalate={() => cardActions.onEscalate(openRow.id)}
             />
           }
         >
-          {submitting && <p role="status">{pendingAction(rowId)}</p>}
+          {submitting && <p role="status" className="font-sans text-sm text-slate">{pendingAction(rowId)}</p>}
           <FlagDetailBody flag={openRow} />
         </AdminDetailDrawer>
       )}
 
-      {openRow && (
-        <>
-          <AdminFlagHideModal
-          submitting={submitting}
-            open={drawerHideOpen}
-            onClose={() => setDrawerHideOpen(false)}
-            onSubmit={handleDrawerHideSubmit}
-            flagId={openRow.id}
-          />
-          <AdminEscalateModal
-          submitting={submitting}
-            open={drawerEscalateOpen}
-            onClose={() => setDrawerEscalateOpen(false)}
-            onSubmit={handleDrawerEscalateSubmit}
-            targetLabel={`Escalate ${openRow.id}`}
-            body="Push this flag to the next review tier. The photo stays live in the meantime; higher tier decides hide vs. dismiss."
-          />
-        </>
-      )}
+      <AdminFlagHideModal
+        submitting={isPending(modal.id)}
+        open={modal.kind === "hide"}
+        onClose={closeModal}
+        onSubmit={handleHideSubmit}
+        flagId={modal.id}
+      />
+      <AdminEscalateModal
+        submitting={isPending(modal.id)}
+        open={modal.kind === "escalate"}
+        onClose={closeModal}
+        onSubmit={handleEscalateSubmit}
+        targetLabel={`Escalate ${modal.id}`}
+        body="Push this flag to the next review tier. The photo stays live in the meantime; higher tier decides hide vs. dismiss."
+      />
     </>
   );
 }
 
-export function useOpenFlagsCount(): number {
-  return useAdminFlags({ status: "open" })?.total ?? 0;
+// null until loaded, so a failed read never shows "0 open" (FLG2).
+export function useOpenFlagsCount(): number | null {
+  return useAdminFlags({ status: "open" })?.total ?? null;
 }
 
-export function useHiddenFlagsCount(): number {
-  return useAdminFlags({ status: "hidden" })?.total ?? 0;
+export function useHiddenFlagsCount(): number | null {
+  return useAdminFlags({ status: "hidden" })?.total ?? null;
 }
 
 function FlagSlab({
@@ -470,6 +511,7 @@ function FlagSlab({
   totalCount,
   empty,
   onOpenRow,
+  actions,
   focusedId,
   primaryFirst,
   loadMore,
@@ -482,6 +524,7 @@ function FlagSlab({
   totalCount: number;
   empty: string;
   onOpenRow: (id: string) => void;
+  actions: FlagCardActions;
   focusedId: string | null;
   primaryFirst?: boolean;
   loadMore?: {
@@ -509,6 +552,7 @@ function FlagSlab({
               <li key={row.id}>
                 <AdminFlagCard
                   flag={row}
+                  actions={actions}
                   primary={primaryFirst === true && i === 0}
                   focused={focusedId === row.id}
                   onOpen={() => onOpenRow(row.id)}
@@ -582,14 +626,14 @@ function FlagDrawerActions({
         <button
           type="button" disabled={submitting}
           onClick={() => onToggleConfirm(confirm)}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className={tertiaryBtn}
         >
           Cancel
         </button>
         <button
           type="button" disabled={submitting}
           onClick={onConfirm}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2"
+          className={secondaryBtn}
         >
           {confirm === "hold"
             ? "Confirm hold"
@@ -609,7 +653,7 @@ function FlagDrawerActions({
         <button
           type="button" disabled={submitting}
           onClick={onEscalate}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className={tertiaryBtn}
         >
           Escalate…
         </button>
@@ -618,7 +662,7 @@ function FlagDrawerActions({
         <button
           type="button" disabled={submitting}
           onClick={() => onToggleConfirm("resolve")}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+          className={tertiaryBtn}
         >
           Resolve
         </button>
@@ -626,7 +670,7 @@ function FlagDrawerActions({
       <button
         type="button" disabled={submitting}
         onClick={() => onToggleConfirm("dismiss")}
-        className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2"
+        className={tertiaryBtn}
       >
         {flag.status === "hidden" ? "Restore photo & dismiss" : "Dismiss"}
       </button>
@@ -634,7 +678,7 @@ function FlagDrawerActions({
         <button
           type="button" disabled={submitting}
           onClick={() => onToggleConfirm("hold")}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className={dangerBtn}
         >
           Hold payouts
         </button>
@@ -643,7 +687,7 @@ function FlagDrawerActions({
         <button
           type="button" disabled={submitting}
           onClick={onHide}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2"
+          className={dangerBtn}
         >
           Hide…
         </button>
