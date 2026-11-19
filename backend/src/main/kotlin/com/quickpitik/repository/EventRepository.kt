@@ -99,37 +99,30 @@ interface EventRepository : JpaRepository<Event, UUID> {
 
     fun countByStatusAndDeletedAtIsNull(status: EventStatus): Long
 
-    // Admin event list — includes DRAFT (admin sees the full pipeline). State
-    // filtering (live / upcoming / open / past) needs the date check, so it
-    // happens service-side. status filter is service-side too since the FE
-    // sends derived state, not raw status.
+    // Admin event list — includes DRAFT (admin sees the full pipeline). `state` is
+    // the derived state the FE sends ('' = all), `today` is Manila's date.
     @Query(
-        """
-        SELECT e FROM Event e
-        WHERE e.deletedAt IS NULL
-          AND (:search = '' OR
-               LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
-               LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
-          AND e.date >= :dateFrom
-          AND e.date <= :dateTo
-        ORDER BY e.date DESC, e.id ASC
-        """,
-        countQuery = """
-        SELECT COUNT(e) FROM Event e
-        WHERE e.deletedAt IS NULL
-          AND (:search = '' OR
-               LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
-               LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
-          AND e.date >= :dateFrom
-          AND e.date <= :dateTo
-        """,
+        "SELECT e FROM Event e WHERE $ADMIN_EVENT_FILTER ORDER BY e.date DESC, e.id ASC",
+        countQuery = "SELECT COUNT(e) FROM Event e WHERE $ADMIN_EVENT_FILTER",
     )
     fun pageForAdmin(
         @Param("search") search: String,
         @Param("dateFrom") dateFrom: LocalDate,
         @Param("dateTo") dateTo: LocalDate,
+        @Param("state") state: String,
+        @Param("today") today: LocalDate,
         pageable: Pageable,
     ): Page<Event>
+
+    // The admin events tab counts (AX-9): the list's own filter, so each equals that tab's total.
+    @Query("SELECT COUNT(e) FROM Event e WHERE $ADMIN_EVENT_FILTER")
+    fun countForAdmin(
+        @Param("search") search: String,
+        @Param("dateFrom") dateFrom: LocalDate,
+        @Param("dateTo") dateTo: LocalDate,
+        @Param("state") state: String,
+        @Param("today") today: LocalDate,
+    ): Long
 
     // Atomic counter bump — concurrent uploads must NOT race on read-modify-write
     // of events.photo_count. The hero number on /events/[slug] under-counts when
@@ -218,6 +211,24 @@ interface EventRepository : JpaRepository<Event, UUID> {
 
 // Not 78202: AdminTransitionConcurrencyIntegrationTest uses that key.
 const val RACE_CREATION_LOCK_KEY = 78301L
+
+// pageForAdmin and countForAdmin share this filter. The state branches mirror
+// EventDtoMapper.deriveAdminEventState: change both together.
+private const val ADMIN_EVENT_FILTER = """
+    e.deletedAt IS NULL
+    AND (:search = '' OR
+         LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
+         LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
+    AND e.date >= :dateFrom
+    AND e.date <= :dateTo
+    AND (:state = ''
+      OR (:state = 'upcoming' AND ((e.status = com.quickpitik.entity.EventStatus.ACTIVE AND e.date > :today)
+                                   OR e.status = com.quickpitik.entity.EventStatus.DRAFT))
+      OR (:state = 'live' AND e.status = com.quickpitik.entity.EventStatus.ACTIVE AND e.date = :today)
+      OR (:state = 'open' AND ((e.status = com.quickpitik.entity.EventStatus.ACTIVE AND e.date < :today)
+                               OR e.status = com.quickpitik.entity.EventStatus.COMPLETED))
+      OR (:state = 'past' AND e.status = com.quickpitik.entity.EventStatus.ARCHIVED))
+"""
 
 interface AliasKeyRow {
     fun getEventId(): UUID

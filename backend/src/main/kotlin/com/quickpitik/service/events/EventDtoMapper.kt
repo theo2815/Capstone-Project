@@ -160,6 +160,7 @@ class EventDtoMapper(
         // boundary lives on the FE today; backend only differentiates
         // upcoming / live / open via the date and surfaces archived via
         // EventStatus.ARCHIVED.
+        // EventRepository's ADMIN_EVENT_FILTER repeats these rules in SQL: change both together.
         fun deriveAdminEventState(event: Event, today: LocalDate = LocalDate.now(PH_ZONE)): String =
             when (event.status) {
                 EventStatus.ACTIVE -> when {

@@ -10,6 +10,11 @@ import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.util.UUID
 
+// GET /admin/events/counts (AX-9): `{ counts: { upcoming, live, open, past } }`.
+data class AdminEventCountsDto(val counts: AdminEventStateCounts)
+
+data class AdminEventStateCounts(val upcoming: Long, val live: Long, val open: Long, val past: Long)
+
 // Mirrors website/src/app/events/events-browser.tsx ListEvent =
 // Event & { state, city }. Admin uses the same shape so the /admin/events
 // surface can drop into the existing event-tile renderer.

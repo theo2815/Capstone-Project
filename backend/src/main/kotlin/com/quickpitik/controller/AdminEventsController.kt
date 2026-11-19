@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.RequestHeader
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.ApproveEventRequest
+import com.quickpitik.dto.admin.AdminEventCountsDto
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminListEventDto
 import com.quickpitik.dto.admin.AdminReindexResponseDto
@@ -67,15 +68,16 @@ class AdminEventsController(
         @RequestParam(required = false) q: String?,
         @RequestParam(required = false) dateFrom: String?,
         @RequestParam(required = false) dateTo: String?,
-    ): PaginatedResponse<AdminListEventDto> {
-        // q + dateFrom/dateTo are accepted for forwards compatibility with
-        // the FE param shape but we filter state in-memory; the heavier
-        // server-side filters land when the admin volume justifies it.
-        @Suppress("UNUSED_VARIABLE") val _q = q
-        @Suppress("UNUSED_VARIABLE") val _dateFrom = dateFrom
-        @Suppress("UNUSED_VARIABLE") val _dateTo = dateTo
-        return adminEventService.list(state, review, PaginationParams.of(offset, limit))
-    }
+    ): PaginatedResponse<AdminListEventDto> =
+        adminEventService.list(state, review, PaginationParams.of(offset, limit), q, dateFrom, dateTo)
+
+    // Tab counts for the same q and dates (AX-9).
+    @GetMapping("/counts")
+    fun counts(
+        @RequestParam(required = false) q: String?,
+        @RequestParam(required = false) dateFrom: String?,
+        @RequestParam(required = false) dateTo: String?,
+    ): AdminEventCountsDto = adminEventService.counts(q, dateFrom, dateTo)
 
     // AA-R7: races that look like the one an admin is about to create (strong first). Read-only.
     @GetMapping("/duplicate-candidates")
