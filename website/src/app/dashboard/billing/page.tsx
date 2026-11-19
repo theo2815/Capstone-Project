@@ -13,11 +13,12 @@ import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, loadFailed } from "@/components/ui/load-error";
 import { PhotographerPurchasePreview, type PurchaseSelection } from "@/components/dashboard/photographer-purchase-preview";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import {
   usePhotographerPayouts,
-  usePhotographerPayoutBalance,
+  usePhotographerPayoutBalanceQuery,
   usePhotographerTransactions,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
@@ -101,7 +102,8 @@ function PayoutsSlab() {
     null,
   );
   const livePayouts = usePhotographerPayouts();
-  const balance = usePhotographerPayoutBalance();
+  const balanceQuery = usePhotographerPayoutBalanceQuery();
+  const balance = balanceQuery.data ?? null;
   const payouts = livePayouts.items;
   const isLoading = livePayouts.isLoading || balance === null;
   const { user } = useAuth();
@@ -130,15 +132,23 @@ function PayoutsSlab() {
 
   if (isLoading && livePayouts.isPaused) {
     return (
-      <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">
+      <Slab id="payouts" number="01" title="Payouts" caption="Request when ready">
         <div role="alert" aria-label="Payouts" className="font-sans text-base text-slate"><p>You&apos;re offline. Reconnect to load payouts, or retry once connected.</p><button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm} mt-4`} onClick={livePayouts.refetch}>Retry payouts</button></div>
+      </Slab>
+    );
+  }
+
+  if (balance === null && loadFailed(balanceQuery)) {
+    return (
+      <Slab id="payouts" number="01" title="Payouts" caption="Request when ready">
+        <LoadError what="your balance" paused={balanceQuery.isPaused} onRetry={() => void balanceQuery.refetch()} />
       </Slab>
     );
   }
 
   if (isLoading) {
     return (
-      <Slab id="payouts" number="01" title="Payouts" caption="Weekly · GCash">
+      <Slab id="payouts" number="01" title="Payouts" caption="Request when ready">
         <div>
           <Skeleton className="h-3 w-28" />
           <Skeleton className="h-12 md:h-16 w-72 md:w-96 mt-3" />
@@ -173,14 +183,20 @@ function PayoutsSlab() {
         onWithdraw={() => setWithdrawOpen(true)}
       />
 
-      {payouts.length > 0 && (
+      {payouts.length === 0 && (livePayouts.error || livePayouts.isPaused) ? (
+        <LoadError what="recent payouts" paused={livePayouts.isPaused} onRetry={livePayouts.refetch} className="mt-12 md:mt-16" />
+      ) : payouts.length === 0 ? (
+        <p className="mt-12 md:mt-16 font-sans text-base text-slate">
+          No payouts yet. Requested payouts show up here.
+        </p>
+      ) : (
         <div className="mt-12 md:mt-16">
           <div className="flex items-baseline justify-between gap-6 mb-5">
             <Kicker as="p" tone="soft">
               Recent payouts
             </Kicker>
             <Kicker as="p" tone="soft" tnum>
-              {livePayouts.total} payouts
+              {livePayouts.total} {livePayouts.total === 1 ? "payout" : "payouts"}
             </Kicker>
           </div>
           <ul className="border-y border-line divide-y divide-line">
@@ -202,6 +218,7 @@ function PayoutsSlab() {
             onLoadMore={livePayouts.fetchNextPage}
             isLoading={livePayouts.isFetchingNextPage}
           />
+          {!!livePayouts.error && <p role="alert" className="mt-4 font-sans text-sm text-slate">Couldn&apos;t load more payouts. Try again.</p>}
         </div>
       )}
 

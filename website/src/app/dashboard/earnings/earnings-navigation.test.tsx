@@ -35,7 +35,8 @@ it.each([true, false])("event earnings offline initial=%s recovers and retains r
   const rows = [earning(eventId, 100), earning("free-race", 0)];
   const get = setup(rows, 20, (offset) => offset === 0 ? [rows[0]] : [rows[1]]);
   if (initialOffline) {
-    expect(await screen.findByText(/offline.*reconnect/i)).toBeVisible();
+    // Lifetime and Per-event each say they're offline.
+    expect((await screen.findAllByText(/offline.*reconnect/i))[0]).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry event earnings" })).toBeEnabled();
     expect(screen.queryByText("No event earnings yet.")).not.toBeInTheDocument();
     act(() => onlineManager.setOnline(true));

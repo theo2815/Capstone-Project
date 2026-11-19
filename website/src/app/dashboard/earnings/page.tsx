@@ -7,8 +7,9 @@ import { Sparkline } from "@/components/dashboard/sparkline";
 import { PlatformCutModal } from "@/components/dashboard/platform-cut-modal";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, loadFailed } from "@/components/ui/load-error";
 import {
-  usePhotographerEarnings,
+  usePhotographerEarningsQuery,
   usePhotographerPerEventEarnings,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
@@ -32,7 +33,8 @@ function LifetimeSlab() {
   // GET /me/photographer/earnings — null while in flight. No mock fallback:
   // the previous `?? PHOTOGRAPHER_EARNINGS` made a BE 404 / slow start render
   // seeded fake numbers as user data. Skeleton on null is the honest signal.
-  const e = usePhotographerEarnings();
+  const query = usePhotographerEarningsQuery();
+  const e = query.data ?? null;
   const [cutModalOpen, setCutModalOpen] = useState(false);
 
   if (!e) {
@@ -43,6 +45,9 @@ function LifetimeSlab() {
         title="Lifetime"
         caption="After platform cut"
       >
+        {loadFailed(query) ? (
+          <LoadError what="your earnings" paused={query.isPaused} onRetry={() => void query.refetch()} />
+        ) : <>
         <div>
           <Skeleton className="h-3 w-32" />
           <Skeleton className="h-12 md:h-16 w-72 md:w-96 mt-3" />
@@ -53,6 +58,7 @@ function LifetimeSlab() {
           <Skeleton className="h-3 w-56 mt-2" />
           <Skeleton className="h-16 md:h-20 w-full mt-4" />
         </div>
+        </>}
       </Slab>
     );
   }
@@ -93,7 +99,9 @@ function LifetimeSlab() {
           12-week trend
         </p>
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1.5">
-          Hover or tap a bar for week details
+          {e.weeklySeries.some((p) => p.amount > 0)
+            ? "Hover or tap a bar for week details"
+            : "Your first sale will show up here"}
         </p>
         <div className="mt-4">
           <Sparkline
@@ -113,7 +121,16 @@ function LifetimeSlab() {
 }
 
 function BreakdownSlab() {
-  const e = usePhotographerEarnings();
+  const query = usePhotographerEarningsQuery();
+  const e = query.data ?? null;
+  // Same read as Lifetime, which already shows the error and Retry; keep the slab so numbering stays 01-02-03.
+  if (!e && loadFailed(query)) {
+    return (
+      <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
+        <p className="font-sans text-base text-slate">Shows once your earnings load.</p>
+      </Slab>
+    );
+  }
   if (!e) {
     return (
       <Slab id="breakdown" number="02" title="Breakdown" caption="Current period">
@@ -228,14 +245,16 @@ function PerEventSlab() {
           <button type="button" onClick={livePerEvent.refetch} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>Retry event earnings</button>
         </div>
       ) : livePerEvent.error ? (
-        <div role="alert" className="font-sans text-base text-slate">
-          <p>Couldn&apos;t load event earnings.</p>
-          <button type="button" onClick={livePerEvent.refetch} className="mt-4 min-h-[44px] underline">Retry</button>
-        </div>
+        <LoadError what="event earnings" onRetry={livePerEvent.refetch} />
       ) : events.length === 0 ? (
-        <p className="font-sans text-base text-slate max-w-md">
-          No event earnings yet.
-        </p>
+        <div>
+          <p className="font-sans text-base text-slate max-w-md">
+            No event earnings yet.
+          </p>
+          <Link href={ROUTES.DASHBOARD_UPLOAD} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-4")}>
+            Upload photos
+          </Link>
+        </div>
       ) : (
         <>
           <ul className="border-y border-line divide-y divide-line">

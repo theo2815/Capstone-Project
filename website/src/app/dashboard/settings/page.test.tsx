@@ -15,6 +15,7 @@ import { putHandle, putWatermarkSettings, postPayoutAccount, patchPayoutAccount,
 import type { PHRegion } from "@/lib/ph-regions";
 
 const mocks = vi.hoisted(() => ({ toast: vi.fn(), confirm: vi.fn(), regions: [] as PHRegion[], loading: false, error: null as Error | null, retry: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: mocks.toast }) }));
 vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: mocks.confirm }) }));
 vi.mock("@/hooks/use-auth", () => ({ useAuth: () => ({ user: null }) }));

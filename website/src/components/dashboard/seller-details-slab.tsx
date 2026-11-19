@@ -330,7 +330,12 @@ function SellerDetailsForm({
     if (busy) return;
     const found = validate(withLive);
     setErrors(found);
-    if (Object.keys(found).length > 0) return;
+    const first = Object.keys(found)[0];
+    if (first) {
+      // Errors only show after submit; take the user to the first one (keys follow form order).
+      document.getElementById(`seller-${first}`)?.focus();
+      return;
+    }
     const isCurrent = captureAuthSession();
     setSending(withLive ? "live" : "admin");
     try {

@@ -11,9 +11,11 @@ import {
 } from "@/components/dashboard/event-filter-bar";
 import { EventTile } from "@/components/events/event-tile";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { LoadError, loadFailed } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
-import { usePhotographerEvents } from "@/hooks/use-photographer-data";
-import { usePublicEvents } from "@/hooks/use-public-events";
+import { usePhotographerEventsQuery } from "@/hooks/use-photographer-data";
+import { usePublicEventsQuery } from "@/hooks/use-public-events";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import Link from "next/link";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -48,12 +50,14 @@ export default function UploadPickerPage() {
   // /dashboard/* page without each page re-mounting them.
   const gate = useCanUpload();
   const canUpload = gate.kind === "ok";
-  const liveEvents = usePublicEvents();
+  const catalogQuery = usePublicEventsQuery();
+  const liveEvents = catalogQuery.data ?? null;
   const catalog = liveEvents ?? EMPTY_SEED;
   // Photographer-owned events (V46) that are approved — the owner uploads
   // on any date, so they sit above the date-gated public sections. Unlisted
   // ones never reach the public catalog; this is their only way in.
-  const mine = usePhotographerEvents();
+  const mineQuery = usePhotographerEventsQuery();
+  const mine = mineQuery.data ?? null;
   const owned = useMemo(
     () => (mine ?? []).filter(isOwnedEventLive).map(summaryToListEvent),
     [mine],
@@ -87,14 +91,28 @@ export default function UploadPickerPage() {
     setQuery("");
   };
 
+  if (liveEvents === null) {
+    return loadFailed(catalogQuery) ? (
+      <LoadError what="events" paused={catalogQuery.isPaused} onRetry={() => { void catalogQuery.refetch(); void mineQuery.refetch(); }} className="pt-10 md:pt-20" />
+    ) : <PickerSkeleton />;
+  }
+  // Hold until "My events" lands too, so it doesn't pop in above Race events
+  // and renumber it.
+  if (mineQuery.isLoading) return <PickerSkeleton />;
+  const mineFailed = loadFailed(mineQuery);
+
   // No events at all — skip the filter bar (filtering nothing yields nothing)
   // and show the wider PickerEmpty.
-  if (catalog.length === 0 && owned.length === 0) {
+  if (catalog.length === 0 && owned.length === 0 && !mineFailed) {
     return <PickerEmpty />;
   }
 
   return (
     <>
+      {/* Without this, a failed owner read hid "My events" and read as "you have none". */}
+      {mineFailed && (
+        <LoadError what="your own events" paused={mineQuery.isPaused} onRetry={() => void mineQuery.refetch()} className="pt-10 md:pt-20" />
+      )}
       {owned.length > 0 && (
         <UploadSection
           id="mine"
@@ -207,5 +225,13 @@ function PickerEmpty() {
         + Create an event
       </Link>
     </div>
+  );
+}
+
+function PickerSkeleton() {
+  return (
+    <section aria-busy="true" className="pt-10 md:pt-20 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+      {[0, 1, 2].map((i) => <Skeleton key={i} className="h-64 w-full rounded-2xl" />)}
+    </section>
   );
 }

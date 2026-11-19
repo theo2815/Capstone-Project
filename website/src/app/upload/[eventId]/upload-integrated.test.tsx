@@ -3,19 +3,21 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import FocusedUploadPage from "./page";
 import { useAuthStore } from "@/store/auth-store";
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ eventId: "event-1" }), notFound: () => { throw new Error("not found"); }, unstable_rethrow: () => undefined }));
+vi.mock("next/navigation", () => ({ useParams: () => ({ eventId: "event-1" }), useRouter: () => ({ push: vi.fn() }), notFound: () => { throw new Error("not found"); }, unstable_rethrow: () => undefined }));
 vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
 vi.mock("@/components/dashboard/verification-banner", () => ({ VerificationBanner: () => null }));
 vi.mock("@/hooks/use-can-upload", () => ({ useCanUpload: () => ({ kind: "ok" }) }));
 vi.mock("@/hooks/use-seller-details", () => ({ useSellerDetails: () => ({ query: { data: undefined } }) }));
 vi.mock("@/lib/photographer-verification-sync", () => ({ usePhotographerVerificationSync: () => undefined }));
+const confirmMock = vi.hoisted(() => vi.fn(async () => true));
+vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: confirmMock }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 // Dated today: an owner may upload for one month after the event date, so a
 // fixed date closed the window (and failed every test here) after 2026-10-24.
-vi.mock("@/hooks/use-public-events", () => ({ usePublicEvents: () => [{
+vi.mock("@/hooks/use-public-events", () => ({ usePublicEventsQuery: () => ({ isError: false, isPaused: false, data: [{
   id: "event-1", slug: "race", name: "Race", date: new Date().toISOString().slice(0, 10), location: "Cebu",
   photoCount: 0, participantCount: 0, status: "ACTIVE", state: "live", city: "Cebu",
-}] }));
+}] }) }));
 vi.mock("@/hooks/use-photographer-data", () => ({ usePhotographerEventDetail: () => ({ detail: { ownedByMe: true }, isMissing: false }) }));
 vi.mock("@/lib/image-utils", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/image-utils")>()), isHeicFile: async () => false }));
 
@@ -113,7 +115,9 @@ it("aborts real transfers on clear and unmount", async () => {
   select([new File(["a"], "clear.jpg", { type: "image/jpeg" })]);
   await waitFor(() => expect(puts).toHaveLength(1));
   fireEvent.click(screen.getByRole("button", { name: /clear all/i }));
-  expect(puts[0].aborted).toBe(true);
+  // Clearing in-flight uploads asks first.
+  await waitFor(() => expect(puts[0].aborted).toBe(true));
+  expect(confirmMock).toHaveBeenCalled();
   select([new File(["b"], "unmount.jpg", { type: "image/jpeg" })]);
   await waitFor(() => expect(puts).toHaveLength(2));
   view.unmount();

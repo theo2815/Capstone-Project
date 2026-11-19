@@ -20,9 +20,12 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import { usePhotographerEventDetail } from "@/hooks/use-photographer-data";
-import { usePublicEvents } from "@/hooks/use-public-events";
+import { usePublicEventsQuery } from "@/hooks/use-public-events";
+import { LoadError, loadFailed } from "@/components/ui/load-error";
 import { useSellerDetails } from "@/hooks/use-seller-details";
 import { useToast } from "@/hooks/use-toast";
+import { useConfirmation } from "@/hooks/use-confirmation";
+import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import { reviewStateOf } from "@/lib/api-seller-details";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
 import { ApiError } from "@/lib/api";
@@ -122,7 +125,10 @@ export default function FocusedUploadPage() {
   // page so it can't SSR; we read the public events list through React Query
   // and merge admin overrides on top. While the fetch is in flight, render
   // a skeleton — 404 only fires once we know the event truly isn't there.
-  const liveEvents = usePublicEvents();
+  const catalogQuery = usePublicEventsQuery();
+  const liveEvents = catalogQuery.data ?? null;
+  // A failed catalog still lets the by-id fallback below resolve the event.
+  const catalogFailed = loadFailed(catalogQuery);
   const catalog = liveEvents ?? EMPTY_SEED;
   const catalogEvent = useMemo(
     () => (eventId ? catalog.find((e) => e.id === eventId) : undefined),
@@ -138,8 +144,8 @@ export default function FocusedUploadPage() {
   // the catalog too, and only the detail says it is ours — which is what
   // lifts the race-day gate below. A 404 here is only fatal on a catalog
   // miss; for a catalog hit it just means "not covered yet".
-  const needFallback = liveEvents !== null && !catalogEvent && !!eventId;
-  const { detail: fallbackDetail, isMissing } = usePhotographerEventDetail(
+  const needFallback = (liveEvents !== null || catalogFailed) && !catalogEvent && !!eventId;
+  const { detail: fallbackDetail, isMissing, error: detailError, isPaused: detailPaused, refetch: refetchDetail } = usePhotographerEventDetail(
     eventId ?? null,
   );
   const ownedByMe = fallbackDetail?.ownedByMe === true;
@@ -164,7 +170,7 @@ export default function FocusedUploadPage() {
         }
       : undefined);
 
-  if (liveEvents === null) {
+  if (liveEvents === null && !catalogFailed) {
     return <FocusedUploadSkeleton />;
   }
 
@@ -172,7 +178,21 @@ export default function FocusedUploadPage() {
     // Fallback still in flight — keep the skeleton up; a 404 verdict is the
     // only thing that should read as "this event doesn't exist for you."
     if (needFallback && !isMissing) {
-      return <FocusedUploadSkeleton />;
+      if (!(detailError || detailPaused)) return <FocusedUploadSkeleton />;
+      return (
+        <main className="bg-bone text-ink min-h-screen flex flex-col">
+          <SiteHeader />
+          <div className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 pt-8 md:pt-12 pb-16 md:pb-24">
+            <BackChip />
+            <LoadError
+              what="this event"
+              paused={detailPaused}
+              onRetry={() => { void catalogQuery.refetch(); refetchDetail(); }}
+              className="mt-8"
+            />
+          </div>
+        </main>
+      );
     }
     notFound();
   }
@@ -446,6 +466,7 @@ function UploadForm({
   ownedByMe: boolean;
 }) {
   const { showToast } = useToast();
+  const { confirm } = useConfirmation();
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [gateError, setGateError] = useState<{ message: string; code?: string } | null>(null);
   const sellerDetails = useSellerDetails().query.data;
@@ -479,6 +500,7 @@ function UploadForm({
     () => entries.filter((e) => e.status === "checking"),
     [entries],
   );
+  const waitingCount = entries.filter((e) => e.status === "retry-wait").length;
   const skipped = useMemo(
     () => entries.filter((e) => e.status === "skipped"),
     [entries],
@@ -552,6 +574,11 @@ function UploadForm({
         const uniq = next.filter((n) => !seen.has(n.id));
         return [...prev, ...uniq];
       });
+      const listed = new Set(entries.map((e) => e.id));
+      const repeats = next.filter((n) => listed.has(n.id)).length;
+      if (repeats > 0) {
+        showToast({ kind: "info", message: `${repeats.toLocaleString()} photo${repeats === 1 ? " is" : "s are"} already in the list.` });
+      }
 
       // The row error has to stay short enough to survive `uppercase truncate`,
       // so the actual iPhone fix goes in a toast. Fired once per batch, not
@@ -571,7 +598,7 @@ function UploadForm({
         });
       }
     },
-    [entries.length, showToast],
+    [entries, showToast],
   );
 
   // Bumped on retry AND after the pre-flight check, so the upload effect
@@ -630,6 +657,9 @@ function UploadForm({
       } catch {
         // Leave byHash empty → every file falls through to "queued" and the
         // server-side unique index remains the source of truth.
+        if (!cancelled() && batch.isCurrent()) {
+          showToast({ kind: "info", message: "Couldn't check for photos already uploaded. Uploading them all; the server skips exact copies." });
+        }
       }
       if (cancelled() || !batch.isCurrent()) return;
 
@@ -812,12 +842,12 @@ function UploadForm({
   // files still being hashed never get sent — both are gone with no record.
   // Browsers render their own confirmation copy; a custom string is ignored.
   const unsavedCount = inFlight.length + checking.length;
-  useEffect(() => {
-    if (unsavedCount === 0) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [unsavedCount]);
+  useLeaveGuard(unsavedCount > 0, {
+    title: "Leave while photos are uploading?",
+    message: `${unsavedCount} photo${unsavedCount === 1 ? " is" : "s are"} still uploading. Leaving this page cancels ${unsavedCount === 1 ? "it" : "them"}. Photos already uploaded are kept.`,
+    confirmLabel: "Leave and cancel",
+    cancelLabel: "Stay",
+  });
 
   function handleSelect(e: ChangeEvent<HTMLInputElement>) {
     if (e.target.files) {
@@ -866,7 +896,14 @@ function UploadForm({
     setEntries((prev) => prev.filter((p) => p.status !== "error"));
   }
 
-  function clearAll() {
+  async function clearAll() {
+    if (unsavedCount > 0 && !(await confirm({
+      title: "Clear all photos?",
+      message: `This cancels ${unsavedCount} upload${unsavedCount === 1 ? "" : "s"} still in progress and empties the list. Photos already uploaded are kept.`,
+      confirmLabel: "Cancel uploads",
+      cancelLabel: "Keep uploading",
+      danger: true,
+    }))) return;
     paused.current = false;
     setGateError(null);
     batch.preflight.forEach((controller) => controller.abort());
@@ -968,6 +1005,12 @@ function UploadForm({
           />
         </div>
 
+        {/* Rows say this one by one; on a long list they're below the fold. */}
+        {waitingCount > 0 && (
+          <p role="status" className="mt-6 font-sans text-sm text-ink">
+            You&apos;re offline. {waitingCount.toLocaleString()} photo{waitingCount === 1 ? "" : "s"} will resume uploading when you reconnect.
+          </p>
+        )}
         <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] tnum">
           <span className={atLimit ? "text-error" : "text-slate-soft"}>
             Queued{" "}
@@ -988,7 +1031,7 @@ function UploadForm({
           )}
           {errored.length > 0 && (
             <span className="text-error">
-              {errored.length} skipped
+              {errored.length} failed
               <button
                 type="button"
                 onClick={clearErrored}
@@ -1394,7 +1437,7 @@ function validate(file: File): string | undefined {
     return "JPEG or PNG only.";
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    return "Larger than 8 MB.";
+    return `Larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.`;
   }
   return undefined;
 }

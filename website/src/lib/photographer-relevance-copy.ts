@@ -122,7 +122,8 @@ export const APPEAL_FORM = {
   tooLong: "Your reason is too long. Please keep it to 1,000 characters.", // W1 (RVF-18), approved 2026-11-17
   counter: (typed: number) => `${typed.toLocaleString("en-US")}/1,000`,
   send: "Send appeal",
-  cancel: "Cancel",
+  // It only empties the box; "Cancel" read as leaving the appeal.
+  cancel: "Clear",
   ended: "The time to appeal this decision has ended.",
 } as const;
 export const APPEAL_MAX = 1000;

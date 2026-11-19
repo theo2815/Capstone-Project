@@ -34,7 +34,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
-import { uploadAvatar } from "@/lib/api-avatar";
+import { deleteAvatar, uploadAvatar } from "@/lib/api-avatar";
 import { putMetadataSettings, type MetadataSettingsDto } from "@/lib/api-photographer";
 import {
   deletePayoutAccount,
@@ -75,6 +75,7 @@ import {
   usePhotographerSettingsQueries,
 } from "@/hooks/use-photographer-settings";
 import { formatPayoutNumber } from "@/lib/payout-format";
+import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import { validateHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import {
@@ -144,6 +145,8 @@ const COVER_MIN_ASPECT = 1.4;
 // (avatar lives there, shared with the runner account flow).
 
 type PendingFileSlot = "avatar" | "cover" | "watermark";
+// "remove" stages deleting the saved image (only the avatar has a delete endpoint).
+type PendingFile = File | "remove" | null;
 
 interface EditModeSnapshot {
   cover: ReturnType<typeof usePhotographerSettingsStore.getState>["cover"];
@@ -166,7 +169,7 @@ interface EditModeContextValue {
   beginEdit: () => void;
   saveEdit: () => Promise<void>;
   cancelEdit: () => void;
-  setPendingFile: (slot: PendingFileSlot, file: File | null) => void;
+  setPendingFile: (slot: PendingFileSlot, file: PendingFile) => void;
   metadataPublicByDefault: boolean;
   setMetadataPublicByDefault: (value: boolean) => void;
 }
@@ -238,6 +241,12 @@ function restoreSnapshot(snap: EditModeSnapshot): void {
 
 function EditModeProvider({ children }: { children: ReactNode }) {
   const [editing, setEditing] = useState(false);
+  useLeaveGuard(editing, {
+    title: "Leave without saving?",
+    message: "Your settings edits haven't been saved. Leaving this page discards them.",
+    confirmLabel: "Discard and leave",
+    cancelLabel: "Keep editing",
+  });
   const [saving, setSaving] = useState(false);
   const [metadataDraft, setMetadataDraft] = useState(false);
   const metadataSnapshotRef = useRef<boolean | null>(null);
@@ -245,7 +254,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   const confirmedRef = useRef(false);
   const editSessionRef = useRef<(() => boolean) | null>(null);
   const snapshotRef = useRef<EditModeSnapshot | null>(null);
-  const pendingFilesRef = useRef<Record<PendingFileSlot, File | null>>({
+  const pendingFilesRef = useRef<Record<PendingFileSlot, PendingFile>>({
     avatar: null,
     cover: null,
     watermark: null,
@@ -316,7 +325,7 @@ function EditModeProvider({ children }: { children: ReactNode }) {
   }, [reconcileDraft, showToast]);
 
   const setPendingFile = useCallback(
-    (slot: PendingFileSlot, file: File | null) => {
+    (slot: PendingFileSlot, file: PendingFile) => {
       pendingFilesRef.current = { ...pendingFilesRef.current, [slot]: file };
     },
     [],
@@ -336,6 +345,25 @@ function EditModeProvider({ children }: { children: ReactNode }) {
     const pending = pendingFilesRef.current;
     if (settings.payouts.some((p) => !p.qr)) {
       showToast({ kind: "error", message: "Upload a QR code for each payout account before saving." });
+      setSaving(false);
+      return;
+    }
+
+    // The slabs show these errors inline; Save must not send what they reject.
+    const invalid: string[] = [];
+    const nameChanged = snap.brandName !== settings.brandName;
+    if (nameChanged && (settings.brandName.trim().length === 0 || /[\r\n]/.test(settings.brandName))) invalid.push("display name");
+    if (snap.handle !== settings.handle && validateHandle(settings.handle.trim()) !== null) invalid.push("public URL");
+    if (
+      JSON.stringify(snap.region) !== JSON.stringify(settings.region) &&
+      settings.region && (!settings.region.regionCode || !settings.region.provinceCode)
+    ) invalid.push("region and province");
+    const socialKeys = settings.socials.map((l) => normalizeSocialUrl(l.url)).filter(Boolean);
+    const duplicateUrls = new Set(socialKeys.filter((k, i) => socialKeys.indexOf(k) !== i));
+    // An emptied row counts as removed (see the socials diff below), so only non-empty rows are checked.
+    if (settings.socials.some((l) => l.url.trim() && validateSocialUrl(l.platform, l.url, { duplicateUrls }) !== null)) invalid.push("social links");
+    if (invalid.length > 0) {
+      showToast({ kind: "error", message: `Fix the ${invalid.join(", ")} before saving.` });
       setSaving(false);
       return;
     }
@@ -409,9 +437,10 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    if (pending.cover) {
+    if (pending.cover instanceof File) {
+      const file = pending.cover;
       tasks.push({
-        label: "Cover", run: () => postCover(pending.cover!),
+        label: "Cover", run: () => postCover(file),
         onSuccess: (result) => {
           const media = result as Awaited<ReturnType<typeof postCover>>;
           snap.cover = { dataUrl: media.url, uploadedAt: media.uploadedAt };
@@ -422,10 +451,11 @@ function EditModeProvider({ children }: { children: ReactNode }) {
         },
       });
     }
-    if (pending.watermark) {
+    if (pending.watermark instanceof File) {
+      const file = pending.watermark;
       tasks.push({
         label: "Watermark",
-        run: () => postWatermark(pending.watermark!),
+        run: () => postWatermark(file),
         onSuccess: (result) => {
           const media = result as Awaited<ReturnType<typeof postWatermark>>;
           snap.watermark = { dataUrl: media.url, uploadedAt: media.uploadedAt };
@@ -467,9 +497,10 @@ function EditModeProvider({ children }: { children: ReactNode }) {
       });
     }
     if (pending.avatar) {
+      const file = pending.avatar;
       tasks.push({
         label: "Profile picture",
-        run: () => uploadAvatar(pending.avatar!),
+        run: () => (file === "remove" ? deleteAvatar() : uploadAvatar(file)),
         // Write the fresh User (avatarUrl populated) back to auth-store so the
         // header + AvatarDisc show the new photo in-session, not the stale one.
         onSuccess: (result) => {
@@ -968,7 +999,9 @@ async function submitForReview(opts: {
     console.error("[photographer/settings] submitVerification failed", err);
     opts.showToast({
       kind: "error",
-      message: "Couldn't submit — check your connection and try again.",
+      message: err instanceof ApiError
+        ? `Couldn't submit. ${err.message}`
+        : "Couldn't submit — check your connection and try again.",
     });
     return { submitted: false };
   }
@@ -1333,6 +1366,7 @@ function VerificationStatusPanel() {
   const { confirm } = useConfirmation();
   const complete = useAllRequiredFilled();
   const [submitting, setSubmitting] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   async function handleSubmit() {
     if (submitting) return;
@@ -1349,6 +1383,7 @@ function VerificationStatusPanel() {
   }
 
   async function handleWithdraw() {
+    if (withdrawing) return;
     const isCurrent = captureAuthSession();
     const ok = await confirm({
       title: "Withdraw application?",
@@ -1359,6 +1394,7 @@ function VerificationStatusPanel() {
       danger: true,
     });
     if (!ok || !isCurrent()) return;
+    setWithdrawing(true);
     try {
       const response = await withdrawVerification();
       if (!isCurrent()) return;
@@ -1380,8 +1416,12 @@ function VerificationStatusPanel() {
       console.error("[photographer/settings] withdrawVerification failed", err);
       showToast({
         kind: "error",
-        message: "Couldn't withdraw — check your connection and try again.",
+        message: err instanceof ApiError
+          ? `Couldn't withdraw. ${err.message}`
+          : "Couldn't withdraw — check your connection and try again.",
       });
+    } finally {
+      if (isCurrent()) setWithdrawing(false);
     }
   }
 
@@ -1432,9 +1472,10 @@ function VerificationStatusPanel() {
           <button
             type="button"
             onClick={handleWithdraw}
-            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors"
+            disabled={withdrawing}
+            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-ink hover:text-ink transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Withdraw application
+            {withdrawing ? "Withdrawing…" : "Withdraw application"}
           </button>
         </div>
       </div>
@@ -1750,9 +1791,9 @@ function PictureSubsection() {
     });
     if (!ok || !isCurrent()) return;
     setAvatar(null);
-    setPendingFile("avatar", null);
+    setPendingFile("avatar", "remove");
     setError(null);
-    showToast({ kind: "success", message: "Profile picture removed." });
+    showToast({ kind: "info", message: "Profile picture will be removed when you save." });
   }
 
   if (!user) return null;
@@ -1902,21 +1943,6 @@ function CoverSubsection() {
     }
   }
 
-  async function handleRemove() {
-    const isCurrent = captureAuthSession();
-    const ok = await confirm({
-      title: "Remove cover?",
-      message:
-        "Your portfolio will fall back to the default banner until you upload a new one.",
-      confirmLabel: "Remove",
-    });
-    if (!ok || !isCurrent()) return;
-    setCover(null);
-    setPendingFile("cover", null);
-    setError(null);
-    showToast({ kind: "success", message: "Cover removed." });
-  }
-
   return (
     <div>
       <SubHeading label="Cover banner" caption="16:5 · 1920px wide · 8 MB" />
@@ -1944,15 +1970,6 @@ function CoverSubsection() {
             className="sr-only"
           />
         </label>
-        {cover && !busy && editing && (
-          <button
-            type="button"
-            onClick={handleRemove}
-            className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
-          >
-            Remove
-          </button>
-        )}
       </div>
       <FieldError message={error} id="cover-error" />
       {error && !busy && (
@@ -2038,8 +2055,8 @@ function BrandSubsection() {
         </div>
 
         <div>
-          <p className="font-sans text-sm text-slate mb-3">Accent color</p>
-          <div className="flex flex-wrap items-center gap-3">
+          <p id="accent-color-label" className="font-sans text-sm text-slate mb-3">Accent color</p>
+          <div role="group" aria-labelledby="accent-color-label" className="flex flex-wrap items-center gap-3">
             {COLOR_ORDER.map((color) => {
               const isActive = brandColor === color;
               return (
@@ -2097,9 +2114,10 @@ function BrandSubsection() {
             rows={3}
             maxLength={BIO_MAX}
             disabled={!editing}
+            aria-describedby="brand-bio-counter"
             className="w-full bg-transparent border-b border-line focus:border-fresh focus:outline-none py-3 text-base text-ink placeholder:text-slate-soft transition-colors resize-none disabled:text-ink disabled:cursor-not-allowed"
           />
-          <CharCounter current={bio.length} max={BIO_MAX} />
+          <CharCounter id="brand-bio-counter" current={bio.length} max={BIO_MAX} />
         </div>
       </div>
     </div>
@@ -2179,21 +2197,6 @@ function WatermarkSlab() {
     }
   }
 
-  async function handleRemove() {
-    const isCurrent = captureAuthSession();
-    const ok = await confirm({
-      title: "Remove watermark?",
-      message:
-        "New uploads will go out unwatermarked until you replace it. Existing photos already stamped won't change.",
-      confirmLabel: "Remove",
-    });
-    if (!ok || !isCurrent()) return;
-    setWatermark(null);
-    setPendingFile("watermark", null);
-    setError(null);
-    showToast({ kind: "success", message: "Watermark removed." });
-  }
-
   const ready = watermark !== null;
 
   return (
@@ -2258,16 +2261,6 @@ function WatermarkSlab() {
               className="sr-only"
             />
           </label>
-
-          {watermark && !busy && editing && (
-            <button
-              type="button"
-              onClick={handleRemove}
-              className="font-sans text-sm text-slate underline decoration-line underline-offset-4 decoration-1 hover:decoration-error hover:text-error transition-colors"
-            >
-              Remove
-            </button>
-          )}
 
           <p className="font-sans text-sm text-slate-soft basis-full md:basis-auto">
             PNG, JPEG, or WebP · downscaled to 600px wide · 8 MB max.
@@ -2358,6 +2351,7 @@ function HandleSlab() {
               autoComplete="off"
               spellCheck={false}
               required
+              maxLength={32}
               disabled={!editing}
               aria-describedby={
                 validation && handle.length > 0
@@ -2485,10 +2479,6 @@ function SocialSlab() {
 
   function handleAdd(platform: SocialPlatform) {
     addSocial(platform, "");
-    showToast({
-      kind: "info",
-      message: `${SOCIAL_PLATFORM_LABEL[platform]} row added — drop your link in.`,
-    });
   }
 
   async function handleRemove(id: string, platform: SocialPlatform) {
@@ -2503,8 +2493,8 @@ function SocialSlab() {
     if (!ok || !isCurrent()) return;
     removeSocial(id);
     showToast({
-      kind: "success",
-      message: `${label} link removed.`,
+      kind: "info",
+      message: `${label} link removed. Save to keep this change.`,
     });
   }
 
@@ -2552,6 +2542,9 @@ function SocialSlab() {
           gallery lives.
         </p>
 
+        {socials.length === 0 && !editing && (
+          <p className="font-sans text-base text-slate">No links yet. Click Edit settings to add one.</p>
+        )}
         {socials.length > 0 && (
           <ul className="space-y-4">
             {socials.map((link) => (
@@ -2651,9 +2644,9 @@ function SocialRow({
       </Kicker>
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-3">
-          <span className="font-sans text-sm text-slate">
+          <label htmlFor={`social-url-${link.id}`} className="font-sans text-sm text-slate">
             {SOCIAL_PLATFORM_LABEL[link.platform]}
-          </span>
+          </label>
           {editing && (
             <button
               type="button"
@@ -2665,6 +2658,7 @@ function SocialRow({
           )}
         </div>
         <input
+          id={`social-url-${link.id}`}
           type="url"
           value={link.url}
           onChange={(e) => {
@@ -2756,10 +2750,10 @@ function PayoutSlab() {
     addPayout(input);
     setDraftMethod(null);
     showToast({
-      kind: "success",
+      kind: "info",
       message: `${PAYOUT_METHOD_LABEL[input.method]} account added${
         payouts.length === 0 ? " · set as primary" : ""
-      }.`,
+      }. Save to keep it.`,
     });
   }
 
@@ -2780,16 +2774,16 @@ function PayoutSlab() {
     updatePayout(id, input);
     setEditingId(null);
     showToast({
-      kind: "success",
-      message: `${PAYOUT_METHOD_LABEL[method]} account updated.`,
+      kind: "info",
+      message: `${PAYOUT_METHOD_LABEL[method]} account updated. Save to keep it.`,
     });
   }
 
   function handleMakePrimary(id: string, method: PayoutMethod) {
     setPrimaryPayout(id);
     showToast({
-      kind: "success",
-      message: `${PAYOUT_METHOD_LABEL[method]} is now your primary payout.`,
+      kind: "info",
+      message: `${PAYOUT_METHOD_LABEL[method]} set as primary. Save to keep it.`,
     });
   }
 
@@ -2812,8 +2806,8 @@ function PayoutSlab() {
     if (!ok || !isCurrent()) return;
     removePayout(id);
     showToast({
-      kind: "success",
-      message: `${label} account removed.`,
+      kind: "info",
+      message: `${label} account removed. Save to keep this change.`,
     });
   }
 
@@ -2879,6 +2873,9 @@ function PayoutSlab() {
           />
         )}
 
+        {payouts.length === 0 && !editing && (
+          <p className="font-sans text-base text-slate">No payout account yet. Click Edit settings to add one so you can get paid.</p>
+        )}
         {payouts.length > 0 && (
           <div className="space-y-3">
             <Kicker as="p" tone="soft">

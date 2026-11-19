@@ -14,8 +14,9 @@ import {
 import { DashboardEventRow } from "@/components/dashboard/dashboard-event-row";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError, loadFailed } from "@/components/ui/load-error";
 import {
-  usePhotographerEvents,
+  usePhotographerEventsQuery,
   COVERED_EVENTS_MAX,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
@@ -37,10 +38,11 @@ export default function DashboardEventsPage() {
   // withUploads:false — a just-submitted owned event has no photos yet and
   // the server-side filter would hide it. Coverage rows for admin events
   // only exist after a first upload, so nothing else sneaks in.
-  const liveEvents = usePhotographerEvents({
+  const eventsQuery = usePhotographerEventsQuery({
     withUploads: false,
     limit: COVERED_EVENTS_MAX,
   });
+  const liveEvents = eventsQuery.data ?? null;
   const isLoading = liveEvents === null;
 
   const covered = useMemo(
@@ -95,11 +97,15 @@ export default function DashboardEventsPage() {
         title="My events"
         caption="Races you've created or covered"
       >
-        <div className="space-y-2">
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 w-full rounded-xl" />
-          ))}
-        </div>
+        {loadFailed(eventsQuery) ? (
+          <LoadError what="your events" paused={eventsQuery.isPaused} onRetry={() => void eventsQuery.refetch()} />
+        ) : (
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-20 w-full rounded-xl" />
+            ))}
+          </div>
+        )}
       </Slab>
     );
   }
@@ -111,13 +117,16 @@ export default function DashboardEventsPage() {
         <Link href={ROUTES.DASHBOARD_PHOTO_REMOVAL_REQUESTS} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
           Removal requests
         </Link>
-        <button
-          type="button"
-          onClick={() => setCouponOpen(true)}
-          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
-        >
-          + Create event coupon
-        </button>
+        {/* A coupon needs an event to apply to. */}
+        {covered.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setCouponOpen(true)}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            + Create event coupon
+          </button>
+        )}
         <CreateEventLink />
       </div>
 

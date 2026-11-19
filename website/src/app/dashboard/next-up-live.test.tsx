@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
@@ -46,4 +46,16 @@ it("Next up leaves out the photographer's own race that still waits for review",
   const nextUp = (await screen.findByRole("heading", { name: "Next up" })).closest("section")!;
   const rows = within(nextUp).getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
   expect(rows).toEqual(["Approved Run", "Live Trail"]);
+});
+
+it("a failed events read says so and retries, instead of loading forever", async () => {
+  useAuthStore.getState().setUser({ id: "p-1", role: "PHOTOGRAPHER", name: "Jessa", email: "p@example.test", createdAt: "2026-09-01" });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const get = vi.spyOn(api, "get").mockRejectedValue(new Error("boom"));
+  render(<QueryClientProvider client={client}><DashboardOverviewPage /></QueryClientProvider>);
+  expect(await screen.findByText("Couldn't load your dashboard.")).toBeInTheDocument();
+  get.mockResolvedValue({ items: [], total: 0, offset: 0, limit: 8 });
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.queryByText("Couldn't load your dashboard.")).not.toBeInTheDocument());
+  expect(get).toHaveBeenCalledTimes(2);
 });

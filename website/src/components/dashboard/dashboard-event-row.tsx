@@ -24,11 +24,11 @@ export function DashboardEventRow({
       className="group flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors hover:bg-bone-deep/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-fresh"
     >
       <div className="relative w-[88px] h-[56px] shrink-0 rounded-lg overflow-hidden bg-bone-deep flex items-center justify-center">
-        {event.bannerUrl ? (
+        <LogoPlaceholder size="sm" className="absolute inset-0" />
+        {event.bannerUrl && (
+          // Hidden on error (e.g. an expired signed URL) so the logo behind it shows.
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={event.bannerUrl} alt="" aria-hidden="true" className="absolute inset-0 w-full h-full object-cover" />
-        ) : (
-          <LogoPlaceholder size="sm" className="absolute inset-0" />
+          <img src={event.bannerUrl} alt="" aria-hidden="true" onError={(e) => { e.currentTarget.hidden = true; }} className="absolute inset-0 w-full h-full object-cover" />
         )}
       </div>
       <div className="min-w-0 flex-1 basis-[220px]">

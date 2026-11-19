@@ -52,6 +52,7 @@ vi.mock('@/lib/api', async (original) => ({ ApiError: (await original<typeof imp
 vi.mock('@/hooks/use-photographer-data', () => ({
   COVERED_EVENTS_MAX: 200,
   usePhotographerEvents: () => mocks.covered,
+  usePhotographerEventsQuery: () => ({ data: mocks.covered, isError: false, isPaused: false }),
   usePhotographerEventDetail: () => ({ isMissing: false, detail: {
     id: 'event-1', slug: 'test-event', name: 'Review Event', date: '2026-09-07',
     location: 'Cebu', state: 'past', photoCount: 1, salesCount: 0, revenueKept: 0,
@@ -266,6 +267,21 @@ describe('photographer photo management', () => {
     }];
     render(<EventList />);
     expect(screen.queryByText('Trash-only Event')).not.toBeNull();
+  });
+
+  it('offers Undo after moving photos to Deleted, and Undo restores exactly those photos', async () => {
+    mocks.activeRows = 2;
+    mocks.post.mockResolvedValueOnce({ affected: 2 } as never).mockResolvedValueOnce({ affected: 2 } as never);
+    render(<EventPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select photo 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select photo 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 2' }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ message: '2 photos moved to Deleted.', action: expect.objectContaining({ label: 'Undo' }) })));
+    const { action } = mocks.toast.mock.calls.find(([t]) => t.action)![0];
+    action.onClick();
+    await waitFor(() => expect(mocks.post).toHaveBeenLastCalledWith('/me/photographer/events/event-1/photos/restore', { photoIds: ['photo-0', 'photo-1'] }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenLastCalledWith({ kind: 'success', message: '2 photos restored.' }));
   });
 
   it('shows the backend removal-case restriction when restore is refused', async () => {

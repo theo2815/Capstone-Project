@@ -7,10 +7,13 @@ import { DashboardActionGrid } from "@/components/dashboard/dashboard-action-gri
 import { SetupJourney } from "@/components/dashboard/setup-journey";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
+import { LoadError, loadFailed } from "@/components/ui/load-error";
 import { useCanUpload } from "@/hooks/use-can-upload";
 import {
   usePhotographerEvents,
+  usePhotographerEventsQuery,
   usePhotographerPayoutBalance,
+  usePhotographerPayoutBalanceQuery,
 } from "@/hooks/use-photographer-data";
 import { ROUTES } from "@/lib/constants";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -32,7 +35,8 @@ import { cn, formatPrice } from "@/lib/utils";
 //    asked question ("when am I getting paid?").
 export default function DashboardOverviewPage() {
   const gate = useCanUpload();
-  const events = usePhotographerEvents();
+  const eventsQuery = usePhotographerEventsQuery();
+  const events = eventsQuery.data ?? null;
   // Setup mode is true until the photographer is verified AND has at least
   // one photo uploaded across all their events. Photo count comes from the
   // event_photographer.photo_count column (BE upserts it on every upload).
@@ -47,6 +51,9 @@ export default function DashboardOverviewPage() {
   // a first-timer's action-grid flash. Hold a skeleton until the fork is
   // decidable so nobody sees the wrong dashboard.
   if (!eventsLoaded) {
+    if (loadFailed(eventsQuery)) {
+      return <LoadError what="your dashboard" paused={eventsQuery.isPaused} onRetry={() => void eventsQuery.refetch()} className="pb-12" />;
+    }
     return <OverviewSkeleton />;
   }
 
@@ -86,7 +93,8 @@ function OverviewSkeleton() {
 // (request modal, withdraw, recent cycles) lives on /dashboard/billing;
 // this is a glance card with an "Open billing" CTA.
 function BillingGlance() {
-  const balance = usePhotographerPayoutBalance();
+  const balanceQuery = usePhotographerPayoutBalanceQuery();
+  const balance = balanceQuery.data ?? null;
 
   return (
     <Slab
@@ -108,7 +116,9 @@ function BillingGlance() {
         </Link>
       }
     >
-      {balance === null ? (
+      {balance === null && loadFailed(balanceQuery) ? (
+        <LoadError what="your balance" paused={balanceQuery.isPaused} onRetry={() => void balanceQuery.refetch()} />
+      ) : balance === null ? (
         <div>
           <Skeleton className="h-3 w-28" />
           <Skeleton className="h-12 md:h-14 w-64 mt-3" />
@@ -119,6 +129,7 @@ function BillingGlance() {
       ) : (
         <AvailableGlance
           unpaidBalance={balance.unpaidBalance}
+          clearing={balance.clearing}
           minimum={balance.minimum}
           onHold={!!balance.payoutHoldReason}
         />
@@ -178,16 +189,19 @@ function OpenRequestGlance({
 
 function AvailableGlance({
   unpaidBalance,
+  clearing,
   minimum,
   onHold,
 }: {
   unpaidBalance: number;
+  clearing: number;
   minimum: number;
   onHold: boolean;
 }) {
   const eligible = unpaidBalance >= minimum;
 
-  if (!eligible && unpaidBalance === 0) {
+  // Sales still clearing (or a hold) are earnings — "No earnings yet" would be untrue.
+  if (!eligible && unpaidBalance === 0 && clearing === 0 && !onHold) {
     return (
       <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
         <p className="font-display text-2xl md:text-3xl font-extrabold tracking-tight text-ink">
@@ -226,6 +240,7 @@ function AvailableGlance({
             Reach{" "}
             <span className="font-mono tnum">{formatPrice(minimum)}</span>{" "}
             in unpaid earnings to request a payout.
+            {clearing > 0 && <> {formatPrice(clearing)} is still clearing.</>}
           </>
         )}
       </p>

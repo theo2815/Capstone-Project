@@ -28,12 +28,19 @@ export function usePublicEvents(
   filters: EventsListFilters = {},
   initialEvents?: ReadonlyArray<ListEvent>,
 ): ListEvent[] | null {
-  const query = useQuery<ListEvent[]>({
+  return usePublicEventsQuery(filters, initialEvents).data ?? null;
+}
+
+// Same read with the query state, for callers that must tell "failed" from "loading".
+export function usePublicEventsQuery(
+  filters: EventsListFilters = {},
+  initialEvents?: ReadonlyArray<ListEvent>,
+) {
+  return useQuery<ListEvent[]>({
     queryKey: ["public", "events", filters],
     queryFn: () => fetchEventsList(filters),
     staleTime: LIST_STALE_MS,
     initialData: initialEvents ? () => [...initialEvents] : undefined,
     initialDataUpdatedAt: initialEvents ? 0 : undefined,
   });
-  return query.data ?? null;
 }
