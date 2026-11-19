@@ -13,15 +13,10 @@ import {
   flagEventName,
   flagReasonLabel,
   relevanceConfirmText,
-  serverMessage,
   type FlagConfirmKind,
 } from "@/lib/admin-flags";
-import { useFlagActions } from "@/hooks/use-admin-data";
-import { useToast } from "@/hooks/use-toast";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { AdminStatusPill, type AdminStatusPillTone } from "./admin-status-pill";
-import { AdminFlagHideModal } from "./admin-flag-hide-modal";
-import { AdminEscalateModal } from "./admin-escalate-modal";
 import { formatLongDate } from "@/lib/format";
 import { ROUTES } from "@/lib/constants";
 import {
@@ -32,10 +27,20 @@ import {
   ROW_OPEN_BUTTON,
 } from "@/components/ui/button-styles";
 
+/** The queue's one action hook and modals, shared by every card (FLG6). */
+export interface FlagCardActions {
+  isPending: (flagId: string) => boolean;
+  pendingAction: (flagId: string) => string | null;
+  onHide: (flagId: string) => void;
+  onEscalate: (flagId: string) => void;
+  /** Runs a confirmed dismiss, hold or resolve; true when it went through. */
+  onConfirm: (flagId: string, kind: FlagConfirmKind) => Promise<boolean>;
+}
+
 interface AdminFlagCardProps {
   flag: Flag;
-  /** True only for the first open card on the page so its Hide button is the
-   *  page's single fresh accent. Subsequent open cards get bordered Hide. */
+  actions: FlagCardActions;
+  /** True only for the first open card, which lifts its Hide button. */
   primary?: boolean;
   /**
    * Phase 3: when provided, the title button (which covers the card, AX-4)
@@ -47,14 +52,6 @@ interface AdminFlagCardProps {
   /** Phase 4: J/K keyboard focus indicator. Adds an ink ring + offset. */
   focused?: boolean;
 }
-
-const DONE_LABEL = {
-  hide: "Hidden",
-  dismiss: "Dismissed",
-  escalate: "Escalated",
-  hold: "Payouts on hold",
-  resolve: "Resolved",
-} as const;
 
 const STATUS_LABEL: Record<FlagStatus, string> = {
   open: "Open",
@@ -79,18 +76,19 @@ function statusTone(status: FlagStatus): AdminStatusPillTone {
   }
 }
 
+/** One status pill for the card and the drawer. */
+export function FlagStatusPill({ status }: { status: FlagStatus }) {
+  return <AdminStatusPill label={STATUS_LABEL[status]} tone={statusTone(status)} />;
+}
+
 export function AdminFlagCard({
   flag,
+  actions,
   primary = false,
   onOpen,
   focused = false,
 }: AdminFlagCardProps) {
-  const { showToast } = useToast();
-  const { hide, dismiss, escalate, resolve, confirmHold, isPending, pendingAction } = useFlagActions();
-  const submitting = isPending(flag.id);
-
-  const [hideOpen, setHideOpen] = useState(false);
-  const [escalateOpen, setEscalateOpen] = useState(false);
+  const submitting = actions.isPending(flag.id);
   // One inline confirm at a time: hold, resolve or dismiss.
   const [confirm, setConfirm] = useState<FlagConfirmKind | null>(null);
   const confirmDismiss = confirm === "dismiss";
@@ -101,37 +99,8 @@ export function AdminFlagCard({
   const isOpen = flag.status === "open";
   const actionable = canDismiss(flag);
 
-  async function run(
-    verb: keyof typeof DONE_LABEL,
-    action: () => Promise<boolean>,
-  ) {
-    try {
-      if (!(await action())) return false;
-      showToast({ kind: "info", message: `${DONE_LABEL[verb]} · ${flag.id}` });
-      return true;
-    } catch (error) {
-      showToast({
-        kind: "error",
-        message:
-          serverMessage(error) ??
-          `Could not ${verb} ${flag.id} — check the current status before retrying.`,
-      });
-    }
-  }
-  async function handleHide(reason: string | null) {
-    if (await run("hide", () => hide(flag.id, reason))) setHideOpen(false);
-  }
-  async function handleDismiss() {
-    if (await run("dismiss", () => dismiss(flag.id))) setConfirm(null);
-  }
-  async function handleHold() {
-    if (await run("hold", () => confirmHold(flag.id))) setConfirm(null);
-  }
-  async function handleResolve() {
-    if (await run("resolve", () => resolve(flag.id))) setConfirm(null);
-  }
-  async function handleEscalate(note: string | null) {
-    if (await run("escalate", () => escalate(flag.id, note))) setEscalateOpen(false);
+  async function handleConfirm(kind: FlagConfirmKind) {
+    if (await actions.onConfirm(flag.id, kind)) setConfirm(null);
   }
 
   const interactive = onOpen !== undefined;
@@ -175,10 +144,7 @@ export function AdminFlagCard({
               )}
             </h3>
           </div>
-          <AdminStatusPill
-            label={STATUS_LABEL[flag.status]}
-            tone={statusTone(flag.status)}
-          />
+          <FlagStatusPill status={flag.status} />
         </div>
 
         <p className="font-sans text-sm text-ink-soft">{flag.note}</p>
@@ -226,14 +192,14 @@ export function AdminFlagCard({
           </div>
         )}
 
-        {submitting && <p role="status">{pendingAction(flag.id)}</p>}
+        {submitting && <p role="status" className="font-sans text-sm text-slate">{actions.pendingAction(flag.id)}</p>}
         {actionable && (
           <div className="relative z-10 flex items-center gap-3 flex-wrap pt-2">
             {canHide(flag) && (
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => setHideOpen(true)}
+                onClick={() => actions.onHide(flag.id)}
                 className={
                   primary ? `${dangerBtn} shadow-[var(--shadow-card)]` : dangerBtn
                 }
@@ -277,7 +243,7 @@ export function AdminFlagCard({
               <button
                 type="button"
                 disabled={submitting}
-                onClick={() => setEscalateOpen(true)}
+                onClick={() => actions.onEscalate(flag.id)}
                 className={tertiaryBtn}
               >
                 Escalate…
@@ -298,11 +264,7 @@ export function AdminFlagCard({
             <button
               type="button"
                 disabled={submitting}
-              onClick={() => {
-                if (confirm === "hold") handleHold();
-                else if (confirm === "resolve") handleResolve();
-                else handleDismiss();
-              }}
+              onClick={() => void handleConfirm(confirm)}
               className={`${secondaryBtn} w-full`}
             >
               {confirm === "hold" ? "Confirm hold" : confirm === "resolve" ? "Confirm resolve" : "Confirm dismiss"}
@@ -310,22 +272,6 @@ export function AdminFlagCard({
           </div>
         )}
       </div>
-
-      <AdminFlagHideModal
-        submitting={submitting}
-        open={hideOpen}
-        onClose={() => setHideOpen(false)}
-        onSubmit={handleHide}
-        flagId={flag.id}
-      />
-      <AdminEscalateModal
-        submitting={submitting}
-        open={escalateOpen}
-        onClose={() => setEscalateOpen(false)}
-        onSubmit={handleEscalate}
-        targetLabel={`Escalate ${flag.id}`}
-        body="Push this flag to the next review tier. The photo stays live in the meantime; higher tier decides hide vs. dismiss."
-      />
     </article>
   );
 }
