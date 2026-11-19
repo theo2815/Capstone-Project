@@ -50,6 +50,7 @@ import { cn, formatPrice } from "@/lib/utils";
 import { savePhoto } from "@/lib/save-photo";
 import { SavePhotosButton } from "@/components/orders/save-photos-button";
 import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { TextSkeleton } from "@/components/ui/skeleton";
 
 const JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
   { id: "spend", label: "Spend" },
@@ -149,8 +150,22 @@ function OrdersBody() {
 }
 
 function SpendSlab() {
-  const { orders } = useOrdersList();
+  const { orders, isLoading, error } = useOrdersList();
   const stats = useMemo(() => computeSpendStats(orders), [orders]);
+
+  // Loading or failed: say nothing about the totals. The Receipts section
+  // below carries the status message and the retry.
+  if (orders.length === 0 && (isLoading || error)) {
+    return (
+      <Slab id="spend" number="01" title="Spend">
+        {isLoading ? (
+          <TextSkeleton lines={2} className="max-w-md" />
+        ) : (
+          <p aria-hidden="true" className="font-sans text-base text-slate">—</p>
+        )}
+      </Slab>
+    );
+  }
 
   if (orders.length === 0) {
     return (
@@ -222,7 +237,7 @@ function ReceiptsSlab({
   onRefundRequest: (order: OrderSummary) => void;
   pendingExpand: string | null;
 }) {
-  const { orders } = useOrdersList();
+  const { orders, isLoading, error, isRetrying, retry } = useOrdersList();
   const sorted = useMemo(
     () =>
       [...orders].sort((a, b) =>
@@ -251,7 +266,29 @@ function ReceiptsSlab({
       title="Receipts"
       trailing={sorted.length > 0 ? trailing : undefined}
     >
-      {sorted.length === 0 ? (
+      {sorted.length === 0 && isLoading ? (
+        <p role="status" className="font-sans text-base text-slate">
+          Loading your purchases…
+        </p>
+      ) : sorted.length === 0 && error ? (
+        <div
+          role="alert"
+          className="border border-line rounded-2xl p-6 md:p-8 flex flex-wrap items-center justify-between gap-4"
+        >
+          <p className="font-sans text-base text-ink max-w-md">
+            We couldn&apos;t load your purchases. Your photos are safe — try
+            again in a moment.
+          </p>
+          <button
+            type="button"
+            onClick={retry}
+            disabled={isRetrying}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            {isRetrying ? "Trying…" : "Try again"}
+          </button>
+        </div>
+      ) : sorted.length === 0 ? (
         <ReceiptsEmpty />
       ) : (
         <>

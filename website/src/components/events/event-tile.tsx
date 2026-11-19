@@ -88,7 +88,10 @@ export function EventTile(props: EventTileProps) {
           // No cover yet: the QuickPitik logo instead of a faint name and "Banner · soon".
           <LogoPlaceholder tone="dark" size="lg" className="absolute inset-0" />
         )}
-        <StatusChip state={event.state} />
+        <StatusChip
+          state={event.state}
+          photoCount={isBrowse ? event.photoCount : undefined}
+        />
         {isBrowse && (
           <SaveButton
             eventId={event.id}
@@ -116,8 +119,10 @@ export function EventTile(props: EventTileProps) {
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
           {event.location}
         </p>
-        {/* Some photographer in this race charges above the race price (AA-R14). */}
-        {event.priceVaries && event.pricePerPhoto != null && (
+        {isBrowse && <BrowseMeta event={event} />}
+        {/* Some photographer in this race charges above the race price (AA-R14).
+            Browse folds this into BrowseMeta's "From ₱X". */}
+        {!isBrowse && event.priceVaries && event.pricePerPhoto != null && (
           <span className="mt-3 inline-flex items-center rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap tnum">
             From ₱{event.pricePerPhoto}
           </span>
@@ -182,6 +187,26 @@ export function EventTile(props: EventTileProps) {
     >
       {body}
     </Link>
+  );
+}
+
+// What a runner needs before opening a race: are my photos here, how many,
+// and what do they cost. Hidden while the race has no photos (the status chip
+// says so instead).
+function BrowseMeta({ event }: { event: ListEvent }) {
+  if (event.photoCount <= 0) return null;
+  const count = `${event.photoCount} ${event.photoCount === 1 ? "photo" : "photos"}`;
+  let price: string | null = null;
+  if (event.pricingMode === "free") price = "Free";
+  else if (event.pricePerPhoto != null && event.pricePerPhoto > 0) {
+    price = event.priceVaries
+      ? `From ₱${event.pricePerPhoto}`
+      : `₱${event.pricePerPhoto} each`;
+  }
+  return (
+    <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
+      {price ? `${count} · ${price}` : count}
+    </p>
   );
 }
 
@@ -262,7 +287,24 @@ function ManageFooter({ note }: { note?: string }) {
   );
 }
 
-export function StatusChip({ state }: { state: EventState }) {
+export function StatusChip({
+  state,
+  photoCount,
+}: {
+  state: EventState;
+  /** Browse tiles pass it so a finished race with no photos doesn't read "Photos ready". */
+  photoCount?: number;
+}) {
+  if (state === "open" && photoCount === 0) {
+    return (
+      <div className="absolute top-4 left-5 flex items-center gap-2.5">
+        <span aria-hidden="true" className="size-1.5 rounded-full bg-bone/40" />
+        <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-bone/85">
+          No photos yet
+        </span>
+      </div>
+    );
+  }
   if (state === "live") {
     return (
       <div className="absolute top-4 left-5 flex items-center gap-2.5">

@@ -313,7 +313,8 @@ function CockpitMode({
                 {event.name}
               </Kicker>
               <Kicker as="p" tone="soft" tnum className="mb-5">
-                {(photoCount || event.photoCount).toLocaleString()} photos available · free to search
+                {(photoCount || event.photoCount).toLocaleString()} photos available ·{" "}
+                {event.pricingMode === "free" ? "free to download" : "free to search"}
               </Kicker>
               <h1 className="font-hero text-ink text-5xl md:text-6xl">
                 Find your
@@ -715,6 +716,7 @@ function BrowseMode({
   const previewPhoto =
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
+  const isFree = event.pricingMode === "free";
   const headerKicker = isBibFilter
     ? `${event.name} · BIB ${bibFilter}`
     : isFaceMode
@@ -784,12 +786,18 @@ function BrowseMode({
               </>
             )}
           </h2>
+          {/* A search with nothing to show: the result box below explains it,
+              so skip the "these are the photos…" line and the photo links. */}
+          {!(isAnyFilter && visible.length === 0) && (
+          <>
           <p className="mt-4 font-sans text-base md:text-lg text-ink-soft max-w-md">
             {isFaceMode
-              ? "These are the photos that match your saved selfie. Tap any to add to cart."
+              ? `These are the photos that match your saved selfie. Tap any to ${isFree ? "download" : "add to cart"}.`
               : isBibFilter
-                ? "These are the photos matching your bib. Tap any to add to cart."
-                : "Skim the wall, or open search anytime to find your bib."}
+                ? `These are the photos matching your bib. Tap any to ${isFree ? "download" : "add to cart"}.`
+                : isFree
+                  ? "Every photo here is free to download. Skim the wall, or open search anytime to find your bib."
+                  : "Skim the wall, or open search anytime to find your bib."}
           </p>
           <Kicker
             as="button"
@@ -807,6 +815,8 @@ function BrowseMode({
           >
             In these photos? Request deletion →
           </Link>
+          </>
+          )}
         </div>
       </header>
 
