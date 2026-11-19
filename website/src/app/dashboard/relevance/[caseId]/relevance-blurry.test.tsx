@@ -167,13 +167,14 @@ it("a selection over 200 is sent in chunks of 200, one after the other, and read
   const post = vi.spyOn(api, "post").mockImplementation(() => new Promise((r) => { answers.push(r as (v: { affected: number }) => void); }));
   renderCase();
   const review = await toReview();
-  // getByRole over hundreds of tiles is slow: the tiles are read straight from the DOM.
+  // getByRole over hundreds of tiles is slow, and so is one click (one grid render) per tile:
+  // the tiles are read straight from the DOM and clicked in one batched update (F14).
   const tiles = () => review.querySelectorAll<HTMLButtonElement>("button[aria-pressed]");
   await waitFor(() => expect(tiles()).toHaveLength(250));
-  tiles().forEach((b) => fireEvent.click(b));
+  act(() => tiles().forEach((b) => b.click()));
   const reads = () => vi.mocked(api.get).mock.calls.filter(([u]) => String(u).includes("/blurry?")).length;
   const before = reads();
-  fireEvent.click(within(review).getByRole("button", { name: "Hide" }));
+  fireEvent.click(within(review).getByText("Hide", { selector: "button" }));
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
   expect((post.mock.calls[0][1] as { photoIds: string[] }).photoIds).toHaveLength(200);
   await act(async () => answers[0]({ affected: 200 }));
@@ -190,11 +191,12 @@ it("a refused chunk stops the rest and shows the server's message", async () => 
   const post = vi.spyOn(api, "post").mockRejectedValue(new ApiError([{ code: "VALIDATION_ERROR", message: "Send 1 to 200 photo ids" }], 400));
   renderCase();
   const review = await toReview();
-  // getByRole over hundreds of tiles is slow: the tiles are read straight from the DOM.
+  // getByRole over hundreds of tiles is slow, and so is one click (one grid render) per tile:
+  // the tiles are read straight from the DOM and clicked in one batched update (F14).
   const tiles = () => review.querySelectorAll<HTMLButtonElement>("button[aria-pressed]");
   await waitFor(() => expect(tiles()).toHaveLength(201));
-  tiles().forEach((b) => fireEvent.click(b));
-  fireEvent.click(within(review).getByRole("button", { name: "Hide" }));
+  act(() => tiles().forEach((b) => b.click()));
+  fireEvent.click(within(review).getByText("Hide", { selector: "button" }));
   expect(await screen.findByText("Send 1 to 200 photo ids")).toBeVisible();
   expect(post).toHaveBeenCalledTimes(1);
 }, 20_000);

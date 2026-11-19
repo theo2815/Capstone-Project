@@ -32,7 +32,8 @@ export function RailTipPortal({
         width: 240,
         zIndex: 50,
       }}
-      className="border border-line rounded-2xl bg-bone shadow-lg p-4"
+      // It overlaps the right of its own row link (the link fills the row), so it must not take the click.
+      className="border border-line rounded-2xl bg-bone shadow-lg p-4 pointer-events-none"
     >
       <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft tnum">
         {guide.number} · {guide.label}
