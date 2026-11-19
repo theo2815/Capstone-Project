@@ -1,5 +1,6 @@
 "use client";
 
+import { BalanceFigures } from "@/components/dashboard/balance-figures";
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -306,49 +307,29 @@ function RequestPayoutHero({
   const cooldownUntil = balance.accountCooldownUntil;
   const cooldownActive =
     !!cooldownUntil && new Date(cooldownUntil).getTime() > Date.now();
+  const canRequest = eligible && !!primary?.hasQr && !cooldownActive && !onHold;
 
   return (
     <div>
-      <Kicker as="p" tone="soft">
-        Available to request
-      </Kicker>
-      <p
-        className={cn(
-          "font-display text-5xl md:text-7xl font-semibold tracking-tight tnum mt-3 leading-none",
-          eligible && !onHold ? "text-fresh" : "text-slate",
-        )}
-      >
-        {formatPrice(balance.unpaidBalance)}
-      </p>
-      <p className="font-sans text-sm md:text-base text-ink mt-4">
+      <BalanceFigures
+        available={balance.unpaidBalance}
+        clearing={balance.clearing}
+        reserved={balance.reserved}
+        ready={eligible && !onHold}
+      />
+      <p className="font-sans text-sm md:text-base text-ink mt-6">
         {onHold ? (
           <>On hold while we review some of your uploads.</>
         ) : eligible ? (
           <>Ready to request — admin reviews each request.</>
         ) : (
           <>
-            Reach{" "}
-            <span className="font-mono tnum">
-              {formatPrice(balance.minimum)}
-            </span>{" "}
-            in unpaid earnings to request a payout.
+            Reach <span className="tnum">{formatPrice(balance.minimum)}</span>{" "}
+            in unpaid earnings to request a payout. New sales become
+            withdrawable after a short clearing period.
           </>
         )}
       </p>
-
-      {balance.clearing > 0 && (
-        <div className="mt-6 max-w-lg">
-          <Kicker as="p" tone="soft" className="flex items-baseline gap-2">
-            <span>Clearing</span>
-            <span className="font-mono tnum text-ink">
-              {formatPrice(balance.clearing)}
-            </span>
-          </Kicker>
-          <p className="font-sans text-sm text-slate mt-2">
-            New sales become withdrawable after a short clearing period.
-          </p>
-        </div>
-      )}
 
       {onHold && <PayoutHoldNotice className="mt-6" />}
 
@@ -405,8 +386,9 @@ function RequestPayoutHero({
         <button
           type="button"
           onClick={onRequest}
-          disabled={!eligible || !primary?.hasQr || cooldownActive || onHold}
-          className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
+          disabled={!canRequest}
+          // Green only when it can be pressed; while it can't, the setup link above is the one fresh action.
+          className={`${canRequest ? BTN_PRIMARY : BTN_SECONDARY} ${BTN_SIZE.md}`}
         >
           Request payout
         </button>
