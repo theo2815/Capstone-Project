@@ -22,7 +22,7 @@ vi.mock("@/store/toast-store", () => ({
   useToastStore: { getState: () => ({ showToast: showToastMock }) },
 }));
 
-import { dataUrlToFile, savePhoto, saveQrCode, sharePhotos } from "./save-photo";
+import { dataUrlToFile, saveFreePhoto, savePhoto, saveQrCode, sharePhotos } from "./save-photo";
 
 const URL = "https://api.quickpitik.com/api/v1/events/e/photos/p/download";
 
@@ -45,6 +45,26 @@ function stubShare(canShare: boolean, share: () => Promise<void> = async () => {
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
+});
+
+// Runner audit P2-4: a free download gave no sign it had started.
+describe("saveFreePhoto", () => {
+  it("confirms a plain download with a message", async () => {
+    isInAppMock.mockReturnValue(false);
+    isIOSMock.mockReturnValue(false);
+    expect(await saveFreePhoto(URL)).toBe("downloaded");
+    expect(triggerDownloadMock).toHaveBeenCalledWith(URL);
+    expect(showToastMock).toHaveBeenCalledWith(expect.objectContaining({ kind: "success", message: "Downloading your free photo…" }));
+  });
+
+  it("adds no message when the share sheet is the feedback", async () => {
+    isInAppMock.mockReturnValue(false);
+    isIOSMock.mockReturnValue(true);
+    vi.stubGlobal("navigator", { ...navigator, canShare: () => true, share: vi.fn(async () => {}) });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Blob(["x"], { type: "image/jpeg" }))));
+    expect(await saveFreePhoto(URL)).toBe("shared");
+    expect(showToastMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("savePhoto", () => {

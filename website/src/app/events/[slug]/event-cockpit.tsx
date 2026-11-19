@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { cn } from "@/lib/utils";
-import { savePhoto } from "@/lib/save-photo";
+import { saveFreePhoto } from "@/lib/save-photo";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
@@ -1107,7 +1107,7 @@ function PhotoPreviewMount({
             ? `Free from @${event.photographerHandle}`
             : "Free from the photographer"
         }
-        onDownload={() => void savePhoto(downloadUrl)}
+        onDownload={() => void saveFreePhoto(downloadUrl)}
       />
     );
   }

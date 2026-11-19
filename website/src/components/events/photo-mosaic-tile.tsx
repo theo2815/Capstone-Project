@@ -7,7 +7,7 @@ import { ROUTES } from "@/lib/constants";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { cn } from "@/lib/utils";
-import { savePhoto } from "@/lib/save-photo";
+import { saveFreePhoto } from "@/lib/save-photo";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
@@ -176,7 +176,7 @@ export function PhotoMosaicTile({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            void savePhoto(photo.downloadUrl!);
+            void saveFreePhoto(photo.downloadUrl!);
           }}
           aria-label={`Download ${photo.bib ?? "untagged photo"} for free`}
           className={cn(

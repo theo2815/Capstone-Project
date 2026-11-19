@@ -26,7 +26,7 @@ import { isReservedHandle } from "@/lib/reserved-handles";
 import { ROUTES } from "@/lib/constants";
 import { searchRateLimitMessage } from "@/lib/api";
 import { formatLongDate } from "@/lib/format";
-import { savePhoto } from "@/lib/save-photo";
+import { saveFreePhoto } from "@/lib/save-photo";
 import { fetchEventDetail } from "@/lib/api-events";
 import type { EventPhotosResult } from "@/lib/api-photos";
 import { fetchPublicPhotographer } from "@/lib/api-photographer-public";
@@ -569,7 +569,7 @@ function PhotoPreviewMount({
         onPrev={onPrev}
         onNext={onNext}
         footnote="Free · yours to keep"
-        onDownload={() => void savePhoto(downloadUrl)}
+        onDownload={() => void saveFreePhoto(downloadUrl)}
       />
     );
   }
