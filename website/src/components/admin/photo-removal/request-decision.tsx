@@ -3,13 +3,14 @@
 import { useRef, useState } from "react";
 import { useAdminRemovalActions, useAdminRemovalRequest } from "@/hooks/use-photo-removal";
 import { useConfirmation } from "@/hooks/use-confirmation";
-import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
+import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
 import { FieldError } from "@/components/ui/field-error";
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { formatLongDate, formatSalesDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
 import { ReviewCurrentState, groupByOwner } from "./request-review";
+import { RemovalPhotoThumb } from "./removal-photo-thumb";
 import type {
   PhotoRemovalItemDto, PhotoRemovalReviewDto, PhotographerRemovalResponse, RemovalDecision,
   RemovalEvidenceCleanupState, RemovalItemState,
@@ -211,6 +212,7 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
             <ul className="space-y-3">
               {items.map((item) => (
                 <ItemRow key={item.id} item={item} draft={drafts.get(item.id) ?? EMPTY} busy={busy || reviewRequired}
+                  alt={`Photo ${request.items.indexOf(item) + 1} of ${request.event.name}`}
                   onChange={(change) => setDraft(item.id, change)} onRetry={() => void retryCleanup(item)} />
               ))}
             </ul>
@@ -222,13 +224,12 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
         <div className="space-y-4">
           {urgentRequired && (
             <div className="space-y-2">
-              <AdminFieldLabel htmlFor="removal-urgent">Urgent override reason</AdminFieldLabel>
-              <p className="text-sm text-amber-700">An urgent reason is required: a photo&apos;s owner has not agreed and their review deadline has not passed, or there is no reachable owner.</p>
-              <textarea id="removal-urgent" rows={2} maxLength={2000} value={urgentReason} disabled={busy}
-                onChange={(e) => setUrgentReason(e.target.value)} className={REMOVAL_INPUT} />
+              <p id="removal-urgent-why" className="text-sm text-warning-text">An urgent reason is required: a photo&apos;s owner has not agreed and their review deadline has not passed, or there is no reachable owner.</p>
+              <AdminTextarea id="removal-urgent" label="Urgent override reason" rows={2} maxLength={2000} value={urgentReason} disabled={busy}
+                describedBy="removal-urgent-why" onChange={setUrgentReason} />
             </div>
           )}
-          {chosen.length > 100 && <p className="text-sm text-amber-700">Decide at most <span className="tnum">100</span> photos at a time.</p>}
+          {chosen.length > 100 && <p className="text-sm text-warning-text">Decide at most <span className="tnum">100</span> photos at a time.</p>}
           <button type="button" disabled={!canSubmit} onClick={() => void submit()}
             className={cn(hasRemove ? BTN_DANGER : BTN_PRIMARY, BTN_SIZE.md)}>
             {actions.decide.isPending ? "Saving…" : hasRemove ? "Authorize removal" : "Record decision"}
@@ -250,17 +251,16 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
   );
 }
 
-function ItemRow({ item, draft, busy, onChange, onRetry }: {
-  item: PhotoRemovalItemDto; draft: Draft; busy: boolean; onChange: (change: Partial<Draft>) => void; onRetry: () => void;
+function ItemRow({ item, draft, busy, alt, onChange, onRetry }: {
+  item: PhotoRemovalItemDto; draft: Draft; busy: boolean; alt: string; onChange: (change: Partial<Draft>) => void; onRetry: () => void;
 }) {
   const photo = item.photoIdSnapshot;
+  // Marked invalid only once the admin has left the field (RM7).
+  const [touched, setTouched] = useState({ reason: false, date: false });
   const retryable = item.cleanupState === "RETRY_REQUIRED" && (item.state === "REMOVAL_AUTHORIZED" || item.state === "REMOVED");
   return (
     <li className="rounded-xl border border-line p-4 space-y-2 text-sm">
-      <span className="block size-16 overflow-hidden rounded-lg bg-bone-deep">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        {item.photo?.photo.imageUrl && <img src={item.photo.photo.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />}
-      </span>
+      <RemovalPhotoThumb src={item.photo?.photo.imageUrl} alt={alt} />
       <p className="flex flex-wrap items-baseline gap-x-3">
         <span className="font-mono tnum text-ink">{photo}</span>
         <span className="text-ink">{itemStatus(item)}</span>
@@ -297,14 +297,16 @@ function ItemRow({ item, draft, busy, onChange, onRetry }: {
             <div className="space-y-1">
               <AdminFieldLabel htmlFor={`reason-${item.id}`}>Reason<span className="sr-only"> for {photo}</span></AdminFieldLabel>
               <input id={`reason-${item.id}`} type="text" maxLength={2000} value={draft.reason} disabled={busy} className={REMOVAL_INPUT}
-                aria-invalid={!draft.reason.trim()} onChange={(e) => onChange({ reason: e.target.value })} />
+                aria-invalid={(touched.reason && !draft.reason.trim()) || undefined} onBlur={() => setTouched((t) => ({ ...t, reason: true }))}
+                onChange={(e) => onChange({ reason: e.target.value })} />
             </div>
           )}
           {draft.decision === "RETAIN_RESTRICTED" && (
             <div className="space-y-1">
               <AdminFieldLabel htmlFor={`review-${item.id}`}>Retention review date<span className="sr-only"> for {photo}</span></AdminFieldLabel>
               <input id={`review-${item.id}`} type="date" min={tomorrow()} value={draft.reviewDate} disabled={busy} className={REMOVAL_INPUT}
-                aria-invalid={!draft.reviewDate} onChange={(e) => onChange({ reviewDate: e.target.value })} />
+                aria-invalid={(touched.date && !draft.reviewDate) || undefined} onBlur={() => setTouched((t) => ({ ...t, date: true }))}
+                onChange={(e) => onChange({ reviewDate: e.target.value })} />
             </div>
           )}
         </div>

@@ -2,9 +2,11 @@
 
 import { useRef, useState } from "react";
 import { useAdminRemovalActions, useAdminRemovalRequest, useRemovalHistory } from "@/hooks/use-photo-removal";
-import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
+import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
 import { FieldError } from "@/components/ui/field-error";
 import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { removalActionLabel, removalActorLabel, removalStateLabel } from "@/lib/admin-removal-labels";
 import { formatLongDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
@@ -16,38 +18,30 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : "
 
 // Server-recorded, append-only timeline (oldest first). Metadata is never shown: it can carry storage internals.
 export function RemovalRequestHistory({ requestId }: { requestId: string }) {
-  const [offset, setOffset] = useState(0);
-  const history = useRemovalHistory(requestId, { offset, limit: PAGE });
+  const history = useRemovalHistory(requestId, PAGE);
   const detail = useAdminRemovalRequest(requestId);
-  const entries = history.data?.items ?? [];
-  const total = history.data?.total ?? 0;
+  const entries = history.items;
   if (!detail.data) return null;
   return (
     <section aria-labelledby="removal-history" className="mt-12 space-y-6 border-t border-line pt-8">
       <h2 id="removal-history" className="font-display text-xl font-extrabold text-ink">Case history</h2>
       <SupportUpdate request={detail.data} refreshing={detail.isFetching} refresh={detail.refetch} />
-      {history.isPending && <p role="status" className="text-sm text-slate">Loading history…</p>}
-      {history.isError && <p role="alert" className="text-sm text-ink">Couldn&apos;t load the history. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void history.refetch()}>Try again</button></p>}
+      {history.isLoading && <p role="status" className="text-sm text-slate">Loading history…</p>}
+      {!!history.error && <p role="alert" className="text-sm text-ink">Couldn&apos;t load the history. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void history.refetch()}>Try again</button></p>}
       <ol className="space-y-3">
         {entries.map((entry) => (
           <li key={entry.id} className="border-l-2 border-line pl-4 text-sm space-y-0.5">
-            <p className="font-mono tnum text-slate">{formatLongDate(entry.occurredAt)} · {entry.actorType}{entry.actorIdSnapshot && <> · {entry.actorIdSnapshot}</>}</p>
+            <p className="font-mono tnum text-slate">{formatLongDate(entry.occurredAt)} · {removalActorLabel(entry.actorType)}{entry.actorIdSnapshot && <> · {entry.actorIdSnapshot}</>}</p>
             <p className="text-ink">
-              {entry.action}
-              {(entry.fromState || entry.toState) && <> · {entry.fromState ?? "—"} → {entry.toState ?? "—"}</>}
+              {removalActionLabel(entry.action)}
+              {(entry.fromState || entry.toState) && <> · {entry.fromState ? removalStateLabel(entry.fromState) : "—"} → {entry.toState ? removalStateLabel(entry.toState) : "—"}</>}
               {entry.photoIdSnapshot && <> · <span className="font-mono tnum">{entry.photoIdSnapshot}</span></>}
             </p>
             {entry.reason && <p className="text-slate break-words">{entry.reason}</p>}
           </li>
         ))}
       </ol>
-      {total > PAGE && (
-        <div className="flex items-center gap-2">
-          <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>← Earlier</button>
-          <span className="font-mono tnum text-sm text-slate">{offset + 1}–{Math.min(offset + PAGE, total)} of {total}</span>
-          <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset + PAGE >= total} onClick={() => setOffset(offset + PAGE)}>Later →</button>
-        </div>
-      )}
+      <LoadMoreButton shown={entries.length} total={history.total} increment={PAGE} onLoadMore={history.fetchNextPage} isLoading={history.isFetchingNextPage} />
     </section>
   );
 }
@@ -89,17 +83,14 @@ function SupportUpdate({ request, refreshing, refresh }: {
           <ul className="space-y-1 text-slate">
             {request.guestBuyerRemovalNotices.map((notice) => (
               <li key={notice.noticeId} className="break-words">
-                <span className="tnum">{formatLongDate(notice.occurredAt)}</span> · {notice.status} · {notice.recipientEmail} · order <span className="font-mono tnum">{notice.orderId}</span>
+                <span className="tnum">{formatLongDate(notice.occurredAt)}</span> · {removalStateLabel(notice.status)} · {notice.recipientEmail} · order <span className="font-mono tnum">{notice.orderId}</span>
               </li>
             ))}
           </ul>
         </div>
       )}
-      <div className="space-y-2">
-        <AdminFieldLabel htmlFor="removal-support-note">Support update</AdminFieldLabel>
-        <textarea id="removal-support-note" rows={3} maxLength={2000} value={note} disabled={pending}
-          placeholder="What support told the runner or a guest buyer" onChange={(e) => setNote(e.target.value)} className={REMOVAL_INPUT} />
-      </div>
+      <AdminTextarea id="removal-support-note" label="Support update" maxLength={2000} value={note} disabled={pending}
+        placeholder="What support told the runner or a guest buyer" onChange={setNote} />
       {request.guestBuyerRemovalNotices.length > 0 && (
         <div className="space-y-2">
           <AdminFieldLabel htmlFor="removal-support-notice">Guest buyer notice (optional)</AdminFieldLabel>

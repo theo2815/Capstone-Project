@@ -27,8 +27,10 @@ beforeEach(() => {
   vi.mocked(removalApi.getAdminRemovalRequest).mockResolvedValue(guestCase);
   // The server returns history oldest first.
   vi.mocked(removalApi.listRemovalHistory).mockImplementation(async (_id, filters = {}) => filters.offset
-    ? { items: [entry("h51", { actorType: "SYSTEM", actorIdSnapshot: null, action: "REVIEW_OVERDUE", fromState: null, toState: null, reason: "Later entry", occurredAt: "2026-10-15T03:00:00Z" })], total: 51, offset: 50, limit: 50 }
-    : { items: [entry("h1", { action: "CREATED", fromState: null, toState: "DRAFT" })], total: 51, offset: 0, limit: 50 });
+    ? { items: [entry("h51", { actorType: "SYSTEM", actorIdSnapshot: null, action: "REVIEW_OVERDUE", fromState: null, toState: null, reason: "Later entry", occurredAt: "2026-10-15T03:00:00Z" }),
+      entry("h52", { action: "SOMETHING_NEW", actorIdSnapshot: null, reason: null })], total: 52, offset: 50, limit: 50 }
+    : { items: [entry("h1", { action: "CREATED", fromState: null, toState: "DRAFT" }),
+      ...Array.from({ length: 49 }, (_, i) => entry(`g${i}`, { actorIdSnapshot: null, reason: null }))], total: 52, offset: 0, limit: 50 });
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.resetAllMocks(); });
 
@@ -36,18 +38,21 @@ function renderHistory() {
   return render(<QueryClientProvider client={client}><RemovalRequestHistory requestId="case-1" /></QueryClientProvider>);
 }
 
-it("pages the immutable history from the server without exposing metadata", async () => {
+it("loads more history, appending it, with labels instead of raw codes and no metadata", async () => {
   const user = userEvent.setup();
   renderHistory();
-  expect(await screen.findByText(/CREATED/)).toBeInTheDocument();
-  expect(screen.getByText(/admin-a/)).toBeInTheDocument();
+  expect(await screen.findByText(/Case created/)).toBeInTheDocument();
+  expect(screen.queryByText(/CREATED/)).toBeNull();
+  expect(screen.getByText(/Admin · admin-a/)).toBeInTheDocument();
   expect(screen.getByText(/Ticket checked/)).toBeInTheDocument();
   expect(screen.queryByText(/s3:\/\//)).not.toBeInTheDocument();
   expect(removalApi.listRemovalHistory).toHaveBeenCalledWith("case-1", { offset: 0, limit: 50 }, expect.anything());
-  await user.click(screen.getByRole("button", { name: "Later →" }));
+  await user.click(screen.getByRole("button", { name: "Load 2 more" }));
   expect(await screen.findByText(/Later entry/)).toBeInTheDocument();
-  expect(screen.getByText(/REVIEW_OVERDUE/)).toBeInTheDocument();
-  expect(screen.getByText(/SYSTEM/)).toBeInTheDocument();
+  expect(screen.getByText(/Case created/)).toBeInTheDocument();
+  expect(screen.getByText(/Owner review overdue/)).toBeInTheDocument();
+  expect(screen.getByText(/Something new · Draft → Open/)).toBeInTheDocument();
+  expect(screen.queryByText(/REVIEW_OVERDUE|SYSTEM/)).toBeNull();
   expect(removalApi.listRemovalHistory).toHaveBeenLastCalledWith("case-1", { offset: 50, limit: 50 }, expect.anything());
 });
 

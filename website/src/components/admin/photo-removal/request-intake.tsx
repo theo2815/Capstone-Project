@@ -4,7 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminEvents } from "@/hooks/use-admin-events";
 import { useAdminRemovalActions } from "@/hooks/use-photo-removal";
-import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
+import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { FieldError } from "@/components/ui/field-error";
 import { BTN_GHOST, BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -106,13 +106,12 @@ function Field({ id, label, value, onChange, max, multiline = false, hint, inval
   id: string; label: string; value: string; onChange: (value: string) => void; max: number; multiline?: boolean; hint?: string; invalid?: boolean;
 }) {
   const hintId = hint ? `${id}-hint` : undefined;
+  if (multiline) return <AdminTextarea id={id} label={label} maxLength={max} value={value} onChange={onChange} />;
   return (
     <div className="space-y-2">
       <AdminFieldLabel htmlFor={id}>{label}</AdminFieldLabel>
-      {multiline
-        ? <textarea id={id} rows={3} maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT} />
-        : <input id={id} type="text" autoComplete="off" maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT}
-            aria-describedby={invalid ? `${hintId ?? ""} removal-intake-error`.trim() : hintId} aria-invalid={invalid || undefined} />}
+      <input id={id} type="text" autoComplete="off" maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT}
+        aria-describedby={invalid ? `${hintId ?? ""} removal-intake-error`.trim() : hintId} aria-invalid={invalid || undefined} />
       {hint && <p id={hintId} className="text-sm text-slate">{hint}</p>}
     </div>
   );

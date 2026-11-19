@@ -5,16 +5,20 @@ import { useAdminRemovalActions, useAdminRemovalRequest, useRemovalEvidence, use
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { FindPhotosControls } from "@/components/events/find-photos-controls";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
-import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
+import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ApiError } from "@/lib/api";
 import { validateImageFile } from "@/lib/image-utils";
 import { formatLongDate } from "@/lib/format";
+import { REMOVAL_SOURCE_LABEL, REMOVAL_STATUS_LABEL } from "@/lib/admin-removal-labels";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
+import { RemovalPhotoThumb } from "./removal-photo-thumb";
 import type { PhotoRemovalItemDto, PhotoRemovalRequestDto, RemovalMatchResult, RemovalMatchSource, RemovalPhotoDto } from "@/types/photo-removal";
 
 const PAGE = 24;
@@ -28,13 +32,16 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function RemovalRequestReview({ requestId }: { requestId: string }) {
   const detail = useAdminRemovalRequest(requestId);
-  if (detail.isPending) return <p role="status" className="mt-8 text-slate">Loading case…</p>;
+  if (detail.isPending) return <><h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1><p role="status" className="mt-8 text-slate">Loading case…</p></>;
   // A failed background refresh keeps showing the last server copy.
   if (!detail.data) return (
-    <div role="alert" className="mt-8 space-y-4">
-      <p>Couldn&apos;t load this case.</p>
-      <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void detail.refetch()}>Try again</button>
-    </div>
+    <>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1>
+      <div role="alert" className="mt-8 space-y-4">
+        <p>Couldn&apos;t load this case.</p>
+        <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void detail.refetch()}>Try again</button>
+      </div>
+    </>
   );
   const request = detail.data;
   return (
@@ -72,7 +79,7 @@ function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">{request.event.name}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <AdminStatusPill label={runner ? "Runner" : "Support"} tone={runner ? "ink" : "muted"} />
-        <AdminStatusPill label={request.status} tone={request.status === "DRAFT" ? "amber" : "ink"} />
+        <AdminStatusPill label={REMOVAL_STATUS_LABEL[request.status] ?? request.status} tone={request.status === "DRAFT" ? "amber" : "ink"} />
       </div>
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 text-sm">
         {runner ? (
@@ -88,7 +95,7 @@ function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
         {runner && !!request.riskFlags?.length && (
           <div className="sm:col-span-2">
             <dt className="text-slate">Needs a closer look</dt>
-            {request.riskFlags.map((flag) => <dd key={flag} className="text-amber-700">{RISK_FLAG_LABEL[flag] ?? flag}</dd>)}
+            {request.riskFlags.map((flag) => <dd key={flag} className="text-warning-text">{RISK_FLAG_LABEL[flag] ?? flag}</dd>)}
           </div>
         )}
       </dl>
@@ -118,7 +125,7 @@ export function ReviewCurrentState({ request, actions, refreshing, refresh, onRe
     onReviewed?.();
   }
   return (
-    <div role="alert" className="rounded-2xl border border-amber-600/30 bg-bone-deep p-4 space-y-3">
+    <div role="alert" className="rounded-2xl border border-warning/40 bg-bone-deep p-4 space-y-3">
       <p className="text-sm text-ink">This case changed while you were working. Review the current state before continuing.</p>
       <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={refreshing} onClick={() => void review()}>
         Review current state
@@ -134,7 +141,6 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
   const [file, setFile] = useState<File | null>(null);
   const [bib, setBib] = useState("");
   const [bibFilter, setBibFilter] = useState("");
-  const [offset, setOffset] = useState(0);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [match, setMatch] = useState<MatchState>({ kind: "idle" });
   const [selection, setSelection] = useState(new Map<string, Selected>());
@@ -142,7 +148,9 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
   const [note, setNote] = useState("");
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ items: RemovalPhotoDto[]; index: number } | null>(null);
-  const gallery = useRemovalPhotos(id, { offset, limit: PAGE, bib: bibFilter || undefined });
+  // RM7: a manual note is marked invalid only once the admin has left it.
+  const [touchedNotes, setTouchedNotes] = useState(new Set<string>());
+  const gallery = useRemovalPhotos(id, bibFilter ? { bib: bibFilter } : {}, PAGE);
   // A retry of the same action after a failure reuses its command ID; any changed action gets a new one.
   const commands = useRef(new Map<string, string>());
   const commandFor = (fingerprint: string) => {
@@ -175,7 +183,7 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
 
   async function search() {
     setSearchError(null);
-    if (bib.trim() !== bibFilter) { setBibFilter(bib.trim()); setOffset(0); }
+    if (bib.trim() !== bibFilter) setBibFilter(bib.trim());
     if (!file) return;
     const invalid = validateImageFile(file) ?? (file.size > MAX_EVIDENCE_BYTES ? "Selfie must be under 5 MB." : null);
     if (invalid) { setSearchError(invalid); return; }
@@ -225,8 +233,8 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
     <PhotoTile key={item.photo.id} item={item} checked={selection.has(item.photo.id)} disabled={busy}
       onToggle={() => toggle(item, source)} onPreview={() => setPreview({ items, index })} position={`${index + 1} of ${items.length}`} />
   ));
-  const galleryItems = gallery.data?.items ?? [];
-  const galleryTotal = gallery.data?.total ?? 0;
+  const galleryItems = gallery.items;
+  const galleryTotal = gallery.total;
 
   return (
     <div className="mt-8 space-y-12">
@@ -239,7 +247,7 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
         {request.evidencePresent && file && <p className="text-sm text-slate">Searching with a new selfie replaces the one on file and clears earlier matches.</p>}
         {/* A runner case's evidence is its own live-check image: it is never replaced here (R10). */}
         {isRunner(request)
-          ? !request.evidencePresent && <p className="text-sm text-amber-700">No live-check image was saved for this request. Pick the runner&apos;s photos by hand below, or cancel the case.</p>
+          ? !request.evidencePresent && <p className="text-sm text-warning-text">No live-check image was saved for this request. Pick the runner&apos;s photos by hand below, or cancel the case.</p>
           : <FindPhotosControls file={file} bib={bib} onFileChange={setFile} onBibChange={setBib} onSearch={() => void search()}
               busy={busy || reviewRequired} error={searchError} allowPersonalLibrary={false} />}
         {request.evidencePresent && !file && (
@@ -269,19 +277,13 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
         <h2 id="removal-browse" className="font-display text-xl font-extrabold text-ink">{bibFilter ? <>Bib <span className="tnum">{bibFilter}</span></> : "All event photos"}</h2>
         <p className="text-sm text-slate">
           Every photographer in this event{bibFilter ? "" : ". Photos added from here need a note explaining why"}. <span className="tnum">{galleryTotal}</span> photos.
-          {bibFilter && <button type="button" className={cn(BTN_GHOST, "ml-2 underline")} onClick={() => { setBib(""); setBibFilter(""); setOffset(0); }}>Clear bib</button>}
+          {bibFilter && <button type="button" className={cn(BTN_GHOST, "ml-2 underline")} onClick={() => { setBib(""); setBibFilter(""); }}>Clear bib</button>}
         </p>
-        {gallery.isPending && <p role="status" className="text-sm text-slate">Loading photos…</p>}
-        {gallery.isError && <p role="alert" className="text-sm text-ink">Couldn&apos;t load photos. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void gallery.refetch()}>Try again</button></p>}
-        {gallery.isSuccess && galleryItems.length === 0 && <p className="text-sm text-slate">No photos found.</p>}
+        {gallery.isLoading && <p role="status" className="text-sm text-slate">Loading photos…</p>}
+        {!!gallery.error && <p role="alert" className="text-sm text-ink">Couldn&apos;t load photos. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void gallery.refetch()}>Try again</button></p>}
+        {!gallery.isLoading && !gallery.error && galleryItems.length === 0 && <p className="text-sm text-slate">No photos found.</p>}
         <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">{tile(galleryItems, bibFilter ? "BIB" : "MANUAL")}</ul>
-        {galleryTotal > PAGE && (
-          <div className="flex items-center gap-2">
-            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>← Previous</button>
-            <span className="font-mono tnum text-sm text-slate">{offset + 1}–{Math.min(offset + PAGE, galleryTotal)} of {galleryTotal}</span>
-            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset + PAGE >= galleryTotal} onClick={() => setOffset(offset + PAGE)}>Next →</button>
-          </div>
-        )}
+        <LoadMoreButton shown={galleryItems.length} total={galleryTotal} increment={PAGE} onLoadMore={gallery.fetchNextPage} isLoading={gallery.isFetchingNextPage} />
       </section>
 
       {selected.length > 0 && (
@@ -292,22 +294,30 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
             <div key={key} className="space-y-2">
               <h3 className="font-display font-bold text-ink">{owner}</h3>
               {key === ""
-                ? <p className="text-sm text-amber-700">No photographer will be asked to review these photos — they have no owner on record.</p>
+                ? <p className="text-sm text-warning-text">No photographer will be asked to review these photos — they have no owner on record.</p>
                 : <p className="text-sm text-slate">Will receive a review request for <span className="tnum">{plural(items.length, "photo")}</span>.</p>}
               <ul className="space-y-2">
-                {items.map((item) => (
-                  <li key={item.photo.photo.id} className="text-sm text-ink">
-                    <span className="font-mono tnum">{item.photo.photo.id}</span> · {item.source}
-                    {item.source === "MANUAL" && (
-                      <div className="mt-1">
-                        <label htmlFor={`note-${item.photo.photo.id}`} className="sr-only">Note for {item.photo.photo.id}</label>
-                        <input id={`note-${item.photo.photo.id}`} type="text" maxLength={2000} placeholder="Why this photo is the runner (required)"
-                          aria-invalid={!item.note.trim()} value={item.note} disabled={busy} className={REMOVAL_INPUT}
-                          onChange={(e) => { const value = e.target.value; setSelection((current) => new Map(current).set(item.photo.photo.id, { ...item, note: value })); }} />
+                {items.map((item) => {
+                  const photoId = item.photo.photo.id;
+                  const name = `Photo ${selected.indexOf(item) + 1}`;
+                  return (
+                    <li key={photoId} className="flex items-start gap-3 text-sm text-ink">
+                      <RemovalPhotoThumb src={item.photo.photo.imageUrl} alt={`${name} of ${request.event.name}`} />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p><span className="tnum">{item.photo.photo.bib ? `Bib ${item.photo.photo.bib}` : "No bib"}</span> · {REMOVAL_SOURCE_LABEL[item.source]}</p>
+                        {item.source === "MANUAL" && (
+                          <>
+                            <label htmlFor={`note-${photoId}`} className="sr-only">Note for {name.toLowerCase()}</label>
+                            <input id={`note-${photoId}`} type="text" maxLength={2000} placeholder="Why this photo is the runner (required)"
+                              aria-invalid={(touchedNotes.has(photoId) && !item.note.trim()) || undefined} value={item.note} disabled={busy} className={REMOVAL_INPUT}
+                              onBlur={() => setTouchedNotes((current) => new Set(current).add(photoId))}
+                              onChange={(e) => { const value = e.target.value; setSelection((current) => new Map(current).set(photoId, { ...item, note: value })); }} />
+                          </>
+                        )}
                       </div>
-                    )}
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -315,11 +325,8 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
             <AdminFieldLabel htmlFor="removal-method">Verification method</AdminFieldLabel>
             <input id="removal-method" type="text" maxLength={2000} value={method} disabled={busy} onChange={(e) => setMethod(e.target.value)} className={REMOVAL_INPUT} />
           </div>
-          <div className="space-y-2">
-            <AdminFieldLabel htmlFor="removal-note">Verification note</AdminFieldLabel>
-            <textarea id="removal-note" rows={3} maxLength={2000} value={note} disabled={busy} onChange={(e) => setNote(e.target.value)} className={REMOVAL_INPUT} />
-          </div>
-          {selected.length > 100 && <p className="text-sm text-amber-700">Select at most <span className="tnum">100</span> photos per verification.</p>}
+          <AdminTextarea id="removal-note" label="Verification note" maxLength={2000} value={note} disabled={busy} onChange={setNote} />
+          {selected.length > 100 && <p className="text-sm text-warning-text">Select at most <span className="tnum">100</span> photos per verification.</p>}
           <FieldError message={verifyError} id="removal-verify-error" />
           <button type="button" disabled={!canVerify} onClick={() => void verify()} className={cn(BTN_PRIMARY, BTN_SIZE.md)}>
             {actions.verify.isPending ? "Verifying…" : `Verify ${plural(selected.length, "photo")}`}
@@ -367,10 +374,10 @@ function PhotoTile({ item, checked, disabled, onToggle, onPreview, position }: {
         <input type="checkbox" value={photo.id} checked={checked} disabled={disabled} onChange={onToggle}
           aria-label={`Include ${photo.bib ? `bib ${photo.bib}` : "untagged photo"} · ${photo.id}`} className="mt-1" />
         <span className="min-w-0">
-          <span className={cn("block truncate", !item.photographerId && "text-amber-700")}>{ownerOf(item.photographerId, item.photographerName)}</span>
+          <span className={cn("block truncate", !item.photographerId && "text-warning-text")}>{ownerOf(item.photographerId, item.photographerName)}</span>
           <span className="block font-mono tnum text-slate">{photo.bib ?? "No bib"}{item.matchScore != null && <> · {Math.round(item.matchScore * 100)}%</>}</span>
           {(item.trashed || item.removalState !== "NONE" || !item.bytesAvailable) && (
-            <span className="block text-amber-700">{item.removalState === "REMOVED" ? "Removed" : item.removalState === "REVIEW" ? "Under review" : item.trashed ? "In trash" : "File unavailable"}</span>
+            <span className="block text-warning-text">{item.removalState === "REMOVED" ? "Removed" : item.removalState === "REVIEW" ? "Under review" : item.trashed ? "In trash" : "File unavailable"}</span>
           )}
         </span>
       </label>
@@ -395,7 +402,7 @@ function EvidencePreview({ requestId }: { requestId: string }) {
       <div>
         <p className="font-display font-bold text-ink">Selfie on file</p>
         <p className="text-sm text-slate">Private case evidence. It is not added to anyone&apos;s selfie library.</p>
-        {evidence.isError && <p className="text-sm text-amber-700">Preview unavailable.</p>}
+        {evidence.isError && <p className="text-sm text-warning-text">Preview unavailable.</p>}
       </div>
     </div>
   );
@@ -451,6 +458,9 @@ function CancelCase({ request, disabled }: { request: PhotoRemovalRequestDto; di
 }
 
 type SuggestionAction = "promote" | "dismiss" | "demote";
+const SUGGESTION_DONE: Record<SuggestionAction, string> = {
+  promote: "Photo hidden and sent to its photographer for review.", demote: "Photo is public again and kept as a suggestion.", dismiss: "Suggestion dismissed.",
+};
 
 // RD-6 suggestion review on an open runner case. Promote hides and verifies; dismiss leaves the photo public;
 // demote makes an auto-hidden photo public again as a suggestion. Decisions stay in RemovalRequestDecision.
@@ -458,18 +468,22 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
   const actions = useAdminRemovalActions();
   const { commandFor, done } = useCommandIds();
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{ action: "promote" | "demote"; item: PhotoRemovalItemDto } | null>(null);
   const hidden = request.items.filter((item) => item.autoHidden && item.state === "VERIFIED");
   const suggestions = request.items.filter((item) => item.state === "CANDIDATE");
   const busy = actions.reviewSuggestions.isPending || refreshing || actions.reviewRequired(request.id) || request.status !== "OPEN";
 
   async function review(action: SuggestionAction, itemId: string) {
     if (busy) return;
-    setError(null);
+    setError(null); setNotice(null);
     const body = { expectedVersion: request.version, promote: [] as string[], dismiss: [] as string[], demote: [] as string[], [action]: [itemId] };
     const fingerprint = `suggestions:${JSON.stringify(body)}`;
     try {
       await actions.reviewSuggestions.mutateAsync({ id: request.id, command: { ...body, commandId: commandFor(fingerprint) } });
       done(fingerprint);
+      setConfirming(null);
+      setNotice(SUGGESTION_DONE[action]);
     } catch (failure) {
       setError(errorText(failure));
     }
@@ -477,10 +491,7 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
 
   const row = (item: PhotoRemovalItemDto, buttons: ReactNode) => (
     <li key={item.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-line p-3 text-sm">
-      <span className="size-16 shrink-0 overflow-hidden rounded-lg bg-bone-deep">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        {item.photo?.photo.imageUrl && <img src={item.photo.photo.imageUrl} alt="" loading="lazy" className="h-full w-full object-cover" />}
-      </span>
+      <RemovalPhotoThumb src={item.photo?.photo.imageUrl} alt={`Photo ${request.items.indexOf(item) + 1} of ${request.event.name}`} />
       <span className="min-w-0 flex-1">
         <span className="block font-mono tnum text-ink truncate">{item.photoIdSnapshot}</span>
         <span className="block text-slate truncate">{ownerOf(item.ownerIdSnapshot, item.ownerNameSnapshot)}</span>
@@ -500,7 +511,7 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
         {hidden.length === 0 ? <p className="text-sm text-slate">No photos were hidden automatically.</p> : (
           <ul className="space-y-2">
             {hidden.map((item) => row(item, item.adminDecision == null && (
-              <button type="button" disabled={busy} onClick={() => void review("demote", item.id)} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+              <button type="button" disabled={busy} onClick={() => setConfirming({ action: "demote", item })} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
                 Make public again, keep as suggestion<span className="sr-only"> for {item.photoIdSnapshot}</span>
               </button>
             )))}
@@ -513,7 +524,7 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
         {suggestions.length === 0 ? <p className="text-sm text-slate">No suggestions left.</p> : (
           <ul className="space-y-2">
             {suggestions.map((item) => row(item, <>
-              <button type="button" disabled={busy} onClick={() => void review("promote", item.id)} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
+              <button type="button" disabled={busy} onClick={() => setConfirming({ action: "promote", item })} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
                 Promote<span className="sr-only"> {item.photoIdSnapshot}</span>
               </button>
               <button type="button" disabled={busy} onClick={() => void review("dismiss", item.id)} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
@@ -523,7 +534,20 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
           </ul>
         )}
       </section>
-      <FieldError message={error} id="runner-suggestions-error" />
+      {!confirming && <FieldError message={error} id="runner-suggestions-error" />}
+      {notice && <p role="status" className="text-sm text-ink">{notice}</p>}
+      <AdminConfirmModal open={!!confirming} onClose={() => { setConfirming(null); setError(null); }}
+        onConfirm={() => confirming && void review(confirming.action, confirming.item.id)}
+        title={confirming?.action === "promote" ? "Promote this photo?" : "Make this photo public again?"}
+        confirmLabel={confirming?.action === "promote" ? "Promote and hide" : "Make public again"}
+        tone={confirming?.action === "promote" ? "danger" : "primary"}
+        confirmDisabled={busy} submitting={actions.reviewSuggestions.isPending} error={confirming ? error : null}>
+        <p className="font-sans text-sm text-ink-soft">
+          {confirming?.action === "promote"
+            ? "It is hidden from sale and search, and its photographer is asked to review it."
+            : "It goes back on sale and in search, and stays on this case as a suggestion."}
+        </p>
+      </AdminConfirmModal>
     </div>
   );
 }
