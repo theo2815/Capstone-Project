@@ -61,6 +61,23 @@ describe("PhotoMosaicTile coupon badge", () => {
   });
 });
 
+// Runner audit P2-1: the price was only in the Buy button's label.
+describe("PhotoMosaicTile price", () => {
+  const event = {
+    id: "event-1", slug: "event-1", name: "Event One", date: "2026-09-04", location: "Cebu",
+    photoCount: 1, participantCount: 1, status: "ACTIVE", description: "", organizerName: "",
+    categories: [], pricePerPhoto: 80,
+  } as EventDetail;
+  const photo: MockPhoto = { id: "photo-1", bib: "101", km: null, time: "", tone: 0, span: "default", price: 80 };
+
+  it("shows the photo's price on its buy button", () => {
+    render(<PhotoMosaicTile event={event} photo={photo} index={0} onOpen={vi.fn()} />);
+    const buy = screen.getByRole("button", { name: "Buy 101 now for ₱80" });
+    expect(buy).toHaveTextContent("₱80");
+    expect(buy).not.toHaveTextContent(/^Buy/);
+  });
+});
+
 // FS-11: the grid loads the 800 px tile; older photos without one keep the preview.
 describe("PhotoMosaicTile image source", () => {
   const event: EventDetail = {

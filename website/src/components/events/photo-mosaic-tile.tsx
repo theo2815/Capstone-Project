@@ -9,6 +9,11 @@ import { savePhoto } from "@/lib/save-photo";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
 
+// The pills stay small so they cover little of the photo; this invisible
+// layer stretches each one's tap area to 44 px tall (design-system §4).
+const TOUCH_AREA =
+  "relative before:absolute before:inset-x-0 before:-inset-y-[7px] before:content-['']";
+
 const TONE_COLORS = [
   "var(--ink)",
   "var(--ink-soft)",
@@ -170,6 +175,7 @@ export function PhotoMosaicTile({
           aria-label={`Download ${photo.bib ?? "untagged photo"} for free`}
           className={cn(
             "absolute bottom-3 right-3 inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
+            "before:absolute before:inset-x-0 before:-inset-y-[7px] before:content-['']",
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)] transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             "bg-ink/85 backdrop-blur-sm text-surface hover:bg-fresh",
@@ -191,6 +197,7 @@ export function PhotoMosaicTile({
           }
           className={cn(
             "inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
+            TOUCH_AREA,
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
             "transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
@@ -208,13 +215,16 @@ export function PhotoMosaicTile({
           aria-label={`Buy ${photo.bib ?? "untagged photo"} now for ₱${photo.price}`}
           className={cn(
             "inline-flex items-center gap-1 px-3 py-1.5 rounded-full font-display font-bold text-[12px] whitespace-nowrap",
+            TOUCH_AREA,
             "shadow-[0_4px_12px_-2px_rgba(0,0,0,0.25)]",
             "transition-colors duration-200",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone",
             "bg-ink/85 backdrop-blur-sm text-surface hover:bg-fresh",
           )}
         >
-          <span>Buy</span>
+          {/* The price is the buy action, like a store's price button; the
+              label above still says "Buy … now for ₱X". */}
+          <span className="tnum">₱{photo.price}</span>
           <span aria-hidden="true">→</span>
         </button>
       </div>
