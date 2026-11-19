@@ -708,15 +708,16 @@ export interface AdminPayoutReportListArgs {
 
 export async function fetchAdminPayoutReports(
   args: AdminPayoutReportListArgs = {},
-): Promise<PayoutReport[]> {
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<PayoutReport>> {
   const p = new URLSearchParams();
   if (args.status) p.set("status", args.status);
   p.set("offset", String(args.offset ?? 0));
   p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
-  const res = await api.get<PaginatedResponse<PayoutReport>>(
+  return api.get<PaginatedResponse<PayoutReport>>(
     `/admin/payouts/reports?${p.toString()}`,
+    { signal },
   );
-  return res.items;
 }
 
 export async function acknowledgePayoutReport(
