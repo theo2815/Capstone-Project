@@ -784,6 +784,10 @@ function BrowseMode({
               </>
             )}
           </h2>
+          {/* A search with nothing to show: the result box below explains it,
+              so skip the "these are the photos…" line and the photo links. */}
+          {!(isAnyFilter && visible.length === 0) && (
+          <>
           <p className="mt-4 font-sans text-base md:text-lg text-ink-soft max-w-md">
             {isFaceMode
               ? "These are the photos that match your saved selfie. Tap any to add to cart."
@@ -807,6 +811,8 @@ function BrowseMode({
           >
             In these photos? Request deletion →
           </Link>
+          </>
+          )}
         </div>
       </header>
 

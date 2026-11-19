@@ -89,6 +89,26 @@ it("says how long to wait when a bib search is refused with a 429, not 'No match
   expect(screen.queryByText(/No matches yet|Still uploading/)).not.toBeInTheDocument();
 });
 
+it("a bib search with no matches doesn't say 'these are the photos matching your bib'", async () => {
+  fixtures.state.url = { bib: "1234" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 60 });
+  renderCockpit();
+
+  expect(await screen.findByText("No photos with bib 1234 yet.")).toBeInTheDocument();
+  expect(screen.queryByText(/These are the photos matching your bib/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /In these photos\? Request deletion/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Refund Policy/i })).not.toBeInTheDocument();
+});
+
+it("a bib search with matches keeps its subtitle and links", async () => {
+  fixtures.state.url = { bib: "123" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue({ items: fixtures.matches.slice(0, 3), total: 3, offset: 0, limit: 60 });
+  renderCockpit();
+
+  expect(await screen.findByText(/These are the photos matching your bib/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /In these photos\? Request deletion/ })).toBeInTheDocument();
+});
+
 // BT-1b: opening a shared or saved ?bib= link is a bib search, so this device
 // must tick the bib box before the photo request goes out.
 const bibPage = { items: fixtures.matches.slice(0, 3), total: 3, offset: 0, limit: 60 };
