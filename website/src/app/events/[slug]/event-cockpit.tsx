@@ -335,6 +335,8 @@ function CockpitMode({
                   eventSlug={event.slug}
                   onSwitchToBib={() => onPanelModeChange("bib")}
                   onSearchSuccess={onFaceSearchSuccess}
+                  onBrowseAll={onBrowseAll}
+                  browseCount={photoCount}
                 />
               )}
             </div>

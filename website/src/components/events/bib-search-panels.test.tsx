@@ -166,31 +166,68 @@ it("tells the runner how long to wait when the search is refused with a 429", as
 const mountPanel = (onSearchSuccess = vi.fn()) =>
   render(<QueryClientProvider client={client}><SelfieSearchPanel eventSlug="race" onSwitchToBib={() => {}} onSearchSuccess={onSearchSuccess} /></QueryClientProvider>);
 
-it("keeps every selfie action off until the face-matching box is ticked", async () => {
+// Runner audit P2-3: the notice used to fill the first phone screen before the
+// runner chose anything. It now appears, in full, once a selfie option is picked.
+it("shows the face-matching notice only after a selfie option is chosen, and sends nothing before the tick", async () => {
   useFaceConsentStore.setState({ acceptedVersion: null });
   library.selfies = [selfie];
   const fetch = vi.fn().mockImplementation(async () => found());
   vi.stubGlobal("fetch", fetch);
   const onSearchSuccess = vi.fn();
-  mountPanel(onSearchSuccess);
-  expect(screen.getByLabelText(/Take a selfie/)).toBeDisabled();
-  expect(screen.getByLabelText(/Upload a selfie/)).toBeDisabled();
-  expect(screen.getByRole("button", { name: /Use saved selfie/ })).toBeDisabled();
+  const { container } = mountPanel(onSearchSuccess);
+  // First view: the choices, no notice, and no file input that could send a face.
+  expect(screen.queryByLabelText(/I agree to face matching/)).not.toBeInTheDocument();
+  expect(container.querySelector('input[type="file"]')).toBeNull();
+  expect(screen.getByRole("button", { name: /Take a selfie/ })).toBeEnabled();
+  expect(screen.getByRole("button", { name: /Upload a selfie/ })).toBeEnabled();
+
+  // Choosing one opens the full notice with the tick; still nothing sent.
+  fireEvent.click(screen.getByRole("button", { name: /Upload a selfie/ }));
+  expect(screen.getByLabelText(/I agree to face matching/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /How face matching works/ })).toHaveAttribute("href", "/privacy#face-matching");
-  // A change event that slips past the disabled input still sends nothing.
-  fireEvent.change(screen.getByLabelText(/Upload a selfie/), { target: { files: [file] } });
+  expect(container.querySelector('input[type="file"]')).toBeNull();
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   expect(fetch).not.toHaveBeenCalled();
 
+  // After the tick the real picker is there, with a pointer to it.
   fireEvent.click(screen.getByLabelText(/I agree to face matching/));
+  expect(screen.getByText(/Tap Upload a selfie to pick your photo/)).toBeInTheDocument();
   expect(screen.getByLabelText(/Upload a selfie/)).not.toBeDisabled();
   fireEvent.change(screen.getByLabelText(/Upload a selfie/), { target: { files: [file] } });
   await waitFor(() => expect(onSearchSuccess).toHaveBeenCalledWith(searchResult));
 });
 
+it("puts bib search and browsing right under the selfie options, before the sign-in prompt", () => {
+  useAuthStore.getState().logout();
+  const onBrowseAll = vi.fn();
+  render(<QueryClientProvider client={client}><SelfieSearchPanel eventSlug="race" onSwitchToBib={() => {}} onSearchSuccess={() => {}} onBrowseAll={onBrowseAll} browseCount={35} /></QueryClientProvider>);
+  const bib = screen.getByRole("button", { name: /Search by bib/ });
+  const browse = screen.getByRole("button", { name: /Browse all 35 photos/ });
+  const signIn = screen.getByRole("button", { name: /Sign in/ });
+  expect(bib.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(browse.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(browse);
+  expect(onBrowseAll).toHaveBeenCalledOnce();
+});
+
+it("offers no browse link where browsing makes no sense (the gallery's search pop-up)", () => {
+  mountPanel();
+  expect(screen.queryByRole("button", { name: /Browse all/ })).not.toBeInTheDocument();
+});
+
+it("goes back from the notice to the choices", () => {
+  useFaceConsentStore.setState({ acceptedVersion: null });
+  mountPanel();
+  fireEvent.click(screen.getByRole("button", { name: /Take a selfie/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Back/ }));
+  expect(screen.queryByLabelText(/I agree to face matching/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Take a selfie/ })).toBeEnabled();
+});
+
 it("remembers the tick on this device after a remount", () => {
   useFaceConsentStore.setState({ acceptedVersion: null });
   const { unmount } = mountPanel();
+  fireEvent.click(screen.getByRole("button", { name: /Take a selfie/ }));
   fireEvent.click(screen.getByLabelText(/I agree to face matching/));
   unmount();
   mountPanel();
