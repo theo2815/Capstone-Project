@@ -17,8 +17,8 @@ import { cn, formatPrice } from "@/lib/utils";
 
 // /admin/sales — revenue intelligence. Five slabs:
 //   01 KPIs            server KPIs only (`range=ytd`); never a browser estimate
-//   02 Weekly trend    estimated from payout cycles, labelled Estimate
-//   03 Top performers  photographers estimated, events from server order sums
+//   02 Weekly trend    server weekly series (`/admin/sales/trend`)
+//   03 Top performers  server top photographers (year to date) and event order sums
 //   04 Sales by event  server order sums; browser-derived rows badged Implied
 //   05 Refund pulse    server refunds; rate against `range=week` GMV
 //
@@ -147,10 +147,7 @@ function Header({ totalSales }: { totalSales: number | undefined }) {
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
         Where revenue comes from across photographers, events, and the last{" "}
-        <span className="font-mono tnum">{SALES_TREND_WEEKS}</span> weeks. The
-        weekly trend and top photographers are{" "}
-        <span className="text-ink">estimates</span> until server figures
-        arrive —{" "}
+        <span className="font-mono tnum">{SALES_TREND_WEEKS}</span> weeks —{" "}
         <span className="font-mono tnum">{totalSales?.toLocaleString() ?? "—"}</span>{" "}
         photos sold to date.
       </p>

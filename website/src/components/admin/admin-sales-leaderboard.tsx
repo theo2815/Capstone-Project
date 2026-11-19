@@ -2,37 +2,56 @@
 
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { useAdminTopPhotographersQuery } from "@/hooks/use-admin-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
-import { formatPrice } from "@/lib/utils";
-import {
-  SALES_ESTIMATE_NOTE,
-  useTopPhotographers,
-  useTopEvents,
-  type TopPhotographer,
-  type SalesEventRow,
-} from "@/lib/admin-sales";
+import { cn, formatPrice } from "@/lib/utils";
+import { useTopEvents, type SalesEventRow } from "@/lib/admin-sales";
+import type { AdminTopPhotographer } from "@/lib/api-admin";
 
 const TOP_LIMIT = 10;
 
-// Two-column ranked board for /admin/sales. Photographer side is an estimate
-// (payout photo counts × per-photo price) until AX-18 reads the server list.
-// Event side is the server's order sums; a row derived in the browser while the
-// server has no answer carries an Implied badge.
+// Two-column ranked board for /admin/sales. Photographer side is the server's
+// year-to-date list (GET /admin/sales/top-photographers, same sums as the
+// money tiles). Event side is the server's order sums; a row derived in the
+// browser while the server has no answer carries an Implied badge.
 export function AdminSalesLeaderboard() {
-  const photographers = useTopPhotographers(TOP_LIMIT);
+  const photographersQuery = useAdminTopPhotographersQuery("ytd", TOP_LIMIT);
+  const photographers = photographersQuery.data;
   const events = useTopEvents(TOP_LIMIT);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14">
       <Column
         title="Top photographers"
-        caption="Estimate"
-        note={SALES_ESTIMATE_NOTE}
-        emptyCopy="No payouts yet — once payouts land, the highest-earning brands surface here."
-        rows={photographers}
+        caption="Year to date"
+        emptyCopy="No photo sales yet this year."
+        rows={photographers ?? []}
+        fallback={
+          photographers ? undefined : photographersQuery.isError ? (
+            <div role="alert" className="space-y-3">
+              <p className="font-sans text-sm text-error">
+                Couldn&apos;t load the top photographers. Please try again.
+              </p>
+              <button
+                type="button"
+                onClick={() => void photographersQuery.refetch()}
+                disabled={photographersQuery.isFetching}
+                className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <div aria-busy="true">
+              <Skeleton className="h-40 w-full rounded-md" />
+            </div>
+          )
+        }
         renderRow={(p, rank) => (
-          <PhotographerRow key={p.photographerId} rank={rank} row={p} />
+          <PhotographerRow key={p.userId} rank={rank} row={p} />
         )}
       />
       <Column
@@ -51,18 +70,19 @@ export function AdminSalesLeaderboard() {
 interface ColumnProps<T> {
   title: string;
   caption: string;
-  note?: string;
   emptyCopy: string;
   rows: T[];
+  /** Shown instead of the list while it loads or after it fails. */
+  fallback?: React.ReactNode;
   renderRow: (row: T, rank: number) => React.ReactNode;
 }
 
 function Column<T>({
   title,
   caption,
-  note,
   emptyCopy,
   rows,
+  fallback,
   renderRow,
 }: ColumnProps<T>) {
   return (
@@ -71,14 +91,13 @@ function Column<T>({
         <Kicker>{title}</Kicker>
         <Kicker tone="soft">{caption}</Kicker>
       </header>
-      {note && <p className="font-sans text-sm text-ink-soft -mt-2 mb-5">{note}</p>}
-      {rows.length === 0 ? (
+      {fallback ?? (rows.length === 0 ? (
         <p className="font-sans text-sm text-ink-soft">{emptyCopy}</p>
       ) : (
         <ol className="border-y border-line divide-y divide-line">
           {rows.map((row, i) => renderRow(row, i + 1))}
         </ol>
-      )}
+      ))}
     </div>
   );
 }
@@ -88,9 +107,8 @@ function PhotographerRow({
   row,
 }: {
   rank: number;
-  row: TopPhotographer;
+  row: AdminTopPhotographer;
 }) {
-  const label = row.brandName ?? row.photographerName;
   const href = row.handle
     ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${row.handle}`
     : ROUTES.ADMIN_PHOTOGRAPHERS;
@@ -106,11 +124,11 @@ function PhotographerRow({
           </span>
           <div className="min-w-0">
             <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
-              {label}
+              {row.displayName}
             </p>
             <Kicker as="p" tone="soft" tnum className="mt-1">
-              {row.photosSold.toLocaleString()} photos · {row.cycles}{" "}
-              {row.cycles === 1 ? "payout" : "payouts"}
+              {row.salesCount.toLocaleString()}{" "}
+              {row.salesCount === 1 ? "photo sold" : "photos sold"}
             </Kicker>
           </div>
         </div>

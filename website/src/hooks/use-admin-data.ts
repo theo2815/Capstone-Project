@@ -19,7 +19,11 @@ import {
   fetchFlagHiddenPhotos,
   fetchAdminSalesKpis,
   fetchAdminSalesByEvent,
+  fetchAdminSalesTrend,
+  fetchAdminTopPhotographers,
   type AdminKpis,
+  type AdminSalesWeek,
+  type AdminTopPhotographer,
   type AdminTrendPoint,
   type AdminFlagListArgs,
   type AdminSalesEventRow,
@@ -236,6 +240,26 @@ export function useAdminSalesKpisQuery(range: AdminSalesRange = "ytd") {
   return useQuery<AdminSalesKpis>({
     queryKey: ["admin", "sales", "kpis", range, ...session.key],
     queryFn: ({ signal }) => fetchAdminSalesKpis(range, signal),
+    enabled: session.enabled,
+    staleTime: SALES_STALE_MS,
+  });
+}
+
+export function useAdminSalesTrendQuery(weeks: number) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery<AdminSalesWeek[]>({
+    queryKey: ["admin", "sales", "trend", weeks, ...session.key],
+    queryFn: ({ signal }) => fetchAdminSalesTrend(weeks, signal),
+    enabled: session.enabled,
+    staleTime: SALES_STALE_MS,
+  });
+}
+
+export function useAdminTopPhotographersQuery(range: AdminSalesRange, limit: number) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery<AdminTopPhotographer[]>({
+    queryKey: ["admin", "sales", "top-photographers", range, limit, ...session.key],
+    queryFn: ({ signal }) => fetchAdminTopPhotographers(range, limit, signal),
     enabled: session.enabled,
     staleTime: SALES_STALE_MS,
   });

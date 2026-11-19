@@ -11,7 +11,7 @@ import { useOwnedPhotoIds } from "./use-owned-photo-ids";
 import { useSelfiesList } from "./use-selfies";
 import { usePhotographerSettingsQueries } from "./use-photographer-settings";
 import { usePhotographerPurchasedPhotos, usePhotographerPhotoPurchases } from "./use-photographer-purchases";
-import { useAdminFlags, useAdminKpis, useAdminKpiTrend, useAdminSalesKpisQuery, useAdminSalesByEventLive, useFlagActions } from "./use-admin-data";
+import { useAdminFlags, useAdminKpis, useAdminKpiTrend, useAdminSalesKpisQuery, useAdminSalesByEventLive, useAdminSalesTrendQuery, useAdminTopPhotographersQuery, useFlagActions } from "./use-admin-data";
 import {
   usePhotographerEvents, usePhotographerEventDetail, usePhotographerEventPhotos, usePhotographerEventMetadataVisibility,
   usePhotographerEarnings, usePhotographerPerEventEarnings, usePhotographerPayouts,
@@ -157,6 +157,8 @@ describe.each([
   { name: "admin trend", role: "ADMIN", useRead: useAdminKpiTrend, payload: [] },
   { name: "admin sales", role: "ADMIN", useRead: () => useAdminSalesKpisQuery().data ?? null, payload: { total: 100 } },
   { name: "admin event sales", role: "ADMIN", useRead: useAdminSalesByEventLive, payload: page },
+  { name: "admin sales trend", role: "ADMIN", useRead: () => useAdminSalesTrendQuery(12).data ?? null, payload: { weeks: [] } },
+  { name: "admin top photographers", role: "ADMIN", useRead: () => useAdminTopPhotographersQuery("ytd", 10).data ?? null, payload: { items: [] } },
 ] as const)("$name session boundary", ({ role, useRead, payload }) => {
   it("gates guests and discards pending reads across logout and same-account relogin", async () => {
     const old = deferred<unknown>();
