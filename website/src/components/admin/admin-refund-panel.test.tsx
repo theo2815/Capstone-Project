@@ -287,7 +287,7 @@ describe("manual refund panel", () => {
     render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
     const drawer = await screen.findByRole("dialog");
     await user.click(within(drawer).getByRole("button", { name: "Mark refunded" }));
-    act(() => { client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me", offset: 0 }), { items: [{ ...parked, status: "resolved", refundStatus: "succeeded" }], total: 1, offset: 0, limit: 50 }); });
+    act(() => { client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me" }), { pages: [{ items: [{ ...parked, status: "resolved", refundStatus: "succeeded" }], total: 1, offset: 0, limit: 50 }], pageParams: [0] }); });
     await waitFor(() => expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument());
     await user.keyboard("{Escape}");
     expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument();

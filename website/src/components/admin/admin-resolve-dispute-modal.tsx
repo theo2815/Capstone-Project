@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   AdminFormSection,
   AdminRadioGroup,
@@ -151,7 +152,7 @@ export function AdminResolveDisputeModal({
             <button
               type="button"
               onClick={() => onDenyWithReason(denyCode)}
-              className="font-mono uppercase tracking-[0.14em] text-[13px] text-ink underline"
+              className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
             >
               Deny with this reason
             </button>

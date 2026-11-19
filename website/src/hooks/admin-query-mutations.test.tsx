@@ -267,7 +267,8 @@ it.each([404, 400])("useAdminDispute returns null on 404, and on 400 for a malfo
   expect(result.current.data).toBeNull();
 });
 
-const queuePage: PaginatedResponse<Dispute> = { items: [dispute], total: 1, offset: 0, limit: 50 };
+// The queue caches useInfiniteList pages.
+const queuePage: { pages: PaginatedResponse<Dispute>[]; pageParams: number[] } = { pages: [{ items: [dispute], total: 1, offset: 0, limit: 50 }], pageParams: [0] };
 
 it("after an action every cached queue page refetches", async () => {
   const pageKey = adminDisputeKeys.page(admin.id, { view: "needs_me" });
@@ -285,7 +286,7 @@ it("after an action every cached queue page refetches", async () => {
 });
 
 it("a 409 refetches every cached queue page", async () => {
-  const pageKey = adminDisputeKeys.page(admin.id, { view: "refund_run", offset: 50 });
+  const pageKey = adminDisputeKeys.page(admin.id, { view: "refund_run" });
   client.setQueryData(pageKey, queuePage);
   vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", message: "Someone else acted on this dispute." }], 409));
   const { result } = renderHook(() => useDisputeActions(), { wrapper: Wrapper });

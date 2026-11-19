@@ -32,12 +32,12 @@ const parked = (n: number, extra: Partial<Dispute> = {}): Dispute => ({
   ...extra,
 });
 const page = (items: Dispute[]) => ({ items, total: items.length, offset: 0, limit: 50 });
-const key = adminDisputeKeys.page(admin.id, { view: "refund_run", offset: 0 });
+const key = adminDisputeKeys.page(admin.id, { view: "refund_run" });
 
 let client: QueryClient;
 function seed(items: Dispute[]) {
   vi.spyOn(api, "get").mockResolvedValue(page(items));
-  client.setQueryData(key, page(items));
+  client.setQueryData(key, { pages: [page(items)], pageParams: [0] });
 }
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
@@ -95,4 +95,22 @@ it("Open opens the drawer and keeps the refund run view", async () => {
   const url = fixtures.router.replace.mock.calls.at(-1)?.[0] as string;
   expect(url).toContain("view=refund_run");
   expect(url).toContain("row=dispute-1");
+});
+
+it("a refund with no refund or item amount labels the order total", async () => {
+  seed([parked(1, { refundAmount: null, itemChargeAmount: null, orderSnapshot: { ...dispute.orderSnapshot, total: 400 } })]);
+  wrap(<RefundRun onOpen={vi.fn()} />);
+  expect((await screen.findByText("@runner-1")).closest("article")).toHaveTextContent("Order total ₱400.00");
+});
+
+it("Load more appends the next refunds", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "get").mockImplementation(async (path) => path.includes("offset=1")
+    ? { items: [parked(2)], total: 51, offset: 1, limit: 1 }
+    : { items: [parked(1)], total: 51, offset: 0, limit: 1 });
+  wrap(<RefundRun onOpen={vi.fn()} />);
+  expect(await screen.findByText("@runner-1")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+  expect(await screen.findByText("@runner-2")).toBeInTheDocument();
+  expect(screen.getByText("@runner-1")).toBeInTheDocument();
 });

@@ -34,14 +34,14 @@ function Header({
 }: {
   needCount: number;
   overdueCount: number;
-  refundedThisWeek: number;
+  refundedThisWeek: number | undefined;
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
         Disputes · <span className="tnum">{needCount}</span> need you ·{" "}
         <span className="tnum">{overdueCount}</span> overdue ·{" "}
-        <span className="tnum">{formatPrice(refundedThisWeek)}</span> refunded
+        <span className="tnum">{refundedThisWeek === undefined ? "—" : formatPrice(refundedThisWeek)}</span> refunded
         this week
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
