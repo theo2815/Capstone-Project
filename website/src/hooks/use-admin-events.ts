@@ -41,7 +41,8 @@ export function useAdminEvents(args: AdminEventListArgs = {}) {
 // user id, so settle()'s array patch skips them; settle() invalidates this prefix instead.
 const adminEventPagedKey = [...adminEventKeys.all, "paged"] as const;
 
-export function useAdminEventsInfinite(state: EventState, q: string) {
+// No state = every event (the removal intake filters review status itself).
+export function useAdminEventsInfinite(state: EventState | undefined, q: string) {
   const session = usePrivateQuerySession("ADMIN");
   return useInfiniteList<AdminEventRow>({
     queryKey: [...adminEventPagedKey, "list", state, q, ...session.key],

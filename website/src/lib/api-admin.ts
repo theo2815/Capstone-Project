@@ -845,7 +845,7 @@ function eventFilterQs(args: AdminEventFilter & { state?: ListEvent["state"]; of
 }
 
 export async function fetchAdminEventsPage(
-  args: AdminEventFilter & { state: ListEvent["state"]; offset: number; limit: number },
+  args: AdminEventFilter & { state?: ListEvent["state"]; offset: number; limit: number },
   signal?: AbortSignal,
 ): Promise<PaginatedResponse<AdminEventRow>> {
   return api.get<PaginatedResponse<AdminEventRow>>(`/admin/events?${eventFilterQs(args)}`, { signal });
