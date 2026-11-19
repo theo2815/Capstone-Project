@@ -5,7 +5,7 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_DANGER, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useRelevanceAppealActions, useRelevanceAppeals, useRelevanceCase } from "@/hooks/use-admin-relevance";
@@ -22,7 +22,7 @@ import {
 import { formatLongDate } from "@/lib/format";
 import { RelevanceCaseBody, RelevanceCaseSamples } from "./relevance-case-drawer";
 
-const labelCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
+const labelCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
 const who = (a: RelevanceAppealRow) => (a.photographerHandle ? `@${a.photographerHandle}` : (a.photographerName ?? "—"));
 
 // RV-3.5: the Appeals tab. Open appeals first, then the decided ones; `?row=` names the open appeal's id.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { Thumb } from "@/components/admin/flag-relevance-evidence";
 import {
   CONSEQUENCES_TEXT,
@@ -21,7 +21,7 @@ import {
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 
-const labelCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
+const labelCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
 const n = (v: number | null) => (v === null ? "—" : v.toLocaleString());
 const score = (v: number | null) => (v === null ? "—" : v.toFixed(1));
 

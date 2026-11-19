@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -11,8 +12,8 @@ import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
 import { PhotographerLink } from "./relevance-case-drawer";
 
-const metaCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum";
-const linkCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors";
+const metaCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft tnum`;
+const linkCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink hover:text-fresh transition-colors`;
 
 // RV-1.11b: the inbox body for the "Relevance alerts" chip. Unseen alerts only; each links to its case on the page.
 export function RelevanceAlertsInbox() {

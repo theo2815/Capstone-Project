@@ -1,6 +1,6 @@
 "use client";
 
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { formatPayoutNumber } from "@/lib/payout-format";
 import { payoutMethodLabel, type AdminPayoutCycle } from "@/lib/admin-payouts";
 import { formatPrice } from "@/lib/utils";
@@ -89,7 +89,7 @@ function PayoutQrBlock({
       </Kicker>
       <div className="flex flex-col items-center gap-3">
         <div className="size-44 rounded-xl border border-line bg-bone p-2 flex items-center justify-center">
-          {/* eslint-disable-next-line @next/next/no-img-element -- signed S3 URL outside Next image-domain config. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- the QR is an uploaded data URL, which next/image does not optimise. */}
           <img
             src={qr.dataUrl}
             alt={`Payment QR code for ${accountName}`}
@@ -100,7 +100,7 @@ function PayoutQrBlock({
         <button
           type="button"
           onClick={handleDownload}
-          className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2"
+          className={`font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2`}
         >
           Download QR
           <span aria-hidden="true">↓</span>

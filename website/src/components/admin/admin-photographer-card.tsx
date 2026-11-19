@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Kicker } from "@/components/ui/kicker";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { computeCompleteness, photographerHref, photographerStatus } from "@/lib/admin-photographer-view";
@@ -42,22 +43,22 @@ export function AdminPhotographerCard({
                 {row.brandName ?? row.name}
               </h3>
               {row.handle && (
-                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+                <Kicker as="p">
                   @{row.handle}
-                </p>
+                </Kicker>
               )}
             </div>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 truncate">
+            <Kicker as="p" tone="soft" className="mt-2 truncate">
               <span title={place}>{place}</span>
               <span className="text-slate-soft"> · </span>
               <span className="tnum">since {formatMemberSince(row.createdAt)}</span>
-            </p>
+            </Kicker>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
             <AdminStatusPill label={status.label} tone={status.tone} />
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+            <Kicker as="p" tone="soft" className="tnum">
               {completeness.filled}/{completeness.total} fields
-            </p>
+            </Kicker>
           </div>
         </div>
       </article>

@@ -3,7 +3,7 @@
 import { useRef } from "react";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { Thumb } from "@/components/admin/flag-relevance-evidence";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useRelevanceActions, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
@@ -29,7 +29,7 @@ import {
 } from "@/lib/admin-relevance";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 
-const labelCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
+const labelCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
 const BTN_CLS: Record<RelevanceCaseAction, string> = {
   restore: `${BTN_SECONDARY} ${BTN_SIZE.sm}`,
   keep_hidden: `${BTN_GHOST} ${BTN_SIZE.sm}`,

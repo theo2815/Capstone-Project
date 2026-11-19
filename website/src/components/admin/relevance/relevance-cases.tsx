@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
@@ -28,7 +29,7 @@ import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-ac
 import { RelevanceAppeals } from "./relevance-appeals";
 
 const PAGE_INCREMENT = 50;
-const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
+const kicker = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 
 // The cases and their actions. The tab (`?tab=`) and the open case (`?row=`) live in the URL, so a link opens the same view.
 // defaultTab: the Inbox opens on "Can't tell", the cases its badge counts; the full page opens on "Hidden".

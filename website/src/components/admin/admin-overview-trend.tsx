@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminTrendChart } from "./admin-trend-chart";
 import { useAdminKpiTrendQuery } from "@/hooks/use-admin-data";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -73,9 +74,9 @@ export function AdminOverviewTrend() {
             </ToggleButton>
           </>
         )}
-        <span className="ml-auto font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+        <Kicker tone="soft" className="ml-auto tnum">
           {total.toLocaleString()} {unit} · last 30 days
-        </span>
+        </Kicker>
       </div>
 
       {noActivity ? (
@@ -108,7 +109,7 @@ function ToggleButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "min-h-[44px] font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-1.5 transition-colors",
+        `min-h-[44px] font-mono uppercase ${KICKER_SIZE_CLASS.sm} rounded-full px-4 py-1.5 transition-colors`,
         active
           ? "bg-ink text-surface"
           : "border border-line text-slate hover:text-ink hover:border-ink",

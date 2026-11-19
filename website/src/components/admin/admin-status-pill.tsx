@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 
 export type AdminStatusPillTone = "fresh" | "ink" | "slate" | "muted" | "amber" | "error";
 
@@ -19,7 +20,7 @@ export function AdminStatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5",
+        `inline-flex items-center font-mono uppercase ${KICKER_SIZE_CLASS.sm} rounded-full border px-3 py-0.5`,
         TONE_CLASS[tone],
         className,
       )}

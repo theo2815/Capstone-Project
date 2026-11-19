@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { useEffect, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
@@ -28,7 +29,7 @@ import { formatLongDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
-const KICKER = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
+const KICKER = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 // Keyed by reviewState; `status` keeps the old values for old builds.
 const STATUS_LABEL: Record<string, string> = { manual_review: "Needs review", auto_approved: "Auto-approved", approved: "Approved", rejected: "Rejected" };
 const REASON_LABEL: Record<string, string> = {

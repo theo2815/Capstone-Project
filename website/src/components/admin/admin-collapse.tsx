@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 
 // Local collapse primitives used by /admin/photographers/[handle] and the
 // inbox verifications drawer so admin can scan a long review surface
@@ -10,7 +10,7 @@ import { Kicker } from "@/components/ui/kicker";
 // the admin still gets at-a-glance state without expanding.
 
 const TOGGLE_CLS =
-  "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate group-hover:text-ink transition-colors tnum shrink-0";
+  `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate group-hover:text-ink transition-colors tnum shrink-0`;
 
 interface CollapsibleReviewSlabProps {
   id?: string;
@@ -59,20 +59,20 @@ export function CollapsibleReviewSlab({
           <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum">
             {number}
           </span>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink break-words min-w-0">
+          <Kicker as="p" className="text-ink break-words min-w-0">
             {title}
-          </p>
+          </Kicker>
           {caption && (
-            <p className="hidden md:block font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
+            <Kicker as="p" tone="soft" className="hidden md:block truncate">
               {caption}
-            </p>
+            </Kicker>
           )}
         </div>
         <div className="ml-auto flex items-baseline gap-3 md:gap-4 shrink-0">
           {trailing && (
-            <div className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+            <Kicker as="div" tone="soft" className="tnum">
               {trailing}
-            </div>
+            </Kicker>
           )}
           <span aria-hidden className={TOGGLE_CLS}>
             {open ? "Hide ↑" : "Show ↓"}
