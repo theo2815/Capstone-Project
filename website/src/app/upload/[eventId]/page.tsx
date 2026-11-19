@@ -249,7 +249,7 @@ function BackChip() {
       className="inline-flex items-center gap-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone mb-8 md:mb-10"
     >
       <span aria-hidden="true">←</span>
-      <span>Back to picker</span>
+      <span>Back to upload photos</span>
     </Link>
   );
 }

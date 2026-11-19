@@ -118,7 +118,8 @@ describe('photographer photo management', () => {
     expect(choice).not.toBeChecked();
     expect(screen.getByText('Only your photos in this event. You can always view your own metadata.')).toBeInTheDocument();
     expect(screen.getByText('This controls the metadata popup. Original downloads keep their embedded metadata.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save metadata visibility' })).toBeDisabled();
+    // Nothing to save yet, so no Save or Cancel.
+    expect(screen.queryByRole('button', { name: 'Save metadata visibility' })).not.toBeInTheDocument();
     fireEvent.click(choice);
     fireEvent.click(screen.getByRole('button', { name: 'Cancel metadata change' }));
     expect(choice).not.toBeChecked();

@@ -7,6 +7,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { DashboardRail, DASHBOARD_ROUTES } from "@/components/dashboard/dashboard-rail";
 import { DashboardBottomNav } from "@/components/dashboard/dashboard-bottom-nav";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
+import { LegalLinks } from "@/components/legal/legal-links";
 import { usePhotographerVerificationSync } from "@/lib/photographer-verification-sync";
 
 // Persistent shell for every /dashboard/* page. SiteHeader, sticky rail with
@@ -52,6 +53,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
               </header>
             )}
             {children}
+            {/* The rail (and its legal links) is desktop-only. */}
+            <div className="md:hidden mt-12">
+              <LegalLinks />
+            </div>
           </div>
         </div>
       </div>
