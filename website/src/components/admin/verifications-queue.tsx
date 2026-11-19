@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   BTN_DANGER,
+  BTN_GHOST,
   BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
+  ROW_OPEN_BUTTON,
 } from "@/components/ui/button-styles";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { safeHttpUrl } from "@/lib/utils";
+import { ROUTES } from "@/lib/constants";
+import { cn, safeHttpUrl } from "@/lib/utils";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
@@ -77,7 +81,6 @@ export function VerificationsQueue() {
   const users = useAdminUsers();
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch } = users;
-  const error = users.error?.message;
   const { reject, approveHeld, verifyBatch, isPending: actionPending } = useAdminUserActions();
   const { showToast } = useToast();
 
@@ -102,7 +105,8 @@ export function VerificationsQueue() {
     () =>
       effective.filter(
         (u) =>
-          u.role === "PHOTOGRAPHER" && u.verificationStatus === "incomplete",
+          // Suspended photographers are left out, as in the directory.
+          u.role === "PHOTOGRAPHER" && u.verificationStatus === "incomplete" && u.suspendedAt === null,
       ),
     [effective],
   );
@@ -166,6 +170,7 @@ export function VerificationsQueue() {
   }, [selected, bulkRejectOpen, drawerRejectOpen, openRow, submitting]);
 
   const selectionActive = selected.size > 0;
+  const allSelected = pending.length > 0 && pending.every((p) => selected.has(p.userId));
 
   // Keyboard nav covers the Open queue only — the Incomplete and Recent
   // decisions slabs are read-only listings, not openable rows.
@@ -292,7 +297,9 @@ export function VerificationsQueue() {
   // cached rows to show. After the initial fetch lands, the SWR-style cache
   // keeps the queue visible while background revalidations run.
   const showFirstLoad = loading && effective.length === 0;
-  const showError = !!error && effective.length === 0;
+  const showError = users.isError && effective.length === 0;
+  // No list yet: show no counts and no "nothing here" copy, which would read as a real zero.
+  const noList = showFirstLoad || showError;
 
   return (
     <>
@@ -303,22 +310,22 @@ export function VerificationsQueue() {
           <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Try again</button>
         </div>
       )}
-      {(showFirstLoad || showError) && (
-        <div className="rounded-2xl border border-line bg-bone-deep/40 px-5 py-4 font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-          {showFirstLoad
-            ? "Loading admin queue…"
-            : (
-              <span className="inline-flex items-center gap-3">
-                <span>Couldn&apos;t load queue — {error}</span>
-                <button
-                  type="button"
-                  onClick={() => void refetch()}
-                  className="text-ink underline decoration-line underline-offset-4 hover:decoration-ink"
-                >
-                  Retry
-                </button>
-              </span>
-            )}
+      {showFirstLoad && (
+        <div className="space-y-4" aria-busy="true">
+          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}
+        </div>
+      )}
+      {showError && (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load the verifications. Please try again.</p>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={users.isFetching}
+            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          >
+            Retry
+          </button>
         </div>
       )}
       <Slab
@@ -326,11 +333,22 @@ export function VerificationsQueue() {
         number="01"
         title="Open queue"
         caption="Awaiting review"
-        trailing={`${pending.length} pending`}
+        trailing={noList ? undefined : `${pending.length} pending`}
       >
         {pending.length === 0 ? (
-          <QueueEmpty />
+          !noList && <QueueEmpty />
         ) : (
+          <>
+          <label className="mb-2 inline-flex min-h-11 cursor-pointer items-center gap-3 font-sans text-sm text-ink">
+            <input
+              type="checkbox"
+              disabled={submitting}
+              checked={allSelected}
+              onChange={() => (allSelected ? clearSelection() : setSelected(new Set(rowIds)))}
+              className="size-4 accent-ink cursor-pointer disabled:cursor-not-allowed"
+            />
+            Select all
+          </label>
           <ul className="space-y-4">
             {pending.map((row) => (
               <li key={row.userId}>
@@ -347,6 +365,7 @@ export function VerificationsQueue() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </Slab>
 
@@ -355,11 +374,11 @@ export function VerificationsQueue() {
         number="02"
         title="Incomplete"
         caption="Settings still missing fields"
-        trailing={`${incomplete.length} stuck`}
+        trailing={noList ? undefined : `${incomplete.length} stuck`}
         collapsed={incomplete.length === 0}
       >
         {incomplete.length === 0 ? (
-          <p className="font-sans text-sm text-slate-soft">
+          !noList && <p className="font-sans text-sm text-slate-soft">
             No photographers stuck on incomplete settings right now.
           </p>
         ) : (
@@ -372,7 +391,13 @@ export function VerificationsQueue() {
                 >
                   <div className="min-w-0">
                     <p className="font-display text-base text-ink truncate">
-                      {row.brandName ?? row.name}
+                      {/* Same target as the directory card: the detail page needs a handle. */}
+                      <Link
+                        href={row.handle ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${row.handle}` : ROUTES.ADMIN_PHOTOGRAPHERS}
+                        className="underline decoration-line underline-offset-4 hover:decoration-ink"
+                      >
+                        {row.brandName ?? row.name}
+                      </Link>
                     </p>
                     <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
@@ -402,6 +427,8 @@ export function VerificationsQueue() {
         <AdminDecisionsTimeline />
       </Slab>
 
+      {/* Room at the end, so the fixed bulk bar never covers what is last on the page (as on Payouts). */}
+      {selectionActive && <div aria-hidden="true" className="h-36" />}
       <VerificationsBulkBar
         submitting={submitting}
         count={selected.size}
@@ -514,48 +541,41 @@ function PendingRow({
   onOpenDrawer: () => void;
 }) {
   const completeness = computeCompleteness(row.settingsSnapshot);
+  const title = row.brandName ?? row.name;
+  const hintId = useId();
 
-  function handleArticleKeyDown(e: React.KeyboardEvent<HTMLElement>) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onActivate();
-    }
-  }
-
+  // Row pattern from AX-4: the title button covers the row (ROW_OPEN_BUTTON); inner controls sit above it.
   return (
     <article
-      role="button"
-      aria-disabled={disabled}
       aria-busy={disabled}
-      tabIndex={0}
       data-row-id={row.userId}
-      aria-label={`${row.brandName ?? row.name}${
-        selectionActive ? " — toggle selection" : " — open review"
-      }`}
-      onClick={onActivate}
-      onKeyDown={handleArticleKeyDown}
-      className={`group rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
+      className={`group relative rounded-2xl border bg-bone p-5 md:p-6 transition-colors cursor-pointer ${
         selected ? "border-ink" : "border-line hover:border-ink"
       } ${focused ? "ring-2 ring-ink ring-offset-2 ring-offset-bone" : ""}`}
     >
       <div className="flex items-start gap-4 flex-wrap md:flex-nowrap">
-        <input
-          type="checkbox"
-          disabled={disabled}
-          checked={selected}
-          onChange={onToggleSelect}
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`Select ${row.brandName ?? row.name}`}
-          className="mt-2 size-4 accent-ink shrink-0 cursor-pointer"
-        />
+        {/* The label gives the 16 px checkbox a 44 px hit area; the negative margin keeps the row's layout. */}
+        <label className="relative z-10 -mx-3.5 -my-1.5 flex size-11 shrink-0 cursor-pointer items-center justify-center">
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={selected}
+            onChange={onToggleSelect}
+            aria-label={`Select ${title}`}
+            className="size-4 accent-ink cursor-pointer disabled:cursor-not-allowed"
+          />
+        </label>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-3 flex-wrap">
                 {/* Proposal 11: name leads; details are sentence case, mono only for the handle and numbers. */}
                 <h3 className="font-display text-xl font-semibold text-ink truncate">
-                  {row.brandName ?? row.name}
+                  <button type="button" onClick={onActivate} aria-describedby={hintId} className={ROW_OPEN_BUTTON}>
+                    {title}
+                  </button>
                 </h3>
+                <span id={hintId} className="sr-only">{selectionActive ? "Toggles selection" : "Opens the review"}</span>
                 <p className="font-mono text-[13px] text-slate">
                   @{row.handle ?? "—"}
                 </p>
@@ -576,19 +596,16 @@ function PendingRow({
               </div>
               <p className="font-sans text-sm text-ink-soft mt-2">
                 Waits for the identity check. Decide it under{" "}
-                <Link className="underline" href="/admin/verifications#seller-details" onClick={(e) => e.stopPropagation()}>Seller details</Link>.
+                <Link className="relative z-10 underline" href={`${ROUTES.ADMIN_VERIFICATIONS}#seller-details`}>Seller details</Link>.
               </p>
             </div>
 
             <button
               type="button"
               disabled={disabled}
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenDrawer();
-              }}
-              aria-label={`Open review for ${row.brandName ?? row.name}`}
-              className="disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
+              onClick={onOpenDrawer}
+              aria-label={`Open review for ${title}`}
+              className="relative z-10 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ›
@@ -1021,7 +1038,7 @@ function VerificationsBulkBar({
             disabled={submitting}
                   aria-busy={submitting}
             onClick={onReject}
-            className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
+            className={cn(BTN_DANGER, BTN_SIZE.sm)}
           >
             Reject {count}…
           </button>
@@ -1030,7 +1047,7 @@ function VerificationsBulkBar({
             disabled={submitting}
                   aria-busy={submitting}
             onClick={onClear}
-            className="disabled:opacity-50 disabled:cursor-not-allowed font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-3 py-2"
+            className={cn(BTN_GHOST, BTN_SIZE.sm)}
           >
             Clear
           </button>
