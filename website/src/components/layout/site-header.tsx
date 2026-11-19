@@ -40,6 +40,13 @@ export function SiteHeader({
   // shows the "you are here" state.
   const isEventsActive =
     pathname === ROUTES.EVENTS || pathname.startsWith(ROUTES.EVENTS + "/");
+  // Signing in from an event page comes back to that event instead of the
+  // role home, so a runner doesn't have to find their race again.
+  const onEventPage = pathname.startsWith(ROUTES.EVENTS + "/");
+  const rightHref =
+    rightLink && rightLink.href === ROUTES.LOGIN && onEventPage
+      ? `${ROUTES.LOGIN}?redirect=${encodeURIComponent(pathname)}`
+      : rightLink?.href;
 
   return (
     // Height is pinned to --site-header-h rather than falling out of the
@@ -94,9 +101,9 @@ export function SiteHeader({
               <RunnerNotificationBell />
               <UserMenu user={user} />
             </>
-          ) : rightLink ? (
+          ) : rightLink && rightHref ? (
             <Link
-              href={rightLink.href}
+              href={rightHref}
               className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
             >
               {rightLink.label}
