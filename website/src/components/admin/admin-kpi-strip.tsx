@@ -1,175 +1,85 @@
 "use client";
 
-import { useMemo } from "react";
-import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
-import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
-import { useAdminUsers, EMPTY_ADMIN_USERS } from "@/hooks/use-admin-users";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { useAdminKpisQuery } from "@/hooks/use-admin-data";
 import {
-  useAdminKpis,
-  useAdminFlags,
-} from "@/hooks/use-admin-data";
+  ADMIN_QUEUES,
+  useAdminAttentionTarget,
+  useAdminQueueCounts,
+} from "@/lib/admin-queues";
+import { isInboxQueueType } from "@/components/admin/admin-inbox-filter-chips";
 
-// Compact at-a-glance metrics row. Sits above the inbox queue (Phase 1)
-// and any other admin route that wants a one-line read of every queue.
-// Each metric is a Link into /admin/inbox with the matching ?type= chip
-// preselected — so clicks from the inbox swap the chip in-place, and
-// clicks from elsewhere navigate to the inbox already filtered.
+// Compact at-a-glance metrics row above the inbox queue: every queue in
+// ADMIN_QUEUES order, with its count from GET /admin/kpis. Queues with an
+// Inbox chip link into /admin/inbox?type=…; the rest link to their own page.
+// A count the backend does not send hides its entry. While the KPIs load it
+// shows a skeleton, never numbers worked out in the browser; if they fail,
+// the strip is left out.
 //
-// The highest priority non-zero queue carries a single breathing fresh
-// dot, honoring the one-fresh-per-viewport rule across the page (Inbox
-// header has no fresh accent of its own — the priority dot owns it).
-//
-// Priority order matches useAdminAttentionTarget: Disputes > Flags >
-// Verifications > Event requests > Payouts. First non-zero wins.
-
-interface KpiEntry {
-  readonly count: number;
-  readonly label: string;
-  readonly singularLabel: string;
-  readonly href: string;
-  readonly priorityRank: number; // lower number = higher priority
-}
-
+// The attention queue (the first with work) carries the single breathing
+// fresh dot, the same one the rail lights (one-fresh-per-viewport).
 export function AdminKpiStrip() {
-  const userRows = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
-  const serverOpenFlags = useAdminFlags({ status: "open" })?.total ?? 0;
-  // A-1 followup: hydrate payouts from BE so the fallback path matches the
-  // live data shape instead of the empty mock seed.
-  const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
-  // Live-mode preference: when GET /admin/kpis returns, override the
-  // 4 counts the strip surfaces. Falls back to derivation from the merged
-  // admin users hook while the kpis endpoint is still loading.
-  const liveKpis = useAdminKpis();
-
-  const entries = useMemo<readonly KpiEntry[]>(() => {
-    let pendingVerifications = 0;
-    for (const eff of userRows) {
-      if (
-        eff.role === "PHOTOGRAPHER" &&
-        eff.verificationStatus === "pending" &&
-        eff.suspendedAt === null
-      ) {
-        pendingVerifications += 1;
-      }
-    }
-
-    let disputesNeedingAdmin = 0;
-    let openFlags = serverOpenFlags;
-    let pendingPayouts = serverPayouts.filter((p) => p.status === "pending_review").length;
-    // Event requests (V46) have no client-side fallback — BE count only.
-    const pendingEventRequests = liveKpis?.pendingEventRequests ?? 0;
-
-    if (liveKpis) {
-      pendingVerifications = liveKpis.pendingVerifications;
-      disputesNeedingAdmin =
-        liveKpis.disputesNeedingAdmin ?? liveKpis.openDisputes;
-      openFlags = liveKpis.openFlags;
-      pendingPayouts = liveKpis.pendingPayouts;
-    }
-
-    const all: KpiEntry[] = [
-      {
-        count: pendingVerifications,
-        label: "Verifications",
-        singularLabel: "Verification",
-        href: ROUTES.ADMIN_INBOX,
-        priorityRank: 3,
-      },
-      {
-        count: disputesNeedingAdmin,
-        label: "Disputes",
-        singularLabel: "Dispute",
-        href: `${ROUTES.ADMIN_INBOX}?type=disputes`,
-        priorityRank: 1,
-      },
-      {
-        count: openFlags,
-        label: "Flags",
-        singularLabel: "Flag",
-        href: `${ROUTES.ADMIN_INBOX}?type=flags`,
-        priorityRank: 2,
-      },
-      {
-        count: pendingEventRequests,
-        label: "Event requests",
-        singularLabel: "Event request",
-        href: `${ROUTES.ADMIN_INBOX}?type=events`,
-        priorityRank: 4,
-      },
-      {
-        count: pendingPayouts,
-        label: "Payouts",
-        singularLabel: "Payout",
-        href: `${ROUTES.ADMIN_INBOX}?type=payouts`,
-        priorityRank: 5,
-      },
-    ];
-    return ADMIN_FLAGS_ENABLED
-      ? all
-      : all.filter((e) => e.label !== "Flags");
-  }, [
-    userRows,
-    serverOpenFlags,
-    serverPayouts,
-    liveKpis,
-  ]);
-
-  // Pick the priority queue (lowest rank with count > 0). The dot lights
-  // up only that one row, preserving the one-fresh-per-viewport rule.
-  const priorityHref = useMemo(() => {
-    let bestRank = Infinity;
-    let bestHref: string | null = null;
-    for (const e of entries) {
-      if (e.count > 0 && e.priorityRank < bestRank) {
-        bestRank = e.priorityRank;
-        bestHref = e.href;
-      }
-    }
-    return bestHref;
-  }, [entries]);
+  const { data: kpis, isPending } = useAdminKpisQuery();
+  const { byKey } = useAdminQueueCounts();
+  const attention = useAdminAttentionTarget();
+  if (!isPending && !kpis) return null;
 
   return (
-    <nav aria-label="Queue counts" className="border-y border-line">
+    <nav
+      aria-label="Queue counts"
+      aria-busy={isPending}
+      className="border-y border-line"
+    >
       {/* One scrolling row on phones so the queue starts within the first screen. */}
       <ul className="flex flex-nowrap md:flex-wrap overflow-x-auto md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden items-baseline gap-x-8 md:gap-x-12 gap-y-4 py-4 md:py-5 [&>li]:shrink-0 [&>li]:whitespace-nowrap [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none] after:content-[''] after:w-[15%] after:shrink-0 md:after:hidden">
-        {entries.map((entry) => {
-          const isPriority = entry.href === priorityHref;
-          const labelText =
-            entry.count === 1 ? entry.singularLabel : entry.label;
-          return (
-            <li key={entry.href}>
-              <Link
-                href={entry.href}
-                aria-label={`${entry.count} ${labelText.toLowerCase()}`}
-                className="group inline-flex items-baseline gap-2.5"
-              >
-                <span
-                  className={cn(
-                    "font-display text-2xl tnum leading-none transition-colors",
-                    entry.count === 0 ? "text-slate-soft" : "text-ink",
-                  )}
-                >
-                  {entry.count}
-                </span>
-                <Kicker
-                  tone={entry.count === 0 ? "soft" : "default"}
-                  className="group-hover:text-ink transition-colors"
-                >
-                  {labelText}
-                </Kicker>
-                {isPriority && (
-                  <span
-                    aria-hidden="true"
-                    className="size-1.5 rounded-full bg-fresh breathe self-center"
-                  />
-                )}
-              </Link>
-            </li>
-          );
-        })}
+        {isPending
+          ? ADMIN_QUEUES.map((queue) => (
+              <li key={queue.key}>
+                <Skeleton className="h-6 w-28" />
+              </li>
+            ))
+          : ADMIN_QUEUES.map((queue) => {
+              const count = byKey[queue.key];
+              if (count === null) return null;
+              const labelText = count === 1 ? queue.singularLabel : queue.label;
+              const href = isInboxQueueType(queue.inboxType)
+                ? `${ROUTES.ADMIN_INBOX}?type=${queue.inboxType}`
+                : queue.href;
+              return (
+                <li key={queue.key}>
+                  <Link
+                    href={href}
+                    aria-label={`${count} ${labelText.toLowerCase()}`}
+                    className="group inline-flex items-center gap-2.5 min-h-[44px]"
+                  >
+                    <span
+                      className={cn(
+                        "font-display text-2xl tnum leading-none transition-colors",
+                        count === 0 ? "text-slate-soft" : "text-ink",
+                      )}
+                    >
+                      {count}
+                    </span>
+                    <Kicker
+                      tone={count === 0 ? "soft" : "default"}
+                      className="group-hover:text-ink transition-colors"
+                    >
+                      {labelText}
+                    </Kicker>
+                    {attention?.key === queue.key && (
+                      <span
+                        aria-hidden="true"
+                        className="size-1.5 rounded-full bg-fresh breathe"
+                      />
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
       </ul>
     </nav>
   );

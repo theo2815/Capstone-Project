@@ -98,6 +98,14 @@ export interface AdminKpis {
   relevanceHidden?: number;
   relevanceCantTell?: number;
   relevanceAppealsOpen?: number;
+  /** AX-8: Photo Relevance cases a person must decide (Can't tell, or an open appeal), counted once. */
+  relevanceNeedsPerson?: number;
+  /** AX-8: payout cycles on the page's Review tab (PENDING only). */
+  payoutsAwaitingReview?: number;
+  /** AX-8: open payout problem reports. */
+  openPayoutReports?: number;
+  /** AX-8: photo removal cases that need an admin. */
+  removalsNeedingAction?: number;
 }
 
 export interface AdminTrendPoint {
