@@ -3,6 +3,7 @@ package com.quickpitik.controller
 import com.quickpitik.common.IdempotencyKey
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.dto.admin.AdminPhotographerRecordDto
 import com.quickpitik.dto.admin.AdminPhotographerSettingsDto
 import com.quickpitik.dto.admin.ApproveUserRequest
 import com.quickpitik.dto.admin.AdminUserDetailDto
@@ -13,6 +14,7 @@ import com.quickpitik.dto.admin.SuspendUserRequest
 import com.quickpitik.dto.photographer.AdminUserMessageRequest
 import com.quickpitik.dto.photographer.PhotographerMessageDto
 import com.quickpitik.security.AuthPrincipal
+import com.quickpitik.service.admin.AdminPhotographerRecordService
 import com.quickpitik.service.admin.AdminUserService
 import jakarta.validation.Valid
 import io.swagger.v3.oas.annotations.Operation
@@ -33,6 +35,7 @@ import java.util.UUID
 @PreAuthorize("hasRole('ADMIN')")
 class AdminUsersController(
     private val adminUserService: AdminUserService,
+    private val adminPhotographerRecordService: AdminPhotographerRecordService,
 ) {
 
     @GetMapping
@@ -52,6 +55,11 @@ class AdminUsersController(
     @GetMapping("/{userId}/settings")
     fun photographerSettings(@PathVariable userId: UUID): AdminPhotographerSettingsDto =
         adminUserService.photographerSettings(userId)
+
+    @GetMapping("/{userId}/record")
+    @Operation(description = "AX-13: the photographer's events (drafts and private ones included, newest first, at most 200), seller-details state, sales and photo counts, whatever their status.")
+    fun record(@PathVariable userId: UUID): AdminPhotographerRecordDto =
+        adminPhotographerRecordService.record(userId)
 
     @PostMapping("/{userId}/reject")
     @Operation(description = "Reject a PENDING photographer. Optional expectedRevision rejects stale review generations with 409.")
