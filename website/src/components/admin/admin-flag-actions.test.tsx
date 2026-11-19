@@ -16,6 +16,14 @@ vi.mock("@/lib/constants", async (original) => ({ ...await original<object>(), A
 const flag: Flag = { id: "flag-1", photoId: "photo-1", eventId: "event-1", eventName: "Race", photographerHandle: "photographer", reportedBy: "runner", reason: "low_quality", note: "Blurry", status: "open", reportedAt: "2026-09-10T00:00:00Z", reviewedAt: null, reviewedBy: null, reviewerNote: null, photoSnapshot: { alt: "Runner", kmMark: null, bib: null, thumbnailUrl: null }, targetKind: "photo", targetId: "photo-1", payoutHoldAt: null };
 const relevanceFlag: Flag = { ...flag, id: "flag-2", photoId: null, reason: "batch_relevance_low", note: "event e1: copy 5/8", targetKind: "user", targetId: "user-1" };
 const inertActions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onConfirm: vi.fn(async () => true) };
+// The flag list honours `status`, as the server does: the history slabs ask by status (AX-33).
+const serveFlags = (...flags: Flag[]) => vi.mocked(api.get).mockImplementation((async (url: string) => {
+  if (url.includes("/relevance")) return { flagId: "flag-2", payoutHoldAt: null, batches: [] };
+  if (url.includes("/hidden-photos")) return { items: [], total: 0 };
+  const status = new URL(url, "http://test").searchParams.get("status");
+  const items = flags.filter((f) => !status || f.status === status);
+  return { items, total: items.length };
+}) as typeof api.get);
 let client: QueryClient;
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);
@@ -23,7 +31,8 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   navigation.search = "";
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
-  vi.spyOn(api, "get").mockResolvedValue({ items: [flag], total: 1 });
+  vi.spyOn(api, "get");
+  serveFlags(flag);
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
 
@@ -74,7 +83,7 @@ it("a refused hold shows the server's reason and can be retried", async () => {
   const user = userEvent.setup();
   const invalidate = vi.spyOn(client, "invalidateQueries");
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(refusal());
-  vi.mocked(api.get).mockResolvedValue({ items: [relevanceFlag], total: 1 });
+  serveFlags(relevanceFlag);
   render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
   await user.click(await screen.findByRole("button", { name: "Hold payouts" }));
   expect(screen.getByText(/Holds this photographer's payouts until you resolve or dismiss this flag/)).toBeInTheDocument();
@@ -95,7 +104,7 @@ it.each([
 ])("%s on a relevance flag confirms first, shows a refusal and then goes through", async (open, confirm, url) => {
   const user = userEvent.setup();
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(refusal()).mockResolvedValue(relevanceFlag);
-  vi.mocked(api.get).mockResolvedValue({ items: [relevanceFlag], total: 1 });
+  serveFlags(relevanceFlag);
   render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
   await user.click(await screen.findByRole("button", { name: open }));
   expect(post).not.toHaveBeenCalled();
@@ -129,10 +138,7 @@ it("buttons inside a clickable card do not open it or swallow other keys", async
 
 it("the drawer of a relevance flag holds payouts, shows a refusal and keeps the drawer open", async () => {
   const user = userEvent.setup();
-  vi.mocked(api.get).mockImplementation((async (url: string) =>
-    url.includes("/relevance") ? { flagId: "flag-2", payoutHoldAt: null, batches: [] }
-      : url.includes("/hidden-photos") ? { items: [], total: 0 }
-        : { items: [relevanceFlag], total: 1 }) as typeof api.get);
+  serveFlags(relevanceFlag);
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(refusal()).mockResolvedValue({ ...relevanceFlag, payoutHoldAt: "2026-11-13T00:00:00Z" });
   render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
   await user.click(await screen.findByRole("button", { description: "flag-2" }));
