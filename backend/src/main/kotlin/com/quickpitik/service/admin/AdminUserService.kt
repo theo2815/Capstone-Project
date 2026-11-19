@@ -80,13 +80,10 @@ class AdminUserService(
         val role = parseRole(roleFilter)
         val searchValue = search?.trim()?.lowercase().orEmpty()
         val pageable = OffsetLimitPageable(params)
-        val page = userRepository.searchForAdmin(role, searchValue, pageable)
+        // An unknown status filters nothing, as it always has.
+        val status = statusFilter?.lowercase()?.takeIf { it in STATUS_FILTERS }.orEmpty()
+        val page = userRepository.searchForAdmin(role, searchValue, status, pageable)
 
-        // Filter on photographer-settings-derived status post-fetch — keeps
-        // the JPQL on UserRepository flat. For paginated correctness we
-        // would need a joined query, but the admin volume is small enough
-        // (low-thousand users) that filter-after-page is fine for v1; we
-        // can promote to a joined query when the dashboard scales.
         val items = page.content
         val settingsByUser = if (items.any { it.role == Role.PHOTOGRAPHER }) {
             photographerSettingsRepository.findAllByUserIdIn(
@@ -100,9 +97,7 @@ class AdminUserService(
         // is AtomicReference.get() so each call is O(1), but the per-row dispatch
         // is still wasted work proportional to page size.
         val regions = regionsService.all()
-        val rows = items
-            .map { hydrateRow(it, settingsByUser[it.id], regions) }
-            .let { rows -> if (statusFilter == null) rows else rows.filter { it.matchesStatus(statusFilter) } }
+        val rows = items.map { hydrateRow(it, settingsByUser[it.id], regions) }
 
         return PaginatedResponse.of(rows, page.totalElements, params)
     }
@@ -597,19 +592,11 @@ class AdminUserService(
         }
     }
 
-    private fun AdminUserRowDto.matchesStatus(statusFilter: String): Boolean {
-        return when (statusFilter.lowercase()) {
-            "suspended" -> suspendedAt != null
-            "approved" -> verificationStatus == "approved" && suspendedAt == null
-            "pending" -> verificationStatus == "pending"
-            "incomplete" -> verificationStatus == "incomplete"
-            "rejected" -> verificationStatus == "rejected"
-            else -> true
-        }
-    }
-
     private companion object {
         // H-6: cap on rows returned to the admin user-detail page.
         const val DECISION_LOG_DETAIL_CAP = 50
+
+        // The status tabs UserRepository.searchForAdmin knows; its query holds the rules.
+        val STATUS_FILTERS = setOf("suspended", "approved", "pending", "incomplete", "rejected")
     }
 }
