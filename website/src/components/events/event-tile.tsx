@@ -5,14 +5,12 @@ import type { EventState, ListEvent } from "@/types/event";
 import { SaveButton } from "@/components/events/save-button";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { ROUTES } from "@/lib/constants";
-import { canOwnerUploadToEvent, canUploadToEvent } from "@/lib/event-catalog";
 
-// Reused by /events (browse), /dashboard/upload (upload), and
-// /dashboard/events (manage). Discriminated union mirrors <PhotoPreviewCard>.
-// Browse keeps the runner-facing SaveButton + photo-count footer; upload
-// drops the SaveButton, routes to the upload form gated on verification, and
-// trades photo count for participant count; manage shows photographer-side
-// stats (photos uploaded · sold) and routes to the focused share page.
+// Reused by /events (browse) and the photographer profiles (browse);
+// manage mode is unused since /dashboard/events moved to rows. Discriminated union mirrors <PhotoPreviewCard>.
+// Browse keeps the runner-facing SaveButton + photo-count footer; manage shows
+// photographer-side stats (photos uploaded · sold) and routes to the focused
+// share page. The upload picker uses DashboardEventRow + uploadCta.
 
 type EventTileBrowseProps = {
   mode?: "browse";
@@ -29,17 +27,6 @@ type EventTileBrowseProps = {
   saveDisabled?: boolean;
 };
 
-type EventTileUploadProps = {
-  mode: "upload";
-  event: ListEvent;
-  index?: number;
-  canUpload: boolean;
-  /** Photographer-owned event (V46): the owner uploads from before the event
-   *  through one month after — the 4-day race-day grace doesn't apply; the
-   *  1-month owner window does. */
-  owned?: boolean;
-};
-
 type EventTileManageProps = {
   mode: "manage";
   event: ListEvent;
@@ -53,7 +40,6 @@ type EventTileManageProps = {
 
 export type EventTileProps =
   | EventTileBrowseProps
-  | EventTileUploadProps
   | EventTileManageProps;
 
 export function EventTile(props: EventTileProps) {
@@ -123,13 +109,6 @@ export function EventTile(props: EventTileProps) {
           </span>
         )}
         {mode === "browse" && <BrowseFooter isUpcoming={isUpcoming} />}
-        {mode === "upload" && (
-          <UploadFooter
-            event={event}
-            canUpload={(props as EventTileUploadProps).canUpload}
-            owned={props.mode === "upload" ? props.owned : undefined}
-          />
-        )}
         {props.mode === "manage" && <ManageFooter note={props.note} />}
       </div>
     </>
@@ -141,29 +120,6 @@ export function EventTile(props: EventTileProps) {
       <Link
         href={hrefOverride ?? `/events/${event.slug}`}
         aria-label={`Open ${event.name}`}
-        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
-        style={animationStyle}
-      >
-        {body}
-      </Link>
-    );
-  }
-
-  if (mode === "upload") {
-    // every state is clickable. If verification is incomplete, route to
-    // settings instead and reflect that in the CTA + aria label.
-    const { canUpload } = props as EventTileUploadProps;
-    const target = canUpload
-      ? `${ROUTES.UPLOAD}/${event.id}`
-      : ROUTES.DASHBOARD_SETTINGS;
-    const aria = canUpload
-      ? `Upload photos to ${event.name}`
-      : `Finish settings to upload to ${event.name}`;
-
-    return (
-      <Link
-        href={target}
-        aria-label={aria}
         className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
         style={animationStyle}
       >
@@ -193,57 +149,6 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
       <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
         {isUpcoming ? "Get notified →" : "Open →"}
-      </span>
-    </div>
-  );
-}
-
-function UploadFooter({
-  event,
-  canUpload,
-  owned = false,
-}: {
-  event: ListEvent;
-  canUpload: boolean;
-  owned?: boolean;
-}) {
-  // Verification-incomplete is the most actionable issue, so it wins over
-  // the date-based hints. Once verified, the date drives copy:
-  //   owned         → upload → until one month after the event, then closed
-  //   upcoming      → opens on race day
-  //   live (grace)  → upload →
-  //   open / past   → window closed (4-day grace expired)
-  const canUploadNow = owned
-    ? canOwnerUploadToEvent(event.date)
-    : canUploadToEvent(event.date);
-  let cta: string;
-  let muted = false;
-  if (!canUpload) {
-    cta = "Finish settings →";
-  } else if (owned) {
-    // The owner uploads from before the event through one month after; the
-    // "upcoming" gate never applies to them.
-    cta = canUploadNow ? "Upload →" : "Upload window closed";
-    muted = !canUploadNow;
-  } else if (event.state === "upcoming") {
-    cta = "Opens on race day →";
-  } else if (canUploadNow) {
-    cta = "Upload →";
-  } else {
-    cta = "Upload window closed";
-    muted = true;
-  }
-
-  return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
-      <span
-        className={
-          muted
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate"
-            : "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors"
-        }
-      >
-        {cta}
       </span>
     </div>
   );

@@ -12,15 +12,26 @@ export function DashboardEventRow({
   photoCount,
   salesCount,
   note,
+  href,
+  cta = "Open",
+  ctaMuted = false,
+  ariaLabel,
 }: {
   event: ListEvent;
   photoCount: number;
-  salesCount: number;
+  /** Left out where sales aren't known (the upload picker's shared races). */
+  salesCount?: number;
   note?: string;
+  /** Defaults to the event's own page; the upload picker points at the upload form. */
+  href?: string;
+  cta?: string;
+  ctaMuted?: boolean;
+  ariaLabel?: string;
 }) {
   return (
     <Link
-      href={`${ROUTES.DASHBOARD_EVENTS}/${event.id}`}
+      href={href ?? `${ROUTES.DASHBOARD_EVENTS}/${event.id}`}
+      aria-label={ariaLabel}
       className="group flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 transition-colors hover:bg-bone-deep/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-fresh"
     >
       <div className="relative w-[88px] h-[56px] shrink-0 rounded-lg overflow-hidden bg-bone-deep flex items-center justify-center">
@@ -45,12 +56,15 @@ export function DashboardEventRow({
         {STATE_LABEL[event.state]}
       </span>
       <span className="font-sans text-sm text-slate w-[150px] shrink-0">
-        <span className="font-mono text-[13px] text-ink tnum">{photoCount.toLocaleString()}</span> photos ·{" "}
-        <span className="font-mono text-[13px] text-ink tnum">{salesCount.toLocaleString()}</span> sold
+        <span className="font-mono text-[13px] text-ink tnum">{photoCount.toLocaleString()}</span> photos
+        {salesCount !== undefined && <>
+          {" "}·{" "}<span className="font-mono text-[13px] text-ink tnum">{salesCount.toLocaleString()}</span> sold
+        </>}
       </span>
-      {/* The whole row is the link; the label only helps on wider screens. */}
-      <span className="ml-auto font-sans text-sm text-slate group-hover:text-ink hidden sm:inline-flex items-center gap-1.5 min-h-[44px]">
-        Open <span aria-hidden="true">→</span>
+      {/* The whole row is the link; the label only helps on wider screens, unless it says
+          something the row doesn't (the upload picker's "Upload window closed"). */}
+      <span className={`ml-auto font-sans text-sm items-center gap-1.5 min-h-[44px] ${ctaMuted ? "text-slate-soft inline-flex" : "text-slate group-hover:text-ink hidden sm:inline-flex"}`}>
+        {cta.replace(/ →$/, "")} {!ctaMuted && <span aria-hidden="true">→</span>}
       </span>
     </Link>
   );

@@ -4,6 +4,7 @@ import {
   canUploadToEvent,
   deriveEventState,
   ownerUploadCloseDate,
+  uploadCta,
 } from "./event-catalog";
 
 // Race day is 2026-09-04 in Manila (UTC+8). The server may be UTC.
@@ -61,5 +62,24 @@ describe("owner upload window mirrors the backend 1-month grace", () => {
   it("closes the day after, the moment Manila ticks past the close date", () => {
     // 2026-10-04T16:30Z = 2026-10-05 00:30 PHT — one day past close.
     expect(canOwnerUploadToEvent(OWN, new Date("2026-10-04T16:30:00Z"))).toBe(false);
+  });
+});
+
+describe("uploadCta", () => {
+  const day = (offset: number) => {
+    const d = new Date(); d.setDate(d.getDate() + offset);
+    return d.toISOString().slice(0, 10);
+  };
+  it("asks for settings first, whatever the date", () => {
+    expect(uploadCta({ date: day(0), state: "live" }, false)).toEqual({ cta: "Finish settings →", muted: false });
+  });
+  it("opens a race on race day, holds an upcoming one, closes an old one", () => {
+    expect(uploadCta({ date: day(0), state: "live" }, true)).toEqual({ cta: "Upload →", muted: false });
+    expect(uploadCta({ date: day(5), state: "upcoming" }, true)).toEqual({ cta: "Opens on race day →", muted: false });
+    expect(uploadCta({ date: day(-60), state: "past" }, true)).toEqual({ cta: "Upload window closed", muted: true });
+  });
+  it("lets an owner upload before race day and closes after a month", () => {
+    expect(uploadCta({ date: day(5), state: "upcoming" }, true, true)).toEqual({ cta: "Upload →", muted: false });
+    expect(uploadCta({ date: day(-60), state: "past" }, true, true)).toEqual({ cta: "Upload window closed", muted: true });
   });
 });
