@@ -86,6 +86,27 @@ data class AdminUserDetailDto(
     val relevanceConsentWithdrawnAt: String? = null,
 )
 
+// GET /admin/users/{id}/record (AX-13): an admin's view of a photographer, whatever their status.
+data class AdminPhotographerRecordDto(
+    @field:Schema(description = "Newest first, at most 200; drafts and private events included")
+    val events: List<AdminRecordEventDto>,
+    val eventsTotal: Long,
+    @field:Schema(description = "Seller-details reviewState (manual_review | auto_approved | approved | rejected); null when none submitted")
+    val sellerDetailsStatus: String?,
+    val salesCount: Long,
+    val photoCount: Long,
+)
+
+data class AdminRecordEventDto(
+    val eventId: UUID,
+    val name: String,
+    @field:Schema(description = "YYYY-MM-DD")
+    val date: String,
+    @field:Schema(description = "public | unlisted")
+    val visibility: String,
+    val photoCount: Int,
+)
+
 // POST /admin/users/{id}/reject — body { reason }.
 data class RejectUserRequest(
     @field:NotBlank

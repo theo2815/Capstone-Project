@@ -81,7 +81,7 @@ class AdminUserActionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         SecurityContextHolder.getContext().authentication =
             UsernamePasswordAuthenticationToken(principal, null, principal.authorities)
         try {
-            val mvc = MockMvcBuilders.standaloneSetup(AdminUsersController(admin))
+            val mvc = MockMvcBuilders.standaloneSetup(AdminUsersController(admin, org.mockito.Mockito.mock(com.quickpitik.service.admin.AdminPhotographerRecordService::class.java)))
                 .setControllerAdvice(GlobalExceptionHandler(), ResponseEnvelopeAdvice())
                 .setCustomArgumentResolvers(AuthenticationPrincipalArgumentResolver()).build()
             val req = post("/api/v1/admin/users/$id/$action").contentType(MediaType.APPLICATION_JSON)
