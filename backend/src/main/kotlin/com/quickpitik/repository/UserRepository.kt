@@ -90,30 +90,37 @@ interface UserRepository : JpaRepository<User, UUID> {
     @Query("SELECT u.relevanceConsentWithdrawnAt FROM User u WHERE u.id = :id")
     fun relevanceConsentWithdrawnAt(@Param("id") id: UUID): OffsetDateTime?
 
-    // Admin user list with optional role / search filters. Status filtering
-    // (pending / approved / incomplete / suspended) is applied service-side
-    // because it spans users + photographer_settings — keeping the JPQL flat
-    // here avoids a multi-join expression that's hard to reason about.
-    @Query(
-        """
-        SELECT u FROM User u
-        WHERE (:role IS NULL OR u.role = :role)
-          AND (:search = '' OR
-               LOWER(u.name)  LIKE CONCAT('%', :search, '%') OR
-               LOWER(u.email) LIKE CONCAT('%', :search, '%'))
-        ORDER BY u.createdAt DESC, u.id ASC
-        """,
-        countQuery = """
-        SELECT COUNT(u) FROM User u
-        WHERE (:role IS NULL OR u.role = :role)
-          AND (:search = '' OR
-               LOWER(u.name)  LIKE CONCAT('%', :search, '%') OR
-               LOWER(u.email) LIKE CONCAT('%', :search, '%'))
-        """,
-    )
+    // Admin user list: role, search (name, email, handle, brand) and status, all in
+    // the query so a status tab pages correctly and its total counts only that status.
+    // '' means "no filter". Status rules: runners and admins count as approved; a
+    // photographer with no settings row is incomplete; suspended wins over approved.
+    @Query("SELECT u " + ADMIN_USER_FILTER + " ORDER BY u.createdAt DESC, u.id ASC",
+        countQuery = "SELECT COUNT(u) " + ADMIN_USER_FILTER)
     fun searchForAdmin(
         @Param("role") role: Role?,
         @Param("search") search: String,
+        @Param("status") status: String,
         pageable: Pageable,
     ): Page<User>
 }
+
+private const val ADMIN_USER_FILTER = """
+    FROM User u LEFT JOIN PhotographerSettings s ON s.userId = u.id
+    WHERE (:role IS NULL OR u.role = :role)
+      AND (:search = '' OR
+           LOWER(u.name)  LIKE CONCAT('%', :search, '%') OR
+           LOWER(u.email) LIKE CONCAT('%', :search, '%') OR
+           LOWER(s.handle) LIKE CONCAT('%', :search, '%') OR
+           LOWER(s.brandName) LIKE CONCAT('%', :search, '%'))
+      AND (:status = ''
+           OR (:status = 'suspended' AND u.suspendedAt IS NOT NULL)
+           OR (:status = 'approved' AND u.suspendedAt IS NULL
+               AND (u.role <> com.quickpitik.entity.Role.PHOTOGRAPHER
+                    OR s.verificationStatus = com.quickpitik.entity.VerificationStatus.APPROVED))
+           OR (:status = 'pending' AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
+               AND s.verificationStatus = com.quickpitik.entity.VerificationStatus.PENDING)
+           OR (:status = 'incomplete' AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
+               AND (s.userId IS NULL OR s.verificationStatus = com.quickpitik.entity.VerificationStatus.INCOMPLETE))
+           OR (:status = 'rejected' AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
+               AND s.verificationStatus = com.quickpitik.entity.VerificationStatus.REJECTED))
+"""
