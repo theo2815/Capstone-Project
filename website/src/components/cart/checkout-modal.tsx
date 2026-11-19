@@ -824,6 +824,11 @@ function PaymentStep({
             <p className="mt-1 font-sans text-sm leading-relaxed text-ink-soft">
               Pay from any participating bank or e-wallet app that can scan QR Ph codes.
             </p>
+            {/* Phone widths only: the QR appears on the screen it must be scanned with. */}
+            <p className="mt-1.5 font-sans text-sm leading-relaxed text-ink-soft md:hidden">
+              On this phone? Tap <span className="text-ink">Save QR code</span> on the next
+              step, then pick the saved image in your bank or e-wallet app&apos;s QR scanner.
+            </p>
           </div>
         </div>
       </section>
