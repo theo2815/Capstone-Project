@@ -104,7 +104,7 @@ export function SiteHeader({
           ) : rightLink && rightHref ? (
             <Link
               href={rightHref}
-              className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
+              className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors whitespace-nowrap"
             >
               {rightLink.label}
             </Link>
