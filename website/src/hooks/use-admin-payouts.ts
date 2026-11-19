@@ -3,11 +3,13 @@
 import { useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchAdminPayouts, approvePayout, holdPayout, markPayoutPaid, rejectPayout,
+  fetchAdminPayouts, fetchAdminPayoutsPage, fetchAdminPayoutCounts, approvePayout, holdPayout, markPayoutPaid, rejectPayout,
   markPayoutProcessing, markPayoutFailed, markPayoutReturned, bulkApprovePayouts, bulkHoldPayouts,
   type AdminPayoutListArgs, type BulkPayoutResult,
 } from "@/lib/api-admin";
-import type { AdminPayoutCycle } from "@/lib/admin-payouts";
+import type { AdminPayoutCycle, AdminPayoutStatus } from "@/lib/admin-payouts";
+import { useInfiniteList } from "@/hooks/use-infinite-list";
+import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { useAdminMutation } from "./use-admin-mutation";
@@ -143,13 +145,49 @@ export function usePayoutActions() {
     };
 }
 
-export function usePendingPayoutsCount(): number {
-  const cycles = useAdminPayouts().data ?? EMPTY_PAYOUTS;
-  return useMemo(() => cycles.filter((cycle) => cycle.status === "pending_review").length, [cycles]);
+// AX-30: the queue's own server lists. "queue" sits where owner() puts the user id, so
+// settle()'s array patch skips these pages, while its invalidation of ["admin", "payouts"] refreshes them.
+const queueKey = [...adminPayoutKeys.all, "queue"] as const;
+
+export function useAdminPayoutsPage(status: AdminPayoutStatus[], q: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useInfiniteList<AdminPayoutCycle>({
+    queryKey: [...queueKey, "page", status, q, ...session.key],
+    fetchPage: (offset, limit, signal) => fetchAdminPayoutsPage({ status, q, offset, limit }, signal),
+    limit: 50,
+    enabled: session.enabled,
+    staleTime: 60_000,
+  });
 }
 
-export function usePendingPayoutsTotal(): number {
-  const cycles = useAdminPayouts().data ?? EMPTY_PAYOUTS;
-  return useMemo(() => cycles.filter((cycle) => cycle.status === "pending_review")
-    .reduce((total, cycle) => total + cycle.amount, 0), [cycles]);
+/** Per-status totals; undefined while loading or when the backend has no counts route yet. */
+export function useAdminPayoutCounts(q = "") {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery({
+    queryKey: [...queueKey, "counts", q, ...session.key],
+    queryFn: ({ signal }) => fetchAdminPayoutCounts(q, signal),
+    enabled: session.enabled,
+    staleTime: 60_000,
+    retry: false,
+  }).data;
+}
+
+// A ?row= link may name a payout on another tab or a later page: read it by id (the server q matches ids).
+export function useAdminPayoutById(id: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery({
+    queryKey: [...queueKey, "row", id, ...session.key],
+    queryFn: async ({ signal }) =>
+      (await fetchAdminPayoutsPage({ status: [], q: id, offset: 0, limit: 200 }, signal))
+        .items.find((cycle) => cycle.id === id) ?? null,
+    enabled: session.enabled && !!id,
+    staleTime: 60_000,
+  });
+}
+
+/** The money awaiting review, or undefined when the one 200-row read may have left cycles out. */
+export function usePendingPayoutsTotal(awaiting: number | undefined): number | undefined {
+  const cycles = useAdminPayouts({ status: "pending_review" }).data ?? EMPTY_PAYOUTS;
+  return useMemo(() => cycles.length < 200 || cycles.length === awaiting
+    ? cycles.reduce((total, cycle) => total + cycle.amount, 0) : undefined, [cycles, awaiting]);
 }

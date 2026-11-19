@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
-import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminPayoutRow, PayoutFlagLine, PayoutTableHeader, payoutStatusTone } from "@/components/admin/admin-payout-row";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
@@ -19,7 +18,8 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { PayoutAccountCard } from "@/components/admin/payout-account-card";
 import { ReadyToSendCard } from "@/components/admin/ready-to-send-card";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
-import { useAdminPayouts, usePayoutActions, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
+import { useSearchParams } from "next/navigation";
+import { useAdminPayoutById, useAdminPayoutCounts, useAdminPayoutsPage, usePayoutActions } from "@/hooks/use-admin-payouts";
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
@@ -99,9 +99,13 @@ export function PayoutsQueue() {
     : bulkApproveOpen ? [...selected] : rowId ? [rowId] : [...selected];
   const submitting = isPending(actionIds);
 
-  // Canonical server rows drive every status and available action.
-  const query = useAdminPayouts();
-  const effective = query.data ?? EMPTY_PAYOUTS;
+  // AX-30 (PAY1): each tab is its own server list, paged, so no row drops off past 200.
+  const [search, setSearch] = useUrlState<string>("q", "", { debounceMs: 300 });
+  // The server search follows the URL, which trails typing by the 300 ms debounce.
+  const q = (useSearchParams().get("q") ?? "").trim();
+  const list = useAdminPayoutsPage(TAB_STATUSES[tab], q);
+  const counts = useAdminPayoutCounts(q);
+  const effective = list.items;
 
   const byId = useMemo(() => {
     const map = new Map<string, AdminPayoutCycle>();
@@ -109,14 +113,13 @@ export function PayoutsQueue() {
     return map;
   }, [effective]);
 
-  const openRow = useMemo<AdminPayoutCycle | null>(() => {
-    if (!rowId) return null;
-    return byId.get(rowId) ?? null;
-  }, [rowId, byId]);
+  // A link may name a payout on another tab or page, so the drawer also reads it by id.
+  const rowLookup = useAdminPayoutById(rowId);
+  const openRow = rowId ? byId.get(rowId) ?? rowLookup.data ?? null : null;
 
   useEffect(() => {
-    if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
-  }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
+    if (rowId && !openRow && rowLookup.isSuccess && !rowLookup.isFetching) setRowId("");
+  }, [rowLookup.isSuccess, rowLookup.isFetching, rowId, openRow, setRowId]);
 
   // A ticked row whose status left the shown tab (a refetch, or a tab change by
   // button, Back/Forward or a ?status= link) drops out, so bulk actions never reach off-screen rows.
@@ -162,58 +165,6 @@ export function PayoutsQueue() {
     openRow,
   ]);
 
-  const pending = useMemo(
-    () =>
-      [...effective.filter((c) => c.status === "pending_review")].sort(
-        (a, b) => a.submittedAt.localeCompare(b.submittedAt),
-      ),
-    [effective],
-  );
-  // approved + processing share a slab — both are "reviewed, payment in motion";
-  // each row still shows its own status pill + status-appropriate actions.
-  const inProgress = useMemo(
-    () =>
-      [
-        ...effective.filter(
-          (c) => c.status === "approved" || c.status === "processing",
-        ),
-      ].sort((a, b) => (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? "")),
-    [effective],
-  );
-  const held = useMemo(
-    () =>
-      [...effective.filter((c) => c.status === "held")].sort((a, b) =>
-        (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? ""),
-      ),
-    [effective],
-  );
-  const paid = useMemo(
-    () =>
-      [...effective.filter((c) => c.status === "paid")].sort((a, b) =>
-        (b.paidAt ?? "").localeCompare(a.paidAt ?? ""),
-      ),
-    [effective],
-  );
-  // Terminal, non-paid states in one read-only slab so nothing disappears from
-  // the admin's view (a failed/returned payout must stay visible).
-  const closed = useMemo(
-    () =>
-      [
-        ...effective.filter(
-          (c) =>
-            c.status === "failed" ||
-            c.status === "returned" ||
-            c.status === "rejected" ||
-            c.status === "cancelled",
-        ),
-      ].sort((a, b) =>
-        (b.reviewedAt ?? b.submittedAt).localeCompare(
-          a.reviewedAt ?? a.submittedAt,
-        ),
-      ),
-    [effective],
-  );
-
   const selectedCycles = useMemo(
     () =>
       Array.from(selected)
@@ -244,55 +195,13 @@ export function PayoutsQueue() {
     reasonTarget !== null ||
     confirmTarget !== null;
 
-  // Pagination — load-more model. Pending review keeps full visibility
-  // because the bulk-bar + J/K nav target that triage list. Read-only
-  // history slabs start at 10 and grow by 10 per click.
-  const [inProgressLoaded, setInProgressLoaded] = useState(
-    PAGE_SIZE.ADMIN_INITIAL,
-  );
-  const [heldLoaded, setHeldLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [paidLoaded, setPaidLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [closedLoaded, setClosedLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const inProgressVisible = useMemo(
-    () => inProgress.slice(0, inProgressLoaded),
-    [inProgress, inProgressLoaded],
-  );
-  const heldVisible = useMemo(
-    () => held.slice(0, heldLoaded),
-    [held, heldLoaded],
-  );
-  const paidVisible = useMemo(
-    () => paid.slice(0, paidLoaded),
-    [paid, paidLoaded],
-  );
-  const closedVisible = useMemo(
-    () => closed.slice(0, closedLoaded),
-    [closed, closedLoaded],
-  );
-
-  // Keyboard nav iterates pending → approved → held → paid in render
-  // order. Drawer verbs are status-conditional: E opens the Approve confirm for a
+  // Keyboard nav visits the loaded rows of the shown tab, in server order.
+  // Drawer verbs are status-conditional: E opens the Approve confirm for a
   // pending or held cycle, H opens the Hold reason modal whenever the cycle isn't
   // already on hold. Mark-paid stays click-only — its modal asks for a
   // payment reference string and isn't sensible to trigger from a
-  // single keystroke. Use the visible slices for paginated slabs so J/K
-  // only visits rows currently rendered.
-  const visibleByTab: Record<PayoutTab, AdminPayoutCycle[]> = {
-    pending,
-    "in-progress": inProgressVisible,
-    held: heldVisible,
-    paid: paidVisible,
-    closed: closedVisible,
-  };
-  const tabCounts: Record<PayoutTab, number> = {
-    pending: pending.length,
-    "in-progress": inProgress.length,
-    held: held.length,
-    paid: paid.length,
-    closed: closed.length,
-  };
-  const activeRows = visibleByTab[tab];
-  const rowIds = useMemo(() => activeRows.map((c) => c.id), [activeRows]);
+  // single keystroke.
+  const rowIds = useMemo(() => effective.map((c) => c.id), [effective]);
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
@@ -505,153 +414,69 @@ export function PayoutsQueue() {
       : {},
   });
 
-  if (query.isPending) {
-    return <p role="status" className="font-sans text-sm text-slate">Loading payouts…</p>;
-  }
-
-  const loadError = query.isError && (
-    <div role="alert" className="space-y-3">
-      <p className="font-sans text-sm text-error">Couldn&apos;t load payouts. Please try again.</p>
-      <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
-        Retry
-      </button>
-    </div>
-  );
-  // No data at all: tabs reading 0 would look like "nothing to do".
-  if (!query.data) return loadError;
-
+  const slab = PAYOUT_TAB_SLAB[tab];
   return (
     <>
-      {loadError}
+      <div className="mb-6">
+        <label htmlFor="payout-search" className="sr-only">Payout id</label>
+        <input
+          id="payout-search"
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by payout id"
+          className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
+        />
+      </div>
+      {list.error ? (
+        <div role="alert" className="space-y-3">
+          <p className="font-sans text-sm text-error">Couldn&apos;t load payouts. Please try again.</p>
+          <button type="button" onClick={list.refetch} disabled={list.isFetching} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {/* No count when the counts route is missing or loading: a 0 would read "nothing to do". */}
       <AdminStatusTabs
         label="Payout status"
-        tabs={PAYOUT_TABS.map((key) => ({ key, label: PAYOUT_TAB_LABEL[key], count: tabCounts[key] }))}
+        tabs={PAYOUT_TABS.map((key) => ({
+          key,
+          label: PAYOUT_TAB_LABEL[key],
+          count: counts && TAB_STATUSES[key].reduce((n, status) => n + (counts[status] ?? 0), 0),
+        }))}
         value={tab}
         onChange={setTab}
       />
-      {tab === "pending" && <PayoutSlab
-        id="pending"
-        number="01"
-        title="Pending review"
-        caption="Awaiting first decision"
-        totalCount={pending.length}
-        rows={pending}
-        empty="No payouts pending review."
-        selected={selected}
-        selectionActive={selectionActive}
-        toggleSelect={toggleSelect}
-        onActivate={handleRowActivate}
-        onOpenDrawer={handleOpenDrawer}
-        focusedId={focusedId}
-        onApprove={handleSingleApprove}
-        onHold={handleSingleHoldRequest}
-        onMarkPaid={handleSingleMarkPaid}
-        onMarkProcessing={handleSingleMarkProcessing}
-      />}
-      {tab === "in-progress" && <PayoutSlab
-        id="in-progress"
-        number="02"
-        title="In progress"
-        caption="Approved · payment in motion"
-        totalCount={inProgress.length}
-        rows={inProgressVisible}
-        empty="No payouts in progress."
-        selected={selected}
-        selectionActive={selectionActive}
-        toggleSelect={toggleSelect}
-        onActivate={handleRowActivate}
-        onOpenDrawer={handleOpenDrawer}
-        focusedId={focusedId}
-        onApprove={handleSingleApprove}
-        onHold={handleSingleHoldRequest}
-        onMarkPaid={handleSingleMarkPaid}
-        onMarkProcessing={handleSingleMarkProcessing}
-        loadMore={{
-          shown: inProgressVisible.length,
-          total: inProgress.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setInProgressLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />}
-      {tab === "held" && <PayoutSlab
-        id="held"
-        number="03"
-        title="Held"
-        caption="Paused with reason"
-        totalCount={held.length}
-        rows={heldVisible}
-        empty="No held payouts."
-        selected={selected}
-        selectionActive={selectionActive}
-        toggleSelect={toggleSelect}
-        onActivate={handleRowActivate}
-        onOpenDrawer={handleOpenDrawer}
-        focusedId={focusedId}
-        onApprove={handleSingleApprove}
-        onHold={handleSingleHoldRequest}
-        onMarkPaid={handleSingleMarkPaid}
-        onMarkProcessing={handleSingleMarkProcessing}
-        loadMore={{
-          shown: heldVisible.length,
-          total: held.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setHeldLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />}
-      {tab === "paid" && <PayoutSlab
-        id="paid"
-        number="04"
-        title="Paid"
-        caption="Settled"
-        totalCount={paid.length}
-        rows={paidVisible}
-        empty="No paid payouts yet."
-        selected={selected}
-        selectionActive={selectionActive}
-        toggleSelect={toggleSelect}
-        onActivate={handleRowActivate}
-        onOpenDrawer={handleOpenDrawer}
-        focusedId={focusedId}
-        onApprove={handleSingleApprove}
-        onHold={handleSingleHoldRequest}
-        onMarkPaid={handleSingleMarkPaid}
-        onMarkProcessing={handleSingleMarkProcessing}
-        loadMore={{
-          shown: paidVisible.length,
-          total: paid.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setPaidLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />}
-      {tab === "closed" && <PayoutSlab
-        id="closed"
-        number="05"
-        title="Closed"
-        caption="Rejected, cancelled, failed or returned"
-        totalCount={closed.length}
-        rows={closedVisible}
-        empty="No closed payouts."
-        selected={selected}
-        selectionActive={selectionActive}
-        toggleSelect={toggleSelect}
-        onActivate={handleRowActivate}
-        onOpenDrawer={handleOpenDrawer}
-        focusedId={focusedId}
-        onApprove={handleSingleApprove}
-        onHold={handleSingleHoldRequest}
-        onMarkPaid={handleSingleMarkPaid}
-        onMarkProcessing={handleSingleMarkProcessing}
-        loadMore={{
-          shown: closedVisible.length,
-          total: closed.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setClosedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
-      />}
+      {list.isLoading ? (
+        <p role="status" className="font-sans text-sm text-slate">Loading payouts…</p>
+      ) : !(list.error && effective.length === 0) && (
+        <PayoutSlab
+          id={tab}
+          number={slab.number}
+          title={PAYOUT_TAB_LABEL[tab]}
+          caption={slab.caption}
+          totalCount={list.total}
+          rows={effective}
+          empty={q ? "No payouts in this tab match this payout id." : slab.empty}
+          selected={selected}
+          selectionActive={selectionActive}
+          toggleSelect={toggleSelect}
+          onActivate={handleRowActivate}
+          onOpenDrawer={handleOpenDrawer}
+          focusedId={focusedId}
+          onApprove={handleSingleApprove}
+          onHold={handleSingleHoldRequest}
+          onMarkPaid={handleSingleMarkPaid}
+          onMarkProcessing={handleSingleMarkProcessing}
+          loadMore={{
+            shown: effective.length,
+            total: list.total,
+            increment: 50,
+            isLoading: list.isFetchingNextPage,
+            onLoadMore: list.fetchNextPage,
+          }}
+        />
+      )}
 
       {/* Room under the last row, so the fixed bulk bar never covers its buttons. */}
       {selectionActive && <div aria-hidden="true" className="h-48" />}
@@ -785,6 +610,19 @@ const PAYOUT_TAB_OF: Record<AdminPayoutStatus, PayoutTab> = {
   pending_review: "pending", approved: "in-progress", processing: "in-progress", held: "held",
   paid: "paid", failed: "closed", returned: "closed", rejected: "closed", cancelled: "closed",
 };
+// The status list each tab sends to the server (AX-10's groups).
+const TAB_STATUSES = Object.fromEntries(PAYOUT_TABS.map((key) => [key,
+  (Object.keys(PAYOUT_TAB_OF) as AdminPayoutStatus[]).filter((status) => PAYOUT_TAB_OF[status] === key)],
+)) as Record<PayoutTab, AdminPayoutStatus[]>;
+// approved + processing share a tab: both are "reviewed, payment in motion"; Closed keeps
+// failed and returned payouts visible next to rejected and cancelled ones.
+const PAYOUT_TAB_SLAB: Record<PayoutTab, { number: string; caption: string; empty: string }> = {
+  pending: { number: "01", caption: "Awaiting first decision", empty: "No payouts pending review." },
+  "in-progress": { number: "02", caption: "Approved · payment in motion", empty: "No payouts in progress." },
+  held: { number: "03", caption: "Paused with reason", empty: "No held payouts." },
+  paid: { number: "04", caption: "Settled", empty: "No paid payouts yet." },
+  closed: { number: "05", caption: "Rejected, cancelled, failed or returned", empty: "No closed payouts." },
+};
 // Paid and Closed have no bulk action, so their rows get no checkbox.
 const SELECTABLE_TABS: readonly string[] = ["pending", "in-progress", "held"];
 
@@ -829,6 +667,7 @@ function PayoutSlab({
     shown: number;
     total: number;
     increment: number;
+    isLoading?: boolean;
     onLoadMore: () => void;
   };
 }) {
@@ -879,6 +718,7 @@ function PayoutSlab({
               total={loadMore.total}
               increment={loadMore.increment}
               onLoadMore={loadMore.onLoadMore}
+              isLoading={loadMore.isLoading}
             />
           )}
         </>

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } 
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, setStepUpHandler } from "@/lib/api";
+import { api, ApiError, setStepUpHandler } from "@/lib/api";
 import type { AdminPayoutCycle } from "@/lib/admin-payouts";
 import { adminPayoutKeys, usePayoutActions } from "@/hooks/use-admin-payouts";
 import { admin, payoutCycle } from "@/test/fixtures/admin";
@@ -20,15 +20,48 @@ vi.mock("next/navigation", () => ({
 
 let client: QueryClient;
 let rows: AdminPayoutCycle[];
+// The legacy all-statuses list other admin views still read; settle() patches it.
 const key = adminPayoutKeys.list(admin.id);
+// A tiny payouts backend: status lists, id search, offset paging and the counts route (AX-10).
+let countsMissing = false;
+let failLists = 0;
+let nextTabList: (() => Promise<unknown>) | null = null;
+function serve(path: string): unknown {
+  const url = new URL(path, "http://test");
+  if (url.pathname === "/admin/payouts/counts") {
+    if (countsMissing) throw new ApiError([{ code: "NOT_FOUND", message: "Not found" }], 404);
+    const q = url.searchParams.get("q") ?? "";
+    const counts: Record<string, number> = {};
+    for (const row of rows) if (row.id.includes(q)) counts[row.status] = (counts[row.status] ?? 0) + 1;
+    return { counts };
+  }
+  if (url.pathname !== "/admin/payouts") return { items: [], total: 0, offset: 0, limit: 50 };
+  if (failLists > 0) { failLists -= 1; throw new Error("Unavailable"); }
+  const statuses = url.searchParams.get("status")?.split(",");
+  if (statuses && nextTabList) { const next = nextTabList; nextTabList = null; return next(); }
+  const q = url.searchParams.get("q") ?? "";
+  const offset = Number(url.searchParams.get("offset") ?? 0);
+  const limit = Number(url.searchParams.get("limit") ?? 200);
+  const matched = rows.filter((row) => (!statuses || statuses.includes(row.status)) && row.id.includes(q));
+  return { items: matched.slice(offset, offset + limit), total: matched.length, offset, limit };
+}
+const listCalls = () => vi.mocked(api.get).mock.calls.map(([path]) => String(path))
+  .filter((path) => path.startsWith("/admin/payouts?") && path.includes("status="));
+const refresh = () => client.invalidateQueries({ queryKey: ["admin", "payouts"] });
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function mount() {
+function render_() {
   return render(<QueryClientProvider client={client}><PayoutsQueue /><StepUpProvider /></QueryClientProvider>);
+}
+// Each tab reads its own server list, so wait for it before looking at rows.
+async function mount() {
+  const view = render_();
+  await waitFor(() => expect(screen.queryByText("Loading payouts…")).not.toBeInTheDocument());
+  return view;
 }
 
 it("shows cross-view payout pending feedback while independent rows remain usable", async () => {
@@ -36,7 +69,7 @@ it("shows cross-view payout pending feedback while independent rows remain usabl
   const request = deferred<AdminPayoutCycle>();
   vi.spyOn(api, "post").mockReturnValue(request.promise);
   const actions = renderHook(usePayoutActions, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
-  mount();
+  await mount();
   let pending!: Promise<boolean>;
   act(() => { pending = actions.result.current.approve(payoutCycle.id); });
   await waitFor(() => expect(screen.getByText("Approving…")).toBeInTheDocument());
@@ -52,7 +85,7 @@ it("opens an unrelated payout drawer while a selected row approval is pending", 
   const post = vi.spyOn(api, "post").mockReturnValue(request.promise);
   // The approval runs from another view (the row's own Approve now opens a modal confirm).
   const actions = renderHook(usePayoutActions, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
-  mount();
+  await mount();
   await userEvent.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
   act(() => { void actions.result.current.approve(payoutCycle.id); });
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
@@ -77,7 +110,8 @@ beforeEach(() => {
   navigation.search = ""; navigation.replace.mockClear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   vi.spyOn(console, "error").mockImplementation(() => {});
-  vi.spyOn(api, "get").mockImplementation(async () => ({ items: rows, total: rows.length }));
+  countsMissing = false; failLists = 0; nextTabList = null;
+  vi.spyOn(api, "get").mockImplementation(async (path: string) => serve(path) as never);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); seed();
 });
 afterEach(() => {
@@ -86,24 +120,22 @@ afterEach(() => {
   vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
-it.each([false, true])("keeps the payout URL selection until its read finishes (stale cache: %s)", async (stale) => {
+it("keeps the payout URL selection until its read finishes", async () => {
   navigation.search = `row=${payoutCycle.id}`;
-  if (stale) client.setQueryData(key, [], { updatedAt: 1 });
-  else client.removeQueries({ queryKey: key });
-  const request = deferred<{ items: AdminPayoutCycle[] }>();
-  vi.mocked(api.get).mockReturnValueOnce(request.promise);
-  mount();
+  const request = deferred<unknown>();
+  nextTabList = () => request.promise;
+  render_();
   expect(navigation.replace).not.toHaveBeenCalled();
-  await act(async () => { request.resolve({ items: rows }); });
   expect(await screen.findByRole("dialog")).toHaveTextContent(payoutCycle.id);
+  await act(async () => { request.resolve(serve("/admin/payouts?status=pending_review&offset=0&limit=50")); });
+  expect(screen.getByRole("dialog")).toHaveTextContent(payoutCycle.id);
   expect(navigation.replace).not.toHaveBeenCalled();
 });
 
 it("renders a retryable read error instead of dropping the selected payout", async () => {
   navigation.search = `row=${payoutCycle.id}`;
-  client.removeQueries({ queryKey: key });
-  vi.mocked(api.get).mockRejectedValueOnce(new Error("Unavailable"));
-  mount();
+  failLists = 2;
+  await mount();
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load payouts");
   expect(navigation.replace).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -114,7 +146,7 @@ it("blocks repeated row/drawer approvals while pending and keeps the first appro
   const user = userEvent.setup();
   const request = deferred<AdminPayoutCycle>();
   const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
-  mount();
+  await mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   const drawer = screen.getByRole("dialog");
   const approve = within(drawer).getByRole("button", { name: "Approve" });
@@ -136,7 +168,7 @@ it("blocks repeated row/drawer approvals while pending and keeps the first appro
   expect(screen.queryByRole("button", { name: "Mark paid…" })).not.toBeInTheDocument();
   // A later server refresh, not a local override, unlocks sending.
   rows = [{ ...rows[0], status: "approved", secondApprovedBy: "admin-b", reviewedAt: "2026-09-10T05:00:00Z" }];
-  await act(async () => { await client.invalidateQueries({ queryKey: key }); });
+  await act(async () => { await refresh(); });
   await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Mark paid…" })).toBeEnabled());
 });
 
@@ -150,7 +182,7 @@ it.each([
   const user = userEvent.setup(); seed(status);
   const request = deferred<AdminPayoutCycle>();
   const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
-  mount();
+  await mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: trigger }));
   const form = screen.getAllByRole("dialog").find((dialog) => within(dialog).queryByRole("textbox"))!;
@@ -183,7 +215,7 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
   const request = deferred<unknown>();
   const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
-  mount();
+  await mount();
   for (const row of rows) await user.click(screen.getByRole("checkbox", { name: `Select payout ${row.id}` }));
   await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 2" : "Hold 2…" }));
   const modal = screen.getByRole("dialog");
@@ -213,7 +245,7 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   const user = userEvent.setup();
   const request = deferred<unknown>();
   vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
-  mount();
+  await mount();
   await user.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
   await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" }));
   const modal = screen.getByRole("dialog");
@@ -229,14 +261,15 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   if (action === "approve") expect(box).not.toBeChecked();
   else expect(box).toBeNull();
   expect(screen.queryByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" })).not.toBeInTheDocument();
-  expect(client.getQueryData(key)).toEqual(rows);
+  // Bulk results carry no records, so the tab re-reads its server list before the modal closes.
+  expect(listCalls()).toHaveLength(2);
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain(action === "approve" ? "Approvals recorded" : "Held");
 });
 
 it("preserves provider-controlled action guards, including drawer keyboard shortcuts", async () => {
   const user = userEvent.setup(); rows = [{ ...payoutCycle, status: "processing", provider: "paymongo" }];
   navigation.search = "status=in-progress";
-  client.setQueryData(key, rows); const post = vi.spyOn(api, "post"); mount();
+  client.setQueryData(key, rows); const post = vi.spyOn(api, "post"); await mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   expect(screen.getByRole("dialog")).toHaveTextContent("Payment provider manages this transfer");
   expect(screen.queryByRole("button", { name: "Mark paid…" })).not.toBeInTheDocument();
@@ -255,7 +288,7 @@ it("retains a mark-paid form through step-up cancellation, invalid credentials, 
     if (new Headers(options.headers).get("X-Step-Up")) return proofRequest.promise;
     return new Response(JSON.stringify({ success: false, errors: [{ code: "STEP_UP_REQUIRED", message: "Reauthenticate" }] }), { status: 403 });
   });
-  vi.stubGlobal("fetch", fetch); mount();
+  vi.stubGlobal("fetch", fetch); await mount();
   await user.click(screen.getByRole("button", { name: "Mark paid…" }));
   const form = screen.getByRole("dialog");
   await user.type(within(form).getByRole("textbox"), "GC-REFERENCE");
@@ -293,12 +326,12 @@ it("a held photographer's payout names the flag and disables approve and mark pa
     { ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true },
     { ...payoutCycle, id: "cycle-2", status: "approved", relevanceFlagId: "flag-1", relevanceHold: true },
   ]; client.setQueryData(key, rows);
-  const view = mount();
+  const view = await mount();
   expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(1);
   expect(screen.getAllByRole("link", { name: /relevance flag/i })[0]).toHaveAttribute("href", "/admin/flags?row=flag-1");
   expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Hold…" })[0]).toBeEnabled();
-  view.unmount(); navigation.search = "status=in-progress"; mount();
+  view.unmount(); navigation.search = "status=in-progress"; await mount();
   expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Mark processing" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Mark paid…" })).toBeDisabled();
@@ -308,9 +341,9 @@ it("a held photographer's payout names the flag and disables approve and mark pa
   expect(within(drawer).getByRole("button", { name: "Hold…" })).toBeEnabled();
   expect(within(drawer).getByRole("button", { name: "Reject…" })).toBeEnabled();
 });
-it("an unconfirmed flag shows a warning and leaves the buttons on", () => {
+it("an unconfirmed flag shows a warning and leaves the buttons on", async () => {
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: false }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   expect(screen.getByText("Open relevance flag, not yet confirmed")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
 });
@@ -319,7 +352,7 @@ it("the bulk bar refuses approve while a selected payout is on hold, and E does 
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }, { ...payoutCycle, id: "cycle-2" }];
   client.setQueryData(key, rows);
   const post = vi.spyOn(api, "post");
-  mount();
+  await mount();
   await user.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-2" }));
   expect(screen.getByText("Some selected payouts are on hold: open relevance flag")).toBeInTheDocument();
@@ -332,7 +365,7 @@ it("the bulk bar refuses approve while a selected payout is on hold, and E does 
 it("the flag link in a row does not open the drawer or toggle selection, and Enter on it is not cancelled", async () => {
   const user = userEvent.setup();
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
   await user.click(link);
   expect(navigation.replace).not.toHaveBeenCalled();
@@ -343,9 +376,9 @@ it("the flag link in a row does not open the drawer or toggle selection, and Ent
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-it("an admin shortcut key pressed on the flag link still reaches the page", () => {
+it("an admin shortcut key pressed on the flag link still reaches the page", async () => {
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
   const seen = vi.fn();
   window.addEventListener("keydown", seen);
@@ -360,7 +393,7 @@ it("an admin shortcut key pressed on the flag link still reaches the page", () =
 it("shows one status tab at a time with counts, and keeps the tab in the URL", async () => {
   const user = userEvent.setup();
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "paid", paymentReference: "GC-1" }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   const tabs = screen.getByRole("group", { name: "Payout status" });
   expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   expect(within(tabs).getByRole("button", { name: /Pending review 1/, pressed: true })).toBeInTheDocument();
@@ -374,7 +407,7 @@ it("shows one status tab at a time with counts, and keeps the tab in the URL", a
 it("clears the ticked payouts when the URL status changes (Back, Forward or a link)", async () => {
   const user = userEvent.setup();
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
-  const view = mount();
+  const view = await mount();
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
   expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
   const again = () => view.rerender(<QueryClientProvider client={client}><PayoutsQueue /><StepUpProvider /></QueryClientProvider>);
@@ -388,7 +421,7 @@ it("clears the ticked payouts when the URL status changes (Back, Forward or a li
 it("clears the ticked payouts when the status tab changes", async () => {
   const user = userEvent.setup();
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   const tabs = screen.getByRole("group", { name: "Payout status" });
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
   expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
@@ -408,7 +441,7 @@ it.each([
   const post = vi.spyOn(api, "post").mockImplementation(async () => {
     rows = [{ ...rows[0], status: action === "approve" ? "approved" : "processing" }]; return rows[0];
   });
-  mount();
+  await mount();
   if (how === "the drawer E key") {
     await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
     await user.keyboard("e");
@@ -426,7 +459,7 @@ it.each([
 it("a failed single approval keeps the confirm open, and a retry sends once more", async () => {
   const user = userEvent.setup();
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Unavailable"));
-  mount();
+  await mount();
   await user.click(screen.getByRole("button", { name: "Approve" }));
   const confirm = screen.getByRole("dialog", { name: "Approve payout" });
   await user.click(within(confirm).getByRole("button", { name: "Approve" }));
@@ -441,34 +474,34 @@ it("a failed single approval keeps the confirm open, and a retry sends once more
 
 // AX-29 (PAY3): a money queue never reads "nothing to do" after a failed load.
 it("a failed first load shows an alert, not tabs that read nothing to do", async () => {
-  client.removeQueries({ queryKey: key });
-  vi.mocked(api.get).mockRejectedValueOnce(new Error("Unavailable"));
-  mount();
+  failLists = 1; countsMissing = true;
+  await mount();
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load payouts");
   expect(screen.queryByText("No payouts pending review.")).not.toBeInTheDocument();
-  expect(screen.queryByRole("group", { name: "Payout status" })).not.toBeInTheDocument();
+  // The tabs stay so the admin can switch, but none reads a number it does not know.
+  expect(within(screen.getByRole("group", { name: "Payout status" })).getByRole("button", { name: "Pending review" })).toBeInTheDocument();
 });
 
 // AX-29 (PAY4): checkboxes only where a bulk action exists, and only for rows still on the tab.
-it.each(["paid", "cancelled"] as const)("no checkbox appears on a %s payout", (status) => {
-  seed(status); mount();
+it.each(["paid", "cancelled"] as const)("no checkbox appears on a %s payout", async (status) => {
+  seed(status); await mount();
   expect(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` })).toBeInTheDocument();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 });
 it("a ticked payout that a refetch moves to another tab drops out of the selection", async () => {
   const user = userEvent.setup();
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
   expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
   rows = [{ ...payoutCycle, status: "held" }, { ...payoutCycle, id: "cycle-2" }];
-  await act(async () => { await client.invalidateQueries({ queryKey: key }); });
+  await act(async () => { await refresh(); });
   await waitFor(() => expect(screen.queryByRole("button", { name: "Approve 1" })).not.toBeInTheDocument());
 });
 
 // AX-29 (PAY5, PAY6): house buttons in the drawer, and values in their real case.
 it("the drawer's Hold and Reject are danger buttons, and Approve is the primary one", async () => {
-  const user = userEvent.setup(); mount();
+  const user = userEvent.setup(); await mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   const drawer = screen.getByRole("dialog");
   expect(within(drawer).getByRole("button", { name: "Hold…" })).toHaveClass("text-error", "min-h-[44px]");
@@ -478,8 +511,98 @@ it("the drawer's Hold and Reject are danger buttons, and Approve is the primary 
 it("a payment reference renders as typed in the drawer", async () => {
   const user = userEvent.setup(); seed("paid");
   rows = [{ ...rows[0], paymentReference: "gc-77b221", paidAt: "2026-09-12T00:00:00Z" }]; client.setQueryData(key, rows);
-  mount();
+  await mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   const value = within(screen.getByRole("dialog")).getByText("gc-77b221");
   expect(value).not.toHaveClass("uppercase");
+});
+
+// AX-30 (PAY1, X6): each tab is its own server list, so nothing drops off past 200 rows.
+const many = (n: number, status: AdminPayoutCycle["status"], prefix: string) =>
+  Array.from({ length: n }, (_, i) => ({ ...payoutCycle, id: `${prefix}-${i + 1}`, status }));
+const statusParam = (path: string) => new URL(path, "http://test").searchParams;
+it("each tab asks the server for its own statuses", async () => {
+  const user = userEvent.setup();
+  await mount();
+  const tabs = screen.getByRole("group", { name: "Payout status" });
+  for (const label of ["In progress", "Held", "Paid", "Closed"]) {
+    await user.click(within(tabs).getByRole("button", { name: new RegExp(`^${label}`) }));
+  }
+  await waitFor(() => expect(listCalls().map((path) => statusParam(path).get("status"))).toEqual([
+    "pending_review", "approved,processing", "held", "paid", "failed,returned,rejected,cancelled",
+  ]));
+  expect(listCalls().every((path) => statusParam(path).get("offset") === "0")).toBe(true);
+});
+it("Load more appends the next server page", async () => {
+  const user = userEvent.setup(); rows = many(60, "pending_review", "p");
+  await mount();
+  expect(screen.getAllByRole("checkbox")).toHaveLength(50);
+  await user.click(screen.getByRole("button", { name: "Load 10 more" }));
+  await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(60));
+  expect(statusParam(listCalls().at(-1)!).get("offset")).toBe("50");
+  expect(screen.getByRole("checkbox", { name: "Select payout p-60" })).toBeInTheDocument();
+});
+it("tab counts come from the counts route, and a missing route shows none", async () => {
+  rows = [...many(257, "paid", "new"), ...many(3, "pending_review", "old")];
+  const view = await mount();
+  const tabs = screen.getByRole("group", { name: "Payout status" });
+  expect(await within(tabs).findByRole("button", { name: /Paid 257/ })).toBeInTheDocument();
+  expect(within(tabs).getByRole("button", { name: /Pending review 3/ })).toBeInTheDocument();
+  view.unmount(); client.clear(); countsMissing = true;
+  await mount();
+  const plain = screen.getByRole("group", { name: "Payout status" });
+  expect(within(plain).getByRole("button", { name: "Pending review" })).toBeInTheDocument();
+  expect(within(plain).getByRole("button", { name: "Paid" })).toBeInTheDocument();
+});
+it("switching tab starts the new tab at its first page", async () => {
+  const user = userEvent.setup(); rows = [...many(60, "pending_review", "p"), ...many(60, "held", "h")];
+  await mount();
+  await user.click(screen.getByRole("button", { name: "Load 10 more" }));
+  await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(60));
+  await user.click(within(screen.getByRole("group", { name: "Payout status" })).getByRole("button", { name: /^Held/ }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select payout h-1" })).toBeInTheDocument());
+  expect(screen.getAllByRole("checkbox")).toHaveLength(50);
+  const last = statusParam(listCalls().at(-1)!);
+  expect([last.get("status"), last.get("offset")]).toEqual(["held", "0"]);
+});
+it("approving a payout while the paged tab is mounted refreshes the tab", async () => {
+  const user = userEvent.setup(); rows = many(60, "pending_review", "p");
+  const post = vi.spyOn(api, "post").mockImplementation(async () => {
+    rows = rows.map((row) => row.id === "p-1" ? { ...row, status: "approved" as const } : row); return rows[0];
+  });
+  await mount();
+  await user.click(screen.getByRole("button", { name: "Load 10 more" }));
+  await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(60));
+  const before = listCalls().length;
+  const row = screen.getByRole("checkbox", { name: "Select payout p-1" }).closest("li")!;
+  await user.click(within(row).getByRole("button", { name: "Approve" }));
+  await user.click(within(screen.getByRole("dialog", { name: "Approve payout" })).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select payout p-1" })).not.toBeInTheDocument());
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(listCalls().length).toBeGreaterThan(before);
+  expect(screen.getAllByRole("checkbox")).toHaveLength(59);
+  expect(useToastStore.getState().toasts.some((toast) => toast.kind === "error")).toBe(false);
+});
+it("a ?row= link to a payout on another tab or a later page opens its drawer", async () => {
+  rows = [...many(60, "pending_review", "p"), { ...payoutCycle, id: "cycle-old", status: "paid" }];
+  navigation.search = "row=cycle-old";
+  await mount();
+  expect(await screen.findByRole("dialog")).toHaveTextContent("cycle-old");
+  expect(navigation.replace).not.toHaveBeenCalled();
+});
+it("a ?row= link to a payout that does not exist is cleared", async () => {
+  navigation.search = "row=cycle-gone";
+  await mount();
+  await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith(expect.not.stringContaining("row="), expect.anything()));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+it("the search box is labelled Payout id, and the list and counts use its text", async () => {
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }];
+  navigation.search = "q=cycle-2";
+  await mount();
+  expect(screen.getByRole("searchbox", { name: "Payout id" })).toHaveValue("cycle-2");
+  expect(statusParam(listCalls().at(-1)!).get("q")).toBe("cycle-2");
+  expect(vi.mocked(api.get).mock.calls.some(([path]) => String(path) === "/admin/payouts/counts?q=cycle-2")).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeInTheDocument();
 });
