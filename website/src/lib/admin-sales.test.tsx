@@ -1,25 +1,50 @@
 import { render, renderHook, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
+import * as sales from "./admin-sales";
 import { useSalesByEvent } from "./admin-sales";
+import { fetchAdminSalesTrend, fetchAdminTopPhotographers } from "./api-admin";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
 
+const apiGet = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", () => ({ api: { get: apiGet }, ApiError: class extends Error {} }));
+
 const serverRow = { id: "ev-1", slug: "cebu-run", name: "Cebu City Run", date: "2026-11-01", city: "Cebu", status: "published", state: "past", photoCount: 40, impliedGmv: 3000, impliedCut: 750, refundsIssued: 0 };
 const catalogEvent = { ...serverRow, id: "ev-2", name: "Mandaue Night Run" };
-const state: { live: (typeof serverRow)[] | null } = { live: null };
+const weeks = [
+  { weekStart: "2026-11-09", gmv: 1000, platformRevenue: 200, refundsIssued: 0, salesCount: 8 },
+  { weekStart: "2026-11-16", gmv: 2500, platformRevenue: 500, refundsIssued: 0, salesCount: 20 },
+];
+const top = [{ userId: "u-ana", handle: "anashoots", displayName: "Ana Shoots", gmv: 4200, salesCount: 33 }];
+type Q<T> = { data?: T; isError: boolean; isFetching: boolean; refetch: () => void };
+const state: {
+  live: (typeof serverRow)[] | null;
+  trend: Q<typeof weeks>;
+  top: Q<typeof top>;
+  topArgs: unknown[];
+} = { live: null, trend: { isError: false, isFetching: false, refetch: vi.fn() }, top: { isError: false, isFetching: false, refetch: vi.fn() }, topArgs: [] };
+const payouts = vi.hoisted(() => vi.fn(() => ({ data: [] })));
 
-vi.mock("@/hooks/use-admin-data", () => ({ useAdminSalesByEventLive: () => state.live }));
+vi.mock("@/hooks/use-admin-data", () => ({
+  useAdminSalesByEventLive: () => state.live,
+  useAdminSalesTrendQuery: () => state.trend,
+  useAdminTopPhotographersQuery: (...args: unknown[]) => {
+    state.topArgs = args;
+    return state.top;
+  },
+}));
 vi.mock("@/hooks/use-admin-events", () => ({ useAdminEvents: () => ({ data: [catalogEvent] }), EMPTY_ADMIN_EVENTS: [] }));
 vi.mock("@/hooks/use-admin-disputes", () => ({ useAdminDisputes: () => ({ data: [] }), EMPTY_DISPUTES: [] }));
-vi.mock("@/hooks/use-admin-payouts", () => ({
-  useAdminPayouts: () => ({ data: [{ id: "pc-1", photographerId: "u-ana", photographerName: "Ana Cruz", brandName: "Ana Shoots", handle: "anashoots", weekOf: "2026-11-09", itemCount: 4 }] }),
-  EMPTY_PAYOUTS: [],
-}));
+vi.mock("@/hooks/use-admin-payouts", () => ({ useAdminPayouts: payouts, EMPTY_PAYOUTS: [] }));
 
 beforeEach(() => {
   state.live = null;
+  state.trend = { data: weeks, isError: false, isFetching: false, refetch: vi.fn() };
+  state.top = { data: top, isError: false, isFetching: false, refetch: vi.fn() };
+  apiGet.mockReset();
+  payouts.mockClear();
 });
 
 it("server by-event rows are real sums, not implied", () => {
@@ -33,13 +58,26 @@ it("rows derived in the browser while the server has no answer are implied", () 
   expect(result.current).toEqual([expect.objectContaining({ id: "ev-2", implied: true })]);
 });
 
-it("top events from the server carry no Implied badge; top photographers carry an Estimate label", () => {
+it("top photographers come from the server list, year to date, with no Estimate label", () => {
   state.live = [serverRow];
   render(<AdminSalesLeaderboard />);
-  expect(screen.queryByText("Implied")).toBeNull();
   const photographers = screen.getByText("Top photographers").closest("div")!;
-  expect(within(photographers).getByText("Estimate")).toBeInTheDocument();
-  expect(within(photographers).getByText("Estimated from payout photo counts × ₱125.00 until server figures arrive.")).toBeInTheDocument();
+  expect(within(photographers).getByText("Ana Shoots").closest("a")).toHaveAttribute("href", "/admin/photographers/anashoots");
+  expect(within(photographers).getByText("₱4,200.00")).toBeInTheDocument();
+  expect(within(photographers).getByText("33 photos sold")).toBeInTheDocument();
+  expect(state.topArgs).toEqual(["ytd", 10]);
+  expect(screen.queryByText("Estimate")).toBeNull();
+  expect(screen.queryByText(/Estimated from payout/)).toBeNull();
+  expect(screen.queryByText("Implied")).toBeNull();
+});
+
+it("a failed top-photographers request says so instead of showing an empty board", () => {
+  state.top = { isError: true, isFetching: false, refetch: vi.fn() };
+  render(<AdminSalesLeaderboard />);
+  const alert = screen.getByRole("alert");
+  within(alert).getByRole("button", { name: "Retry" }).click();
+  expect(state.top.refetch).toHaveBeenCalled();
+  expect(screen.queryByText(/No photo sales/)).toBeNull();
 });
 
 it("a browser-derived top event keeps its Implied badge", () => {
@@ -47,8 +85,40 @@ it("a browser-derived top event keeps its Implied badge", () => {
   expect(screen.getByText("Implied")).toBeInTheDocument();
 });
 
-it("the weekly trend carries an Estimate label", () => {
+it("the weekly trend draws the server weeks, with no Estimate label", () => {
   render(<AdminSalesTrend />);
-  expect(screen.getByText("Estimate")).toBeInTheDocument();
-  expect(screen.getByText("Estimated from payout photo counts × ₱125.00 until server figures arrive.")).toBeInTheDocument();
+  expect(screen.getByText("₱3,500.00 total")).toBeInTheDocument();
+  expect(screen.getByText("Weekly GMV · last 2 weeks")).toBeInTheDocument();
+  expect(screen.queryByText("Estimate")).toBeNull();
+  expect(screen.queryByText(/Estimated from payout/)).toBeNull();
+});
+
+it("the weekly trend shows a skeleton while loading and Retry on failure, never zero bars", () => {
+  state.trend = { isError: false, isFetching: true, refetch: vi.fn() };
+  const { container, unmount } = render(<AdminSalesTrend />);
+  expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+  expect(screen.queryByText(/total/)).toBeNull();
+  unmount();
+  state.trend = { isError: true, isFetching: false, refetch: vi.fn() };
+  render(<AdminSalesTrend />);
+  within(screen.getByRole("alert")).getByRole("button", { name: "Retry" }).click();
+  expect(state.trend.refetch).toHaveBeenCalled();
+});
+
+it("the estimate helpers are gone and nothing reads payout cycles for sales", () => {
+  render(<><AdminSalesTrend /><AdminSalesLeaderboard /></>);
+  expect(payouts).not.toHaveBeenCalled();
+  expect(sales).not.toHaveProperty("SALES_ESTIMATE_NOTE");
+  expect(sales).not.toHaveProperty("useWeeklyGmvSeries");
+  expect(sales).not.toHaveProperty("useTopPhotographers");
+});
+
+it("the fetchers call the AX-12 routes and unwrap their lists", async () => {
+  apiGet.mockResolvedValueOnce({ weeks }).mockResolvedValueOnce({ items: top });
+  await expect(fetchAdminSalesTrend(12)).resolves.toEqual(weeks);
+  await expect(fetchAdminTopPhotographers("ytd", 10)).resolves.toEqual(top);
+  expect(apiGet.mock.calls.map((c) => c[0])).toEqual([
+    "/admin/sales/trend?weeks=12",
+    "/admin/sales/top-photographers?range=ytd&limit=10",
+  ]);
 });

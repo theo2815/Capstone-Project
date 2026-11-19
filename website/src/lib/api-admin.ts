@@ -74,6 +74,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   DELETE /api/v1/admin/events/{id}                       → { removed: boolean }
 //
 //   GET    /api/v1/admin/sales/kpis?range=week|month|ytd   → AdminSalesKpis
+//   GET    /api/v1/admin/sales/trend?weeks=1..52              → { weeks: AdminSalesWeek[] }
+//   GET    /api/v1/admin/sales/top-photographers?range=&limit=1..20 → { items: AdminTopPhotographer[] }
 //   GET    /api/v1/admin/sales/by-event?offset=&limit=&order=gmv|refunds → PaginatedResponse<AdminSalesEventRow>
 
 // ───────────────────────────────────────────── KPIs
@@ -1028,6 +1030,46 @@ export async function fetchAdminSalesKpis(
   signal?: AbortSignal,
 ): Promise<AdminSalesKpis> {
   return api.get<AdminSalesKpis>(`/admin/sales/kpis?range=${range}`, { signal });
+}
+
+// AX-12: the same sums and week boundary as `kpis`; oldest week first.
+export interface AdminSalesWeek {
+  weekStart: string; // ISO Monday, YYYY-MM-DD
+  gmv: number;
+  platformRevenue: number;
+  refundsIssued: number;
+  salesCount: number;
+}
+
+export async function fetchAdminSalesTrend(
+  weeks: number,
+  signal?: AbortSignal,
+): Promise<AdminSalesWeek[]> {
+  const res = await api.get<{ weeks: AdminSalesWeek[] }>(
+    `/admin/sales/trend?weeks=${weeks}`,
+    { signal },
+  );
+  return res.weeks;
+}
+
+export interface AdminTopPhotographer {
+  userId: string;
+  handle: string | null;
+  displayName: string;
+  gmv: number;
+  salesCount: number;
+}
+
+export async function fetchAdminTopPhotographers(
+  range: AdminSalesRange,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<AdminTopPhotographer[]> {
+  const res = await api.get<{ items: AdminTopPhotographer[] }>(
+    `/admin/sales/top-photographers?range=${range}&limit=${limit}`,
+    { signal },
+  );
+  return res.items;
 }
 
 export interface AdminSalesEventRow {
