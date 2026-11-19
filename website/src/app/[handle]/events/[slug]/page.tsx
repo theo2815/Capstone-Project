@@ -35,6 +35,7 @@ import type { PhotographerProfile } from "@/lib/photographer-registry";
 import { BRAND_COLOR_HEX } from "@/store/photographer-settings-store";
 import type { EventDetail } from "@/types/event";
 import type { MockPhoto } from "@/types/photo";
+import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 
 // Per-photographer public gallery — what runners land on when they click a
 // watermark URL on a photo. Filtered to only this photographer's photos for
@@ -134,6 +135,7 @@ function Gallery({
   // pages loaded here (INC-10).
   const list = usePublicPhotographerEventPhotos(profile.handle, event.slug);
   const photos = list.items;
+  const ownedPhotoIds = useOwnedPhotoIds();
 
   const [bibFilter, setBibFilter] = useUrlState<string>("bib", "", {
     parse: (raw) => raw.trim().toUpperCase(),
@@ -407,6 +409,7 @@ function Gallery({
                     photo={p}
                     index={i}
                     onOpen={() => setPreviewIndex(i)}
+                    owned={ownedPhotoIds.has(p.id)}
                   />
                 ))}
               </div>

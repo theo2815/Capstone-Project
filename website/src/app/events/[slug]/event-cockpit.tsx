@@ -47,6 +47,7 @@ import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 import { Footer } from "@/components/layout/footer";
 import { BibNotice } from "@/components/legal/face-notice";
 import { useBibConsent, useTickRead } from "@/store/face-consent-store";
+import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 
 type Mode = "cockpit" | "browse";
 
@@ -682,6 +683,7 @@ function BrowseMode({
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [isPolicyOpen, setIsPolicyOpen] = useState(false);
+  const ownedPhotoIds = useOwnedPhotoIds();
 
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
@@ -966,6 +968,7 @@ function BrowseMode({
                     photo={p}
                     index={i}
                     onOpen={() => setPreviewIndex(i)}
+                    owned={ownedPhotoIds.has(p.id)}
                   />
                 ))}
               </div>

@@ -76,6 +76,16 @@ describe("PhotoMosaicTile price", () => {
     expect(buy).toHaveTextContent("₱80");
     expect(buy).not.toHaveTextContent(/^Buy/);
   });
+
+  // Runner audit P2-2: bought photos looked like any other photo in the gallery.
+  it("marks a photo the runner already owns and points to Orders instead of selling it again", () => {
+    render(<PhotoMosaicTile event={event} photo={photo} index={0} onOpen={vi.fn()} owned />);
+    const yours = screen.getByRole("link", { name: /You own photo 101/ });
+    expect(yours).toHaveAttribute("href", "/orders");
+    expect(yours).toHaveTextContent("Yours");
+    expect(screen.queryByRole("button", { name: /to cart/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Buy/ })).not.toBeInTheDocument();
+  });
 });
 
 // FS-11: the grid loads the 800 px tile; older photos without one keep the preview.
