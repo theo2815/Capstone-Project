@@ -56,7 +56,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   POST   /api/v1/admin/disputes/{id}/refund-link { url } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/mark-refunded       → Dispute
 //
-//   GET    /api/v1/admin/payouts?status=&offset=&limit=    → PaginatedResponse<AdminPayoutCycle>
+//   GET    /api/v1/admin/payouts?status=&q=&offset=&limit= → PaginatedResponse<AdminPayoutCycle>
+//   GET    /api/v1/admin/payouts/counts?q=                 → { counts: { <status>: n } }
 //   POST   /api/v1/admin/payouts/{id}/approve              → AdminPayoutCycle
 //   POST   /api/v1/admin/payouts/{id}/hold       { reason } → AdminPayoutCycle
 //   POST   /api/v1/admin/payouts/{id}/mark-paid  { paymentReference } → AdminPayoutCycle
@@ -590,6 +591,31 @@ export async function fetchAdminPayouts(
     `/admin/payouts?${buildPayoutsQs(args)}`,
   );
   return res.items;
+}
+
+// AX-30: one tab's server page. `status` is a comma list (AX-10); empty means every status.
+export async function fetchAdminPayoutsPage(
+  args: { status: AdminPayoutStatus[]; q?: string; offset: number; limit: number },
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<AdminPayoutCycle>> {
+  const p = new URLSearchParams();
+  if (args.status.length) p.set("status", args.status.join(","));
+  if (args.q) p.set("q", args.q);
+  p.set("offset", String(args.offset));
+  p.set("limit", String(args.limit));
+  return api.get<PaginatedResponse<AdminPayoutCycle>>(`/admin/payouts?${p.toString()}`, { signal });
+}
+
+// AX-30: payout totals per status for the same id search, keyed as the list's `status`.
+export async function fetchAdminPayoutCounts(
+  q = "",
+  signal?: AbortSignal,
+): Promise<Partial<Record<AdminPayoutStatus, number>>> {
+  const res = await api.get<{ counts: Partial<Record<AdminPayoutStatus, number>> }>(
+    `/admin/payouts/counts${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    { signal },
+  );
+  return res.counts;
 }
 
 export async function approvePayout(
