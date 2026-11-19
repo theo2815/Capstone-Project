@@ -82,3 +82,10 @@ it("a row's completeness counts socials and payouts, the same number as the dire
   render(<AdminPhotographerCard row={{ ...adminUser, verificationStatus: "approved", settingsSnapshot: snapshot }} />);
   expect(screen.getByText("5/7 fields")).toBeInTheDocument();
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("an Incomplete row's values are not upper-cased", () => {
+  mount([incomplete]);
+  const slab = document.getElementById("incomplete")!;
+  expect(within(slab).getByText(/@half-studio/).closest(".uppercase")).toBeNull();
+});

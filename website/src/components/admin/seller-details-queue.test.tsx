@@ -298,3 +298,10 @@ it("does not open the record again when the window regains focus", async () => {
   expect(recordCalls()).toBe(1);
   focusManager.setFocused(undefined);
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("a row's ID type and date are not upper-cased", async () => {
+  renderQueue();
+  const juan = await screen.findByRole("button", { name: /Juan Dela Cruz/ });
+  expect(within(juan).getByText(/^Nov 0\d · 2026$/).closest(".uppercase")).toBeNull();
+});

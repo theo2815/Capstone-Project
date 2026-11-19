@@ -25,7 +25,7 @@ import { ApiError } from "@/lib/api";
 import { SELLER_ID_TYPES, type AdminSellerDetails, type AdminSellerFilter, type RepeatMatch } from "@/lib/api-seller-details";
 import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
@@ -109,8 +109,8 @@ export function SellerDetailsQueue() {
                   className="w-full flex items-center justify-between gap-4 border-b border-line pb-3 text-left hover:bg-bone-deep/50">
                   <span className="min-w-0">
                     <span className="block font-display text-base text-ink truncate">{row.legalName}</span>
-                    <span className={cn(KICKER, "block text-slate-soft mt-1")}>
-                      {idLabel(row.idType)} · <span className="tnum">{formatLongDate(row.submittedAt, true)}</span>
+                    <span className="block font-sans text-sm text-slate-soft mt-1">
+                      {idLabel(row.idType)} · <span className="tnum">{sentenceCaseDate(formatLongDate(row.submittedAt, true))}</span>
                     </span>
                   </span>
                   <StatusPill reviewState={row.reviewState} className="shrink-0" />

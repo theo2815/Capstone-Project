@@ -151,3 +151,9 @@ it("keeps the picked event on screen when a search no longer lists it", async ()
   expect(await screen.findByText("No approved event matches this search.")).toBeInTheDocument();
   expect(screen.getByRole("radio", { name: /Cebu Marathon/ })).toBeChecked();
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("an event row's date is in sentence case", async () => {
+  renderIntake();
+  expect((await screen.findAllByText(/^Sep 10 · 2026 · /)).length).toBe(2);
+});

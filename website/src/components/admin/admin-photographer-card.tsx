@@ -1,9 +1,8 @@
 import Link from "next/link";
-import { Kicker } from "@/components/ui/kicker";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { computeCompleteness, photographerHref, photographerStatus } from "@/lib/admin-photographer-view";
-import { formatMemberSince } from "@/lib/format";
+import { formatMemberSince, sentenceCaseDate } from "@/lib/format";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { cn } from "@/lib/utils";
 
@@ -43,22 +42,22 @@ export function AdminPhotographerCard({
                 {row.brandName ?? row.name}
               </h3>
               {row.handle && (
-                <Kicker as="p">
+                <p className="font-mono text-[13px] text-slate">
                   @{row.handle}
-                </Kicker>
+                </p>
               )}
             </div>
-            <Kicker as="p" tone="soft" className="mt-2 truncate">
+            <p className="font-sans text-sm text-slate-soft mt-2 truncate">
               <span title={place}>{place}</span>
               <span className="text-slate-soft"> · </span>
-              <span className="tnum">since {formatMemberSince(row.createdAt)}</span>
-            </Kicker>
+              <span className="tnum">since {sentenceCaseDate(formatMemberSince(row.createdAt))}</span>
+            </p>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
             <AdminStatusPill label={status.label} tone={status.tone} />
-            <Kicker as="p" tone="soft" className="tnum">
+            <p className="font-mono text-[13px] text-slate-soft tnum">
               {completeness.filled}/{completeness.total} fields
-            </Kicker>
+            </p>
           </div>
         </div>
       </article>

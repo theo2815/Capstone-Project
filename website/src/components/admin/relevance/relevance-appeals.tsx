@@ -19,7 +19,7 @@ import {
   verdictLabel,
   type RelevanceAppealRow,
 } from "@/lib/admin-relevance";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { RelevanceCaseBody, RelevanceCaseSamples } from "./relevance-case-drawer";
 
 const labelCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
@@ -77,9 +77,9 @@ function AppealRow({ appeal, onOpen }: { appeal: RelevanceAppealRow; onOpen: () 
         <AdminStatusPill label={verdictLabel(appeal.verdict)} tone="slate" />
       </span>
       <span className="mt-3 block font-display text-base md:text-lg font-bold text-ink">{appeal.eventName ?? "—"}</span>
-      <span className={`${labelCls} mt-1 block tnum`}>
-        {who(appeal)} · {APPEAL_TEXT.filed} {formatLongDate(appeal.createdAt)}
-        {appeal.decidedAt && ` · ${APPEAL_TEXT.decided} ${formatLongDate(appeal.decidedAt)}`}
+      <span className="mt-1 block font-sans text-sm text-slate-soft tnum">
+        {who(appeal)} · {APPEAL_TEXT.filed} {sentenceCaseDate(formatLongDate(appeal.createdAt))}
+        {appeal.decidedAt && ` · ${APPEAL_TEXT.decided} ${sentenceCaseDate(formatLongDate(appeal.decidedAt))}`}
       </span>
     </button>
   );

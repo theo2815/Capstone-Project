@@ -11,7 +11,7 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_GHOST, BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import type { AdminEventRow } from "@/lib/api-admin";
 import { ROUTES } from "@/lib/constants";
-import { formatRaceDate } from "@/lib/format";
+import { formatRaceDate, sentenceCaseDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 // The backend can't read any other shape, and its reply then names no field.
@@ -86,7 +86,7 @@ export function RemovalRequestIntake() {
                 <input type="radio" name="eventId" value={row.id} checked={draft.eventId === row.id} onChange={() => { setPicked(row); set("eventId")(row.id); }} />
                 <span className="min-w-0 flex-1">
                   <span className="block font-display font-bold text-ink truncate">{row.name}</span>
-                  <span className="block font-mono tnum text-sm text-slate">{formatRaceDate(row.date)} · {row.city}</span>
+                  <span className="block font-mono tnum text-sm text-slate">{sentenceCaseDate(formatRaceDate(row.date))} · {row.city}</span>
                 </span>
                 <AdminStatusPill label={row.visibility === "unlisted" ? "UNLISTED" : "PUBLIC"} tone={row.visibility === "unlisted" ? "amber" : "slate"} />
               </label>
