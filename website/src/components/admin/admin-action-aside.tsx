@@ -19,6 +19,7 @@ import { Kicker } from "@/components/ui/kicker";
 import {
   BTN_DANGER,
   BTN_GHOST,
+  BTN_PRIMARY,
   BTN_SECONDARY,
   BTN_SIZE,
 } from "@/components/ui/button-styles";
@@ -29,7 +30,8 @@ interface AdminActionAsideProps {
 
 // Sticky-on-lg / inline-on-md action cluster for the photographer detail
 // page. Carries Reject, Suspend, Unsuspend, Reset verification, Send
-// message; profiles approve themselves once identity passes (Q7). Modal
+// message; profiles approve themselves once identity passes (Q7), so Approve
+// shows only for a profile held after an admin reset or rejection. Modal
 // state is local so the detail page stays a thin shell.
 //
 // Destructive actions (Reject, Suspend) carry the shared BTN_DANGER recipe
@@ -37,7 +39,7 @@ interface AdminActionAsideProps {
 // opens; restorative/neutral actions stay secondary/ghost.
 export function AdminActionAside({ row }: AdminActionAsideProps) {
   const { showToast } = useToast();
-  const { reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
+  const { approveHeld, reject, suspend, unsuspend, resetVerification, message, messageRecoveryNotice, isPending: actionPending, pendingAction } = useAdminUserActions();
   const submitting = actionPending([row.userId]);
   const activeLabel = pendingAction(row.userId);
   // The withdrawal call (RV-L7) locks the other actions too, as theirs lock it.
@@ -54,6 +56,13 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const isSuspended = row.suspendedAt !== null;
   const isIncomplete = row.verificationStatus === "incomplete";
   const displayName = row.brandName ?? row.name;
+
+  // PD5: the same approve the verifications drawer offers a profile held after a reset or rejection.
+  async function handleApproveHeld() {
+    if (await approveHeld(row.userId, row.verificationRevision)) {
+      showToast({ kind: "success", message: `Hold released · ${displayName}` });
+    }
+  }
 
   async function handleReject(reason: string) {
     const ok = await reject(row.userId, reason, reviewRevision);
@@ -108,12 +117,23 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
     <aside
       aria-label="Admin actions"
       aria-busy={submitting}
-      className="lg:sticky lg:top-24 mt-12 lg:mt-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
+      className="lg:sticky lg:top-24 lg:col-start-2 lg:row-start-1 mb-10 lg:mb-0 rounded-2xl border border-line bg-bone p-5 md:p-6"
     >
       <Kicker as="p" tone="soft">
         Admin actions
       </Kicker>
       <div className="mt-5 space-y-3">
+        {isPending && row.adminHold && (
+          <button
+            type="button"
+            disabled={locked}
+            onClick={handleApproveHeld}
+            className={primaryBtn}
+          >
+            {activeLabel === "Approving…" ? activeLabel : "Approve"}
+          </button>
+        )}
+
         {isPending && (
           <button
             type="button"
@@ -280,6 +300,7 @@ function ConsentWithdrawal({ row, locked, busy, setBusy }: { row: AdminUserRow; 
   );
 }
 
+const primaryBtn = `${BTN_PRIMARY} ${BTN_SIZE.sm} w-full`;
 const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm} w-full`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} w-full`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm} w-full`;

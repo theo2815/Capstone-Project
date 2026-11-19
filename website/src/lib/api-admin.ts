@@ -218,6 +218,21 @@ export async function fetchAdminUserDetail(
   );
 }
 
+// AX-13: an admin's view of a photographer's events and totals, whatever their status.
+export interface AdminPhotographerRecord {
+  /** Newest first, at most 200; drafts and private events included. */
+  events: Array<{ eventId: string; name: string; date: string; visibility: "public" | "unlisted"; photoCount: number }>;
+  eventsTotal: number;
+  /** Seller-details reviewState; null when none was submitted. */
+  sellerDetailsStatus: string | null;
+  salesCount: number;
+  photoCount: number;
+}
+
+export function fetchAdminUserRecord(userId: string, signal?: AbortSignal): Promise<AdminPhotographerRecord> {
+  return api.get<AdminPhotographerRecord>(`/admin/users/${encodeURIComponent(userId)}/record`, { signal });
+}
+
 // F-NEW-1 — full photographer-settings read for admin review surfaces.
 // Returns presigned URLs for cover/watermark/payout-QR so the admin can
 // preview the actual media a photographer uploaded.
