@@ -1,8 +1,11 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import type { EventState } from "@/types/event";
+import type { PaginatedResponse } from "@/types/api";
+import { useInfiniteList } from "./use-infinite-list";
 import {
-  fetchAdminEvents, createAdminEvent, updateAdminEvent, deleteAdminEvent,
+  fetchAdminEvents, fetchAdminEventsPage, fetchAdminEventCounts, createAdminEvent, updateAdminEvent, deleteAdminEvent,
   approveAdminEvent, rejectAdminEvent, sameRaceAdminEvent, setAdminEventListing, fetchAdminCommand,
   fetchAdminRacePrices, resetAdminRacePrice,
   type AdminEventListArgs, type AdminEventRow,
@@ -32,6 +35,33 @@ export function useAdminEvents(args: AdminEventListArgs = {}) {
     enabled: user?.role === "ADMIN",
     staleTime: 60_000,
   });
+}
+
+// AX-21: the Events page's server pages and tab counts. "paged" sits where owner() puts the
+// user id, so settle()'s array patch skips them; settle() invalidates this prefix instead.
+const adminEventPagedKey = [...adminEventKeys.all, "paged"] as const;
+
+export function useAdminEventsInfinite(state: EventState, q: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useInfiniteList<AdminEventRow>({
+    queryKey: [...adminEventPagedKey, "list", state, q, ...session.key],
+    fetchPage: (offset, limit, signal) => fetchAdminEventsPage({ state, q, offset, limit }, signal),
+    limit: 50,
+    enabled: session.enabled,
+    staleTime: 60_000,
+  });
+}
+
+/** Events per state; undefined while loading or when the backend has no counts route yet. */
+export function useAdminEventCounts(q: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery({
+    queryKey: [...adminEventPagedKey, "counts", q, ...session.key],
+    queryFn: ({ signal }) => fetchAdminEventCounts({ q }, signal),
+    enabled: session.enabled,
+    staleTime: 60_000,
+    retry: false,
+  }).data;
 }
 
 // AA-R16a: kept outside adminEventKeys.owner, whose queries settle() treats as event-row lists.
@@ -75,7 +105,7 @@ export function useAdminEventActions() {
           current.user.id === userId && current.sessionVersion === session.sessionVersion;
       };
       const affectedKeys = [
-        adminEventKeys.owner(userId), ["public", "events"], ["events"],
+        adminEventKeys.owner(userId), adminEventPagedKey, ["public", "events"], ["events"],
         ["photographer", "events"], ["admin", "kpis"], ["admin", "sales"],
       ];
       let result: AdminEventRow | { removed: boolean };
@@ -92,6 +122,7 @@ export function useAdminEventActions() {
         if (error instanceof ApiError && error.status === 409) {
           void Promise.allSettled([
             qc.invalidateQueries({ queryKey: adminEventKeys.owner(userId) }),
+            qc.invalidateQueries({ queryKey: adminEventPagedKey }),
             qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
           ]);
           if (!isCurrent()) return false;
@@ -121,7 +152,11 @@ export function useAdminEventActions() {
       }
       // Public visibility/filter membership comes from its own endpoint. Never
       // insert private drafts or unlisted admin records into the public cache.
-      void Promise.allSettled(affectedKeys.map((queryKey) => qc.invalidateQueries({ queryKey })));
+      // The paged lists get no array patch, so success waits for their refetch: a deleted row must not linger.
+      // A failed refresh never fails a command the server accepted.
+      await qc.invalidateQueries({ queryKey: adminEventPagedKey }).catch(() => undefined);
+      void Promise.allSettled(affectedKeys.filter((key) => key !== adminEventPagedKey)
+        .map((queryKey) => qc.invalidateQueries({ queryKey })));
       return isCurrent();
     };
     const keyed = async (operation: "event.create" | "event.update", target: string, draft: CreateAdminEventArgs | UpdateAdminEventPatch, send: (key: string) => Promise<AdminEventRow>) => {
@@ -133,10 +168,13 @@ export function useAdminEventActions() {
         // The server refused it after the upload and saved nothing; that key can never run again.
         if (command.state === "FAILED") return "failed";
         if (command.state !== "SUCCEEDED" || !current()) return "open";
-        await qc.invalidateQueries({ queryKey: adminEventKeys.owner(userId) });
+        await Promise.all([adminEventKeys.owner(userId), adminEventPagedKey].map((queryKey) => qc.invalidateQueries({ queryKey })));
         if (!current()) return "open";
-        const name = qc.getQueriesData<AdminEventRow[]>({ queryKey: adminEventKeys.owner(userId) })
-          .flatMap(([, rows]) => rows ?? []).find((row) => row.id === command.resourceId)?.name;
+        const name = [
+          ...qc.getQueriesData<AdminEventRow[]>({ queryKey: adminEventKeys.owner(userId) }).flatMap(([, rows]) => rows ?? []),
+          ...qc.getQueriesData<InfiniteData<PaginatedResponse<AdminEventRow>>>({ queryKey: [...adminEventPagedKey, "list"] })
+            .flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? []),
+        ].find((row) => row.id === command.resourceId)?.name;
         useToastStore.getState().showToast({ kind: "success", duration: 10_000,
           message: `Your earlier request went through: ${name ? `“${name}”` : "the event"} was ${operation === "event.create" ? "created" : "saved"}. It is in the list.` });
         return "succeeded";
