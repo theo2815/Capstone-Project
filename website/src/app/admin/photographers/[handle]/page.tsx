@@ -7,10 +7,12 @@ import { AvatarDisc } from "@/components/account/avatar-disc";
 import { Kicker } from "@/components/ui/kicker";
 import { AdminActionAside } from "@/components/admin/admin-action-aside";
 import { AdminDecisionsTimeline } from "@/components/admin/admin-decisions-timeline";
+import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
 import {
   useAdminPhotographerView,
   syntheticCoverGradient,
   computeCompleteness,
+  photographerStatus,
   snapshotFromSettings,
 } from "@/lib/admin-photographer-view";
 import type { EffectivePhotographerSettings } from "@/lib/admin-photographer-view";
@@ -32,12 +34,6 @@ import type { CoverSource } from "@/lib/photographer-registry";
 import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 import { formatRegionLabel } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
-
-const STATUS_LABEL = {
-  approved: "Approved",
-  pending: "Pending",
-  incomplete: "Incomplete",
-} as const;
 
 export default function AdminPhotographerDetailPage() {
   const params = useParams<{ handle: string }>();
@@ -63,15 +59,7 @@ export default function AdminPhotographerDetailPage() {
   const bio =
     effectiveSettings?.bio?.trim() || profile?.bio || "Bio not set yet.";
   const memberSinceIso = profile?.memberSince ?? row.createdAt;
-  const isSuspended = row.suspendedAt !== null;
-  const statusLabel = isSuspended
-    ? "Suspended"
-    : STATUS_LABEL[row.verificationStatus];
-  const statusTone: "fresh" | "ink" | "slate" = isSuspended
-    ? "ink"
-    : row.verificationStatus === "approved"
-      ? "fresh"
-      : "slate";
+  const status = photographerStatus(row);
   const publicHandle = effectiveSettings?.handle?.trim() || row.handle || "";
 
   return (
@@ -89,8 +77,8 @@ export default function AdminPhotographerDetailPage() {
         cover={cover}
         displayName={displayName}
         handle={publicHandle || null}
-        statusLabel={statusLabel}
-        statusTone={statusTone}
+        statusLabel={status.label}
+        statusTone={status.tone}
         memberSince={memberSinceIso}
         region={row.region}
         city={row.city}
@@ -151,7 +139,7 @@ function Hero({
   displayName: string;
   handle: string | null;
   statusLabel: string;
-  statusTone: "fresh" | "ink" | "slate";
+  statusTone: AdminStatusPillTone;
   memberSince: string;
   region: string | null;
   city: string;
@@ -204,7 +192,7 @@ function Hero({
               )}
               {displayName}
             </h1>
-            <StatusPill label={statusLabel} tone={statusTone} />
+            <AdminStatusPill label={statusLabel} tone={statusTone} />
           </div>
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3">
             {handle ? `@${handle}` : "No handle yet"}
@@ -222,28 +210,6 @@ function Hero({
         </div>
       </div>
     </header>
-  );
-}
-
-function StatusPill({
-  label,
-  tone,
-}: {
-  label: string;
-  tone: "fresh" | "ink" | "slate";
-}) {
-  const toneClass =
-    tone === "fresh"
-      ? "border-fresh/30 text-fresh"
-      : tone === "ink"
-        ? "border-ink text-ink"
-        : "border-line text-slate";
-  return (
-    <span
-      className={`inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border px-3 py-0.5 ${toneClass}`}
-    >
-      {label}
-    </span>
   );
 }
 

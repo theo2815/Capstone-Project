@@ -6,7 +6,9 @@ import type { AdminPhotographerSettingsResponse } from "@/lib/api-admin";
 import { getPhotographerByHandle, type CoverSource } from "@/lib/photographer-registry";
 import type { BrandColor, PayoutAccount, PhotographerRegion, SocialLink } from "@/store/photographer-settings-store";
 import type { WatermarkPreview } from "@/lib/admin-photographer-settings-seed";
-import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
+import type { AdminUserRow, PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
+import type { AdminStatusPillTone } from "@/components/admin/admin-status-pill";
+import { ROUTES } from "@/lib/constants";
 
 export interface EffectivePhotographerSettings {
   brandName: string;
@@ -62,19 +64,27 @@ function beToEffective(
 }
 
 // All private review data belongs to the authenticated admin's Query cache.
+// Handles are 3-30 characters, so a 36-character user id never collides with one.
+const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The detail route takes a handle, or the user id of a photographer who has none yet. */
 export function useAdminPhotographerView(handle: string) {
+  const key = handle.trim().toLowerCase();
+  const byId = USER_ID.test(key);
   const users = useAdminUsers();
-  const row = (users.data ?? EMPTY_ADMIN_USERS).find((row) => row.handle?.toLowerCase() === handle.trim().toLowerCase());
-  const detail = useAdminUserDetail(row?.userId ?? null);
-  const settings = useAdminPhotographerSettings(row?.userId ?? null);
+  const row = byId ? undefined : (users.data ?? EMPTY_ADMIN_USERS).find((row) => row.handle?.toLowerCase() === key);
+  const userId = byId ? key : row?.userId ?? null;
+  const detail = useAdminUserDetail(userId);
+  const settings = useAdminPhotographerSettings(userId);
   const effectiveSettings = useMemo(() => settings.data ? beToEffective(settings.data) : null, [settings.data]);
   return {
-    loading: users.isPending || (!row && users.isFetching) || (!!row && (detail.isPending || settings.isPending)),
-    error: users.error ?? detail.error ?? settings.error,
-    refetch: () => Promise.all([users.refetch(), ...(row ? [detail.refetch(), settings.refetch()] : [])]),
-    view: row && detail.data ? {
+    loading: byId ? detail.isPending || settings.isPending
+      : users.isPending || (!row && users.isFetching) || (!!row && (detail.isPending || settings.isPending)),
+    error: (byId ? null : users.error) ?? detail.error ?? settings.error,
+    refetch: () => Promise.all([...(byId ? [] : [users.refetch()]), ...(userId ? [detail.refetch(), settings.refetch()] : [])]),
+    view: userId && detail.data ? {
       row: detail.data,
-      profile: getPhotographerByHandle(handle),
+      profile: getPhotographerByHandle(detail.data.handle ?? ""),
       effectiveSettings,
       decisions: detail.data.decisionLog,
     } : null,
@@ -119,6 +129,20 @@ export function completenessItems(snapshot: PhotographerSettingsSnapshot): Array
 export function computeCompleteness(snapshot: PhotographerSettingsSnapshot | null): { filled: number; total: number } {
   const total = COMPLETENESS_FIELDS.length + 2;
   return { filled: snapshot ? completenessItems(snapshot).filter((i) => i.filled).length : 0, total };
+}
+
+const STATUS_LABEL = { approved: "Approved", pending: "Pending", incomplete: "Incomplete" } as const;
+
+// PH3: the one status look for the directory card and the detail page. Suspended wins; amber = waiting on an admin.
+export function photographerStatus(row: AdminUserRow): { label: string; tone: AdminStatusPillTone } {
+  if (row.suspendedAt !== null) return { label: "Suspended", tone: "ink" };
+  const tone = { approved: "fresh", pending: "amber", incomplete: "slate" } as const;
+  return { label: STATUS_LABEL[row.verificationStatus], tone: tone[row.verificationStatus] };
+}
+
+// PH1: a photographer with no handle yet is opened by user id.
+export function photographerHref(row: Pick<AdminUserRow, "handle" | "userId">): string {
+  return `${ROUTES.ADMIN_PHOTOGRAPHERS}/${row.handle ?? row.userId}`;
 }
 
 export function syntheticCoverGradient(userId: string): { from: string; to: string } {

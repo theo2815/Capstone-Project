@@ -2,11 +2,12 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchAdminUsers, fetchAdminUserDetail, fetchAdminPhotographerSettings,
+  fetchAdminUsers, fetchAdminUsersPage, fetchAdminUserDetail, fetchAdminPhotographerSettings,
   approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
   sendAdminMessage, fetchAdminCommand, type SendAdminMessageInput,
-  type AdminUserDetail,
+  type AdminUserDetail, type AdminUserStatusFilter,
 } from "@/lib/api-admin";
+import { useInfiniteList } from "./use-infinite-list";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
@@ -29,6 +30,21 @@ export function useAdminUsers() {
   return useQuery({
     queryKey: adminUserKeys.list(user?.id ?? null),
     queryFn: ({ signal }) => fetchAdminUsers({}, signal),
+    enabled: user?.role === "ADMIN",
+    staleTime: 30_000,
+  });
+}
+
+// Under the owner prefix so every user mutation's refresh reaches it; nothing patches that prefix as an array.
+export function useAdminPhotographersPage(status: AdminUserStatusFilter, q: string) {
+  const user = useAuthStore((s) => s.user);
+  return useInfiniteList<AdminUserRow & { id: string }>({
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), "photographers", status, q],
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchAdminUsersPage({ role: "PHOTOGRAPHER", status, q: q || undefined, offset, limit }, signal);
+      return { ...page, items: page.items.map((row) => ({ ...row, id: row.userId })) };
+    },
+    limit: 50,
     enabled: user?.role === "ADMIN",
     staleTime: 30_000,
   });
