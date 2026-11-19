@@ -183,6 +183,14 @@ function buildUsersQs(args: AdminUserListArgs): string {
   return p.toString();
 }
 
+// One page; since AX-43 the server filters status before paging and q matches name, email, handle and brand.
+export function fetchAdminUsersPage(
+  args: AdminUserListArgs,
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<AdminUserRow>> {
+  return api.get<PaginatedResponse<AdminUserRow>>(`/admin/users?${buildUsersQs(args)}`, { signal });
+}
+
 // Directory consumers filter locally, so load every unfiltered page. Explicit
 // pagination/filter callers retain the endpoint's page semantics.
 export async function fetchAdminUsers(
@@ -194,9 +202,7 @@ export async function fetchAdminUsers(
   const paged = args.offset !== undefined || args.limit !== undefined || args.status !== undefined;
   while (true) {
     signal?.throwIfAborted();
-    const page = await api.get<PaginatedResponse<AdminUserRow>>(
-      `/admin/users?${buildUsersQs({ ...args, offset })}`,
-    );
+    const page = await fetchAdminUsersPage({ ...args, offset });
     signal?.throwIfAborted();
     rows.push(...page.items);
     offset += page.items.length;
