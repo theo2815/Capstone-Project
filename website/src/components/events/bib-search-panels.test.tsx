@@ -218,6 +218,17 @@ it("sends no bib search until the bib box is ticked", () => {
   expect(onSubmit).toHaveBeenCalledTimes(1);
 });
 
+// Runner audit P2-8: the disabled button gave no reason.
+it("says why bib search is off until the box is ticked", () => {
+  useBibConsentStore.setState({ acceptedVersion: null });
+  mountBib();
+  const button = screen.getByRole("button", { name: /Search by bib/ });
+  expect(button).toHaveAccessibleDescription("Tick the box above to search.");
+  fireEvent.click(screen.getByLabelText(/This is my bib number/));
+  expect(screen.queryByText("Tick the box above to search.")).not.toBeInTheDocument();
+  expect(button).not.toHaveAccessibleDescription();
+});
+
 it("remembers the bib tick on this device after a remount", () => {
   useBibConsentStore.setState({ acceptedVersion: null });
   const { unmount } = mountBib();

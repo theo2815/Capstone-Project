@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent, RefObject } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
@@ -46,6 +46,7 @@ export function BibPanel({
 }) {
   // Review S10: no bib search before the tick, whatever submits the form.
   const bibOk = useBibConsent();
+  const hintId = useId();
   return (
     <form onSubmit={(e) => (bibOk ? onSubmit(e) : e.preventDefault())} className="mt-8">
       <BibNotice className="mb-3" />
@@ -53,10 +54,16 @@ export function BibPanel({
       <button
         type="submit"
         disabled={!bibOk}
+        aria-describedby={bibOk ? undefined : hintId}
         className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Search by bib →
       </button>
+      {!bibOk && (
+        <p id={hintId} className="mt-2 font-sans text-sm text-slate">
+          Tick the box above to search.
+        </p>
+      )}
 
       <div className="mt-7 flex items-center gap-3">
         <span className="h-px flex-1 bg-line" />
