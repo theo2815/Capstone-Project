@@ -106,7 +106,11 @@ const ACTION_CALL: Record<RelevanceCaseAction, (caseId: string) => Promise<unkno
 /** The admin's actions. Each resolves after the server answered and the page was read again; nothing changes before. */
 export function useRelevanceActions() {
   const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "relevance"] });
+  // The Photo Relevance tab counts come from /admin/kpis, so a decision reads them again too.
+  const refresh = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ["admin", "relevance"] }),
+    qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+  ]);
   const caseAction = useMutation({
     mutationFn: ({ kind, caseId }: { kind: RelevanceCaseAction; caseId: string }) => ACTION_CALL[kind](caseId),
     onSuccess: refresh,
@@ -165,7 +169,11 @@ export function useOpenRelevanceAppealsCount(): number {
 /** Opening the evidence and deciding. Each resolves after the server answered; the page is read again either way. */
 export function useRelevanceAppealActions() {
   const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "relevance"] });
+  // The Photo Relevance tab counts come from /admin/kpis, so a decision reads them again too.
+  const refresh = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ["admin", "relevance"] }),
+    qc.invalidateQueries({ queryKey: ["admin", "kpis"] }),
+  ]);
   const evidence = useMutation({ mutationFn: (appealId: string) => markRelevanceAppealEvidenceOpened(appealId) });
   const decide = useMutation({
     mutationFn: ({ appealId, outcome, note }: { appealId: string; outcome: "WON" | "LOST"; note?: string }) =>

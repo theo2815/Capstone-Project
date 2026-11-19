@@ -94,6 +94,10 @@ export interface AdminKpis {
   pendingEventRequests: number;
   /** AX-8: seller details waiting for an admin. Optional until the backend ships it. */
   pendingSellerDetails?: number;
+  /** AX-8: the Photo Relevance tab totals (Hidden, Can't tell, open Appeals). Optional until the backend ships them. */
+  relevanceHidden?: number;
+  relevanceCantTell?: number;
+  relevanceAppealsOpen?: number;
 }
 
 export interface AdminTrendPoint {

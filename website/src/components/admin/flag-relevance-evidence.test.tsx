@@ -1,13 +1,14 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
 import type { Flag, HiddenPhoto, RelevanceBatch, RelevanceEvidence } from "@/lib/admin-flags";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
-import { FlagRelevanceEvidence } from "./flag-relevance-evidence";
+import { FlagRelevanceEvidence, Thumb } from "./flag-relevance-evidence";
 
 vi.mock("@/lib/constants", async (original) => ({ ...await original<object>(), ADMIN_FLAGS_ENABLED: true }));
 
@@ -84,7 +85,7 @@ it("hide batch asks first and reports how many photos were hidden", async () => 
   await user.click(screen.getByRole("button", { name: "Confirm hide batch" }));
   await waitFor(() => expect(toasts().some((t) => t.kind === "error" && t.message === "This flag is already closed.")).toBe(true));
   await user.click(screen.getByRole("button", { name: "Confirm hide batch" }));
-  await waitFor(() => expect(toasts().some((t) => t.message === "12 photos hidden in Cebu City Marathon 2027")).toBe(true));
+  await waitFor(() => expect(toasts().some((t) => t.kind === "success" && t.message === "12 photos hidden in Cebu City Marathon 2027")).toBe(true));
   expect(post).toHaveBeenLastCalledWith("/admin/flags/flag-2/hide-batch", { eventId: "e1", resolutionNote: null });
   expect(await screen.findByText(/Hidden \(12\)/)).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Confirm hide batch" })).not.toBeInTheDocument();
@@ -182,4 +183,54 @@ it("a batch whose event is gone says so and is not called an own event", async (
   const card = await screen.findByRole("region", { name: "Batch in an event that is no longer available" });
   expect(within(card).getByRole("heading", { name: "Event no longer available" })).toBeInTheDocument();
   expect(within(card).queryByText(/Own event/)).not.toBeInTheDocument();
+});
+
+// AX-35 REL3: a screen reader can tell the photos apart, a broken image says so, and every photo can be enlarged.
+it("each photo has its own alt text", async () => {
+  relevance = async () => evidence([{ ...batch, copySamples: [sample(0), sample(1)], dateSamples: [{ photoId: "d1", thumbnailUrl: "https://img/d1.jpg", takenOn: "2027-01-02" }] }]);
+  mount();
+  const card = await screen.findByRole("region", { name: "Batch in Cebu City Marathon 2027" });
+  const alts = within(card).getAllByRole("img").map((i) => i.getAttribute("alt"));
+  expect(alts).toHaveLength(5);
+  expect(new Set(alts).size).toBe(5);
+  expect(alts[0]).toBe("Uploaded photo 1 of 2, Cebu City Marathon 2027");
+  expect(alts[3]).toBe("Earlier photo 2 of 2, Cebu City Marathon 2027");
+  expect(alts[4]).toBe(`Uploaded photo 1 of 1, Cebu City Marathon 2027, taken ${sentenceCaseDate(formatLongDate("2027-01-02", true))}`);
+});
+
+it("a photo that fails to load shows Photo unavailable", async () => {
+  relevance = async () => evidence([{ ...batch, copySamples: [sample(0)], dateSamples: [] }]);
+  mount();
+  const card = await screen.findByRole("region", { name: "Batch in Cebu City Marathon 2027" });
+  fireEvent.error(within(card).getByAltText("Uploaded photo 1 of 1, Cebu City Marathon 2027"));
+  expect(within(card).getByRole("img", { name: "Uploaded photo 1 of 1, Cebu City Marathon 2027 (no longer available)" })).toHaveTextContent("Photo unavailable");
+  expect(within(card).queryByRole("button", { name: /^Enlarge Uploaded/ })).not.toBeInTheDocument();
+});
+
+it("Enlarge opens the photo in a dialog and Escape closes it", async () => {
+  const user = userEvent.setup();
+  relevance = async () => evidence([{ ...batch, copySamples: [sample(0)], dateSamples: [] }]);
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Enlarge Earlier photo 1 of 1, Cebu City Marathon 2027" }));
+  const big = screen.getByRole("dialog", { name: "Earlier photo 1 of 1, Cebu City Marathon 2027" });
+  expect(within(big).getByRole("img")).toHaveAttribute("src", "https://img/m0.jpg");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("a fresh link after a failed one shows the photo again", () => {
+  const { rerender } = render(<Thumb url="https://img/old.jpg" alt="Held photo 1 of 1" />);
+  fireEvent.error(screen.getByAltText("Held photo 1 of 1"));
+  expect(screen.getByText("Photo unavailable")).toBeInTheDocument();
+  rerender(<Thumb url="https://img/new.jpg" alt="Held photo 1 of 1" />);
+  expect(screen.getByAltText("Held photo 1 of 1")).toHaveAttribute("src", "https://img/new.jpg");
+});
+
+it("a link that dies while the photo is enlarged closes it and shows Photo unavailable", async () => {
+  const user = userEvent.setup();
+  render(<Thumb url="https://img/one.jpg" alt="Held photo 1 of 1" />);
+  await user.click(screen.getByRole("button", { name: "Enlarge Held photo 1 of 1" }));
+  fireEvent.error(within(screen.getByRole("dialog")).getByRole("img"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByText("Photo unavailable")).toBeInTheDocument();
 });

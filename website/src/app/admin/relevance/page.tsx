@@ -3,7 +3,7 @@
 import { RelevanceCases } from "@/components/admin/relevance/relevance-cases";
 import { Kicker } from "@/components/ui/kicker";
 
-// RV-1.11a: the Photo Relevance page, read-only. Actions arrive with part 2; the rail item with RV-1.11b.
+// The Photo Relevance page: the cases and appeals with their actions (RelevanceCases).
 export default function AdminRelevancePage() {
   return (
     <>

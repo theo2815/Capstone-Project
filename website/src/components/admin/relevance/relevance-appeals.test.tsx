@@ -68,7 +68,7 @@ it("lists open appeals first and shows the open count on the tab", async () => {
   expect(await within(screen.getByRole("region", { name: "Won" })).findByText("Won Race")).toBeInTheDocument();
   const sections = screen.getAllByRole("region").map((r) => r.getAttribute("aria-label"));
   expect(sections).toEqual(["Open", "Won", "Lost"]);
-  expect(screen.getByRole("button", { name: /Appeals/ })).toHaveTextContent("Appeals 1");
+  expect(screen.getByRole("button", { name: "Appeals 1" })).toBeInTheDocument();
 });
 
 it("the drawer shows the photographer's reason as plain text beside the case evidence", async () => {
@@ -113,13 +113,21 @@ it("a decided appeal leaves the open list", async () => {
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  await user.type(within(d).getByLabelText("Note (admins only, optional)"), "  Real race photos  ");
+  const note = within(d).getByLabelText("Note (admins only, optional)");
+  // REL4: the shared admin textarea, with its focus ring and the hint read out with it.
+  expect(note).toHaveClass("focus:ring-2");
+  expect(note).toHaveAccessibleDescription("The photographer never sees this note.");
+  await user.type(note, "  Real race photos  ");
   await user.click(await within(d).findByRole("button", { name: "Won" }));
+  const invalidate = vi.spyOn(client, "invalidateQueries");
   await user.click(await screen.findByRole("button", { name: "Confirm won" }));
   expect(posts("/decide")).toEqual([["/admin/relevance/appeals/a1/decide", { outcome: "WON", note: "Real race photos" }]]);
+  // AX-35: the tab counts come from /admin/kpis, so a decision reads them again.
+  await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(await within(screen.getByRole("region", { name: "Open" })).findByText("No open appeals.")).toBeInTheDocument();
   expect(toasts()).toContain("Appeal won: Cebu City Marathon 2003");
+  expect(useToastStore.getState().toasts.find((t) => t.message === "Appeal won: Cebu City Marathon 2003")?.kind).toBe("success");
 });
 
 it("the server's refusal is shown", async () => {
@@ -199,7 +207,7 @@ it("the open count is read with one row, and the Appeals tab reads no cases", as
   await screen.findByRole("region", { name: "Open" });
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/relevance/appeals?status=OPEN&offset=0&limit=1", expect.anything()));
   expect(vi.mocked(api.get).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith("/admin/relevance/cases?"))).toEqual([]);
-  expect(await screen.findByRole("button", { name: /Appeals/ })).toHaveTextContent("Appeals 1");
+  expect(await screen.findByRole("button", { name: "Appeals 1" })).toBeInTheDocument();
 });
 
 it("the confirm of an appeal on a closed case says it only records the decision", async () => {
