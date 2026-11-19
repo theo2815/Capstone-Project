@@ -31,6 +31,11 @@ vi.mock("@/hooks/use-url-state", () => ({
   useUrlState: (key: string) => [fixtures.state.url[key] ?? "", vi.fn()],
   useUrlStateBatch: () => vi.fn(),
 }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => "/events/cebu-run",
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/hooks/use-event-live-photos", () => ({ useEventLivePhotos: () => ({ newCount: 0, reconnectFailed: false, refresh: vi.fn() }) }));
 vi.mock("@/hooks/use-selfies", () => ({ useSelfiesList: () => ({ selfies: [{ id: "s1", isPrimary: true }], isLoading: false }) }));
 vi.mock("@/lib/api-photo-alert", () => ({ fetchPhotoAlertStatus: vi.fn(async () => ({ registered: true, selfieId: "s1" })) }));
@@ -107,6 +112,35 @@ it("a bib search with matches keeps its subtitle and links", async () => {
 
   expect(await screen.findByText(/These are the photos matching your bib/)).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /In these photos\? Request deletion/ })).toBeInTheDocument();
+});
+
+const freeEvent = { ...fixtures.event, pricingMode: "free" as const, pricePerPhoto: 0 };
+const renderFree = () => render(
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <EventCockpit event={freeEvent} initialPhotos={{ items: [], total: 0, offset: 0, limit: 60 }} />
+  </QueryClientProvider>,
+);
+
+it("a free event's search page says its photos are free to download", async () => {
+  fixtures.state.url = {};
+  renderFree();
+  expect(await screen.findByText(/photos available · free to download/i)).toBeInTheDocument();
+  expect(screen.queryByText(/free to search/i)).not.toBeInTheDocument();
+});
+
+it("a free event's gallery says every photo is free", async () => {
+  fixtures.state.url = { browse: "1" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue({ items: fixtures.matches.slice(0, 3), total: 3, offset: 0, limit: 60 });
+  renderFree();
+  expect(await screen.findByText(/Every photo here is free to download/)).toBeInTheDocument();
+});
+
+it("bib matches on a free event say download, not add to cart", async () => {
+  fixtures.state.url = { bib: "123" };
+  vi.mocked(fetchEventPhotos).mockResolvedValue({ items: fixtures.matches.slice(0, 3), total: 3, offset: 0, limit: 60 });
+  renderFree();
+  expect(await screen.findByText(/These are the photos matching your bib\. Tap any to download\./)).toBeInTheDocument();
+  expect(screen.queryByText(/add to cart/i)).not.toBeInTheDocument();
 });
 
 // BT-1b: opening a shared or saved ?bib= link is a bib search, so this device
