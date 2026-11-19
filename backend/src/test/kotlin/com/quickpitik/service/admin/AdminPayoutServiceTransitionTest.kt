@@ -595,6 +595,56 @@ class AdminPayoutServiceTransitionTest {
         assertFalse(items[0].relevanceHold)
         assertEquals(null, items[1].relevanceFlagId)
     }
+
+    // AX-10: the statuses list() asks the repository for.
+    private fun statusesAskedFor(status: String?): Collection<String> {
+        var asked: Collection<String>? = null
+        Mockito.`when`(payoutCycleRepository.pageForAdmin(anyArg(), anyArg(), anyArg())).thenAnswer {
+            asked = it.getArgument(0)
+            org.springframework.data.domain.PageImpl(emptyList<PayoutCycle>())
+        }
+        service().list(status, null, com.quickpitik.common.PaginationParams.of(0, 20))
+        return asked!!
+    }
+
+    @Test
+    fun `a comma list of tab statuses asks for exactly those statuses`() {
+        assertEquals(setOf("approved", "processing"), statusesAskedFor("approved, processing").toSet())
+        assertEquals(setOf("failed", "returned", "rejected", "cancelled"), statusesAskedFor("failed,returned,rejected,cancelled").toSet())
+        assertEquals(setOf("pending"), statusesAskedFor("pending_review").toSet())
+    }
+
+    @Test
+    fun `no status or one unknown status still means every status, as before`() {
+        val all = PayoutCycleStatus.entries.map { it.wire }.toSet()
+        assertEquals(all, statusesAskedFor(null).toSet())
+        assertEquals(all, statusesAskedFor("").toSet())
+        assertEquals(all, statusesAskedFor("nonsense").toSet())
+    }
+
+    @Test
+    fun `a list with an unknown status is a 400 naming the status field`() {
+        val e = assertFailsWith<com.quickpitik.exception.ValidationException> {
+            service().list("paid,payed", null, com.quickpitik.common.PaginationParams.of(0, 20))
+        }
+        assertEquals("status", e.field)
+    }
+
+    @Test
+    fun `counts give every admin status, with zeros, keyed as the list filter`() {
+        Mockito.`when`(payoutCycleRepository.countByStatusForAdmin("pay-1")).thenReturn(listOf(
+            com.quickpitik.repository.StatusCountRow("pending", 3),
+            com.quickpitik.repository.StatusCountRow("paid", 2),
+        ))
+        val counts = service().counts(" PAY-1 ").counts
+        assertEquals(
+            setOf("pending_review", "approved", "processing", "held", "paid", "failed", "returned", "rejected", "cancelled", "scheduled"),
+            counts.keys,
+        )
+        assertEquals(3L, counts["pending_review"])
+        assertEquals(2L, counts["paid"])
+        assertEquals(0L, counts["held"])
+    }
 }
 
 class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {

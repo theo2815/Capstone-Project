@@ -875,4 +875,16 @@ class AdminFlagServiceTest {
         val off = assertFailsWith<ApiException> { service(flagsEnabled = false).listHiddenPhotos(f.id, PaginationParams.of(0, 10)) }
         assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
     }
+
+    @Test
+    fun `counts give every flag status with zeros, use the list's search, and respect the flags switch`() {
+        Mockito.`when`(flagRepository.countByStatusForAdmin("x".repeat(100))).thenReturn(listOf(
+            com.quickpitik.repository.StatusCountRow("open", 4),
+            com.quickpitik.repository.StatusCountRow("escalated", 1),
+        ))
+        val counts = service().counts("x".repeat(150)).counts
+        assertEquals(mapOf("open" to 4L, "resolved" to 0L, "hidden" to 0L, "dismissed" to 0L, "escalated" to 1L), counts)
+        val off = assertFailsWith<ApiException> { service(flagsEnabled = false).counts(null) }
+        assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
+    }
 }

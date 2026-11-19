@@ -6,6 +6,9 @@ import jakarta.validation.constraints.Size
 import java.math.BigDecimal
 import java.util.UUID
 
+// GET /admin/payouts/counts and /admin/flags/counts (AX-10): `{ counts: { <status>: n } }`.
+data class AdminStatusCountsDto(val counts: Map<String, Long>)
+
 // Mirrors website/src/lib/admin-payouts.ts PayoutAccountSnapshot. The QR
 // dataUrl is a presigned GET URL when there's an S3 key and null otherwise —
 // the FE accepts either a base64 data URL or an http(s) URL on <img src>.
