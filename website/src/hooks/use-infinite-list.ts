@@ -1,6 +1,6 @@
 "use client";
 
-import { useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
+import { keepPreviousData as keepPrevious, useInfiniteQuery, type QueryKey } from "@tanstack/react-query";
 import type { PaginatedResponse } from "@/types/api";
 
 // Shared offset/limit pagination adapter over React Query's useInfiniteQuery.
@@ -19,6 +19,9 @@ interface UseInfiniteListArgs<T> {
   initialPage?: PaginatedResponse<T>;
   enabled?: boolean;
   staleTime?: number;
+  refetchInterval?: number | false;
+  /** Keep the last list on screen while a new key (another view or search) loads. */
+  keepPreviousData?: boolean;
 }
 
 interface UseInfiniteListResult<T> {
@@ -62,6 +65,8 @@ export function useInfiniteList<T extends { id: string }>({
   initialPage,
   enabled,
   staleTime,
+  refetchInterval,
+  keepPreviousData,
 }: UseInfiniteListArgs<T>): UseInfiniteListResult<T> {
   const query = useInfiniteQuery({
     queryKey,
@@ -78,6 +83,8 @@ export function useInfiniteList<T extends { id: string }>({
       ? { pages: [initialPage], pageParams: [0] }
       : undefined,
     staleTime,
+    refetchInterval,
+    placeholderData: keepPreviousData ? keepPrevious : undefined,
   });
 
   const pages = query.data?.pages ?? [];

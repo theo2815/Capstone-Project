@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Kicker } from "@/components/ui/kicker";
-import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
 import { RefundRun } from "@/components/admin/refund-run";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
@@ -11,9 +12,11 @@ import {
   type PhotoPreviewItem,
 } from "@/components/photos/photo-preview-card";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { AdminDisputeActivityList } from "@/components/admin/admin-dispute-activity-list";
 import { AdminDisputeActionAside } from "@/components/admin/admin-dispute-action-aside";
-import { useAdminDispute, useAdminDisputePage, EMPTY_DISPUTES } from "@/hooks/use-admin-disputes";
+import { useAdminDispute, useAdminDisputePage } from "@/hooks/use-admin-disputes";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import {
@@ -28,7 +31,7 @@ import {
 import type { AdminDisputeView } from "@/lib/api-admin";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { formatLongDate } from "@/lib/format";
-import { cn, formatPrice } from "@/lib/utils";
+import { formatPrice } from "@/lib/utils";
 
 // The server's views (no status filter in the UI on purpose; the server keeps `status=`).
 type QueueView = Extract<AdminDisputeView, "needs_me" | "overdue" | "refund_run" | "closed" | "all">;
@@ -42,8 +45,18 @@ const VIEWS: readonly { value: QueueView; label: string; empty: string }[] = [
 const parseView = (raw: string): QueueView =>
   VIEWS.some((v) => v.value === raw) ? (raw as QueueView) : "needs_me";
 const SEARCH_DEBOUNCE_MS = 300;
-// The server's page size when the request names none (PaginationParams.DEFAULT_LIMIT).
-const SERVER_PAGE_SIZE = 50;
+// The server's page size, for the Load more count.
+const PAGE_INCREMENT = 50;
+
+// Phones (below md) get the actions inside the drawer's scroll, not a footer that takes half the screen (DSP7).
+// shortcut: crossing 768 px while a dispute modal is open remounts the aside and closes it; fine for rotate and resize.
+const MD_UP = "(min-width: 768px)";
+const subscribeMdUp = (onChange: () => void) => {
+  const mq = window.matchMedia?.(MD_UP);
+  mq?.addEventListener("change", onChange);
+  return () => mq?.removeEventListener("change", onChange);
+};
+const useMdUp = () => useSyncExternalStore(subscribeMdUp, () => window.matchMedia?.(MD_UP).matches ?? true, () => true);
 
 // Disputes queue body, shared by /admin/disputes and /admin/inbox. The
 // server sorts and pages each view ("Needs you" is due time first); the
@@ -73,20 +86,16 @@ export function DisputesQueue() {
     return () => clearTimeout(timer);
   }, [qDraft, q, setQ]);
 
-  // A new view or search starts at the first page.
-  const pageScope = `${view}|${q}`;
-  const [paging, setPaging] = useState({ scope: pageScope, offset: 0 });
-  const offset = paging.scope === pageScope ? paging.offset : 0;
-  const goTo = (next: number) => setPaging({ scope: pageScope, offset: next });
-
-  const query = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined, offset });
-  const items = query.data?.items ?? EMPTY_DISPUTES;
-  const total = query.data?.total ?? 0;
-  const limit = query.data?.limit || SERVER_PAGE_SIZE;
-  // Rows left this page (decided, or the view shrank): step back to the last page that has rows.
-  if (query.isSuccess && !query.isPlaceholderData && items.length === 0 && offset > 0) {
-    goTo(Math.floor(Math.max(total - 1, 0) / limit) * limit);
-  }
+  // Each view and search is its own list, so a new one starts at the first page.
+  const list = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined });
+  const items = list.items;
+  const mdUp = useMdUp();
+  // Counts come from the polled KPIs; a field an older backend leaves out shows no count.
+  const kpis = useAdminKpis();
+  const counts: Partial<Record<QueueView, number>> = {
+    needs_me: kpis?.disputesNeedingAdmin ?? kpis?.openDisputes,
+    overdue: kpis?.disputesOverdue,
+  };
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
   // Any aside dialog (resolve, refund confirm, deny, escalate, refund panel) is open; the drawer must ignore Esc.
@@ -99,7 +108,7 @@ export function DisputesQueue() {
   }, [items]);
 
   // A ?row= link to a dispute outside the loaded list is fetched by id.
-  const fallbackId = query.isSuccess && rowId && !byId.has(rowId) ? rowId : "";
+  const fallbackId = !list.isLoading && !list.error && rowId && !byId.has(rowId) ? rowId : "";
   const fallback = useAdminDispute(fallbackId);
 
   const openRow = useMemo<Dispute | null>(() => {
@@ -138,11 +147,11 @@ export function DisputesQueue() {
     setRowId(id);
   }
 
-  if (query.isPending) return <p role="status" className="py-6">Loading disputes…</p>;
-  if (query.isError && !query.data) return (
+  if (list.isLoading) return <p role="status" className="py-6">Loading disputes…</p>;
+  if (list.error && items.length === 0) return (
     <div role="alert" className="space-y-4 py-6">
       <p>Couldn&apos;t load disputes.</p>
-      <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={() => void query.refetch()}>
+      <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={list.refetch}>
         Try again
       </button>
     </div>
@@ -152,34 +161,34 @@ export function DisputesQueue() {
     ? `No disputes match “${q}”.`
     : VIEWS.find((v) => v.value === view)?.empty;
 
+  const actionsAside = openRow && (
+    <AdminDisputeActionAside
+      key={openRow.id}
+      dispute={openRow}
+      runnerHandle={openRow.runnerHandle}
+      onDialogOpenChange={setAsideDialogOpen}
+      className=""
+    />
+  );
+
   return (
     <>
-      <div className="pt-6 md:pt-8 space-y-6">
-        {/* Side by side from lg only: at md the admin rail leaves too narrow a column. */}
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div role="tablist" aria-label="Dispute views" className="flex flex-wrap gap-2">
-            {VIEWS.map((v) => {
-              const active = view === v.value;
-              return (
-                <button
-                  key={v.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setView(v.value)}
-                  className={cn(
-                    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 transition-colors",
-                    active
-                      ? "bg-ink text-bone border border-ink"
-                      : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",
-                  )}
-                >
-                  {v.label}
-                </button>
-              );
-            })}
+      <AdminStatusTabs
+        label="Dispute views"
+        tabs={VIEWS.map((v) => ({ key: v.value, label: v.label, count: counts[v.value] }))}
+        value={view}
+        onChange={setView}
+      />
+      <div className="pt-6 md:pt-8 space-y-6" aria-busy={list.isFetching}>
+        {list.error != null && items.length > 0 && (
+          <div role="alert" className="flex flex-wrap items-center gap-3">
+            <p className="font-sans text-sm text-error">Couldn&apos;t refresh.</p>
+            <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={list.refetch}>
+              Retry
+            </button>
           </div>
-          {view !== "refund_run" && (
+        )}
+        {view !== "refund_run" && (
           <div className="lg:w-80">
             <label htmlFor="dispute-search" className="sr-only">
               Search disputes
@@ -193,33 +202,37 @@ export function DisputesQueue() {
               className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
             />
           </div>
-          )}
-        </div>
+        )}
 
         {view === "refund_run" ? (
           <RefundRun onOpen={handleOpenRow} />
         ) : items.length === 0 ? (
           <p className="font-sans text-sm text-slate-soft">{emptyText}</p>
         ) : (
-          <ul className="space-y-4">
-            {items.map((row) => (
-              <li key={row.id}>
-                <AdminDisputeCard
-                  dispute={row}
-                  focused={focusedId === row.id}
-                  onOpen={() => handleOpenRow(row.id)}
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {view !== "refund_run" && total > limit && (
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset === 0} onClick={() => goTo(Math.max(0, offset - limit))}>← Previous</button>
-            <span className="font-mono tnum text-sm text-slate">{offset + 1}–{offset + items.length} of {total}</span>
-            <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} disabled={offset + items.length >= total} onClick={() => goTo(offset + items.length)}>Next →</button>
-          </div>
+          <>
+            <ul className="space-y-4">
+              {items.map((row) => (
+                <li key={row.id}>
+                  <AdminDisputeCard
+                    dispute={row}
+                    focused={focusedId === row.id}
+                    onOpen={() => handleOpenRow(row.id)}
+                  />
+                </li>
+              ))}
+            </ul>
+            {/* Like the old pager: only once the list is longer than one server page. */}
+            {list.total > PAGE_INCREMENT && (
+              <LoadMoreButton
+                shown={items.length}
+                total={list.total}
+                increment={PAGE_INCREMENT}
+                onLoadMore={list.fetchNextPage}
+                isLoading={list.isFetchingNextPage}
+                label="Load more"
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -245,17 +258,11 @@ export function DisputesQueue() {
           subtitle={<DisputeSubtitle dispute={openRow} />}
           actions={
             // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
-            <div className="w-full max-h-[50vh] overflow-y-auto p-1">
-              <AdminDisputeActionAside
-                key={openRow.id}
-                dispute={openRow}
-                runnerHandle={openRow.runnerHandle}
-                onDialogOpenChange={setAsideDialogOpen}
-                className=""
-              />
-            </div>
+            mdUp ? <div className="w-full max-h-[50vh] overflow-y-auto p-1">{actionsAside}</div> : undefined
           }
         >
+          {/* On phones the actions come first, so the main action is in view when the drawer opens. */}
+          {!mdUp && <div className="mb-10">{actionsAside}</div>}
           <DisputeDetailBody dispute={openRow} />
         </AdminDetailDrawer>
       )}

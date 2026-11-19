@@ -86,7 +86,7 @@ afterEach(() => {
 // The legacy list (read by sales and the palette) and the queue's first "Needs you" page.
 function seedDisputes(rows: Dispute[], options?: { updatedAt?: number }) {
   client.setQueryData(adminDisputeKeys.list(admin.id), rows, options);
-  client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me", offset: 0 }), { items: rows, total: rows.length, offset: 0, limit: 50 }, options);
+  client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me" }), { pages: [{ items: rows, total: rows.length, offset: 0, limit: 50 }], pageParams: [0] }, options);
 }
 
 function pendingRequest(method: "post" | "fetch") {

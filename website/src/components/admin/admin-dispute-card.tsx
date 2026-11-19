@@ -30,11 +30,13 @@ export function AdminDisputeCard({
   onOpen,
   focused = false,
 }: AdminDisputeCardProps) {
-  // Undecided: the photo's own charge. Closed: what was refunded, so a partial refund shows its amount.
-  const showAmount =
-    dispute.status === "open" || dispute.status === "escalated"
-      ? dispute.itemChargeAmount ?? dispute.orderSnapshot.total
-      : dispute.refundAmount ?? dispute.orderSnapshot.total;
+  // Undecided: the photo's own charge. Resolved: what was refunded, so a partial refund shows its amount.
+  // Denied or withdrawn: no money moved. A missing amount falls back to the order total, labelled as such.
+  const noRefund = dispute.status === "denied" || dispute.status === "withdrawn";
+  const amount = dispute.status === "open" || dispute.status === "escalated" ? dispute.itemChargeAmount : dispute.refundAmount;
+  const amountText = noRefund
+    ? "No refund"
+    : amount != null ? formatPrice(amount) : `Order total ${formatPrice(dispute.orderSnapshot.total)}`;
   const paymentLabel =
     DISPUTE_PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
     dispute.orderSnapshot.paymentMethod;
@@ -78,7 +80,7 @@ export function AdminDisputeCard({
             tone={disputeStatusTone(dispute.status)}
           />
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
-            {formatPrice(showAmount)}
+            {amountText}
             <span className="text-slate-soft"> · {paymentLabel}</span>
           </p>
         </div>

@@ -28,3 +28,19 @@ it("the card opens through a button named by its title, and the heading is not i
   expect(onOpen).toHaveBeenCalledTimes(1);
   expect(screen.getByRole("heading", { name: title }).closest("button")).toBeNull();
 });
+
+it("a denied or withdrawn dispute shows No refund, not the order total", () => {
+  for (const status of ["denied", "withdrawn"] as const) {
+    const closed: Dispute = { ...dispute, status, resolution: status === "denied" ? "deny" : null, orderSnapshot: { ...dispute.orderSnapshot, total: 300 } };
+    const { container } = render(<AdminDisputeCard dispute={closed} onOpen={() => {}} />);
+    expect(container).toHaveTextContent("No refund");
+    expect(container).not.toHaveTextContent("₱300.00");
+    cleanup();
+  }
+});
+
+it("an open dispute without the item charge labels the order total", () => {
+  const noCharge: Dispute = { ...dispute, itemChargeAmount: undefined, orderSnapshot: { ...dispute.orderSnapshot, total: 300 } };
+  const { container } = render(<AdminDisputeCard dispute={noCharge} onOpen={() => {}} />);
+  expect(container).toHaveTextContent("Order total ₱300.00");
+});

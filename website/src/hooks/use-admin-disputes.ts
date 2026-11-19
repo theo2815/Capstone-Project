@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
 import {
   fetchAdminDisputes, fetchAdminDispute, fetchAdminDisputePage, resolveDispute, denyDispute, denyDisputeWithCode, fetchDisputeDenyReasons, escalateDispute, sendRefundLink, markRefunded,
@@ -9,6 +8,8 @@ import {
 } from "@/lib/api-admin";
 import type { Dispute } from "@/lib/admin-disputes";
 import { useAuthStore } from "@/store/auth-store";
+import { useAdminSalesKpisQuery } from "./use-admin-data";
+import { useInfiniteList } from "./use-infinite-list";
 import { useToastStore } from "@/store/toast-store";
 import { useAdminMutation } from "./use-admin-mutation";
 
@@ -20,7 +21,7 @@ export const adminDisputeKeys = {
   list: (userId: string | null, args: AdminDisputeListArgs = {}) =>
     [...adminDisputeKeys.lists(userId), args] as const,
   // Under lists, so every invalidation of the lists also refetches the queue pages.
-  page: (userId: string | null, args: AdminDisputePageArgs = {}) =>
+  page: (userId: string | null, args: Omit<AdminDisputePageArgs, "offset"> = {}) =>
     [...adminDisputeKeys.lists(userId), "page", args] as const,
   detail: (userId: string | null, id: string) =>
     [...adminDisputeKeys.owner(userId), "detail", id] as const,
@@ -53,14 +54,19 @@ const DISPUTES_STALE_MS = 60_000;
 const LIVE_VIEW_REFETCH_MS = 60_000;
 const LIVE_VIEWS: readonly AdminDisputeView[] = ["needs_me", "overdue", "refund_run"];
 
-export function useAdminDisputePage(args: AdminDisputePageArgs = {}) {
+// The server's page size when the request names none (PaginationParams.DEFAULT_LIMIT).
+const SERVER_PAGE_SIZE = 50;
+
+// The server pages one view; Load more appends the next page (the queue pages are {pages, pageParams}, which settle() skips).
+export function useAdminDisputePage(args: Omit<AdminDisputePageArgs, "offset"> = {}) {
   const user = useAuthStore((s) => s.user);
-  return useQuery({
+  return useInfiniteList<Dispute>({
     queryKey: adminDisputeKeys.page(user?.id ?? null, args),
-    queryFn: ({ signal }) => fetchAdminDisputePage({ ...args, signal }),
+    fetchPage: (offset, _limit, signal) => fetchAdminDisputePage({ ...args, offset, signal }),
+    limit: SERVER_PAGE_SIZE,
     enabled: user?.role === "ADMIN",
     staleTime: DISPUTES_STALE_MS,
-    placeholderData: keepPreviousData,
+    keepPreviousData: true,
     refetchInterval: args.view && LIVE_VIEWS.includes(args.view) ? LIVE_VIEW_REFETCH_MS : false,
   });
 }
@@ -150,18 +156,7 @@ export function useDisputeActions() {
     };
 }
 
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
-export function useRefundedThisWeekTotal(): number {
-  const serverDisputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
-  return useMemo(() => {
-    const cutoff = Date.now() - SEVEN_DAYS_MS;
-    return serverDisputes
-      .filter((d) => {
-        if (d.status !== "resolved" || d.refundAmount === null) return false;
-        const t = new Date(d.resolvedAt ?? "").getTime();
-        return Number.isFinite(t) && t >= cutoff;
-      })
-      .reduce((acc, d) => acc + (d.refundAmount ?? 0), 0);
-  }, [serverDisputes]);
+// The server's sum of refunds this week; undefined until it loads (or when it fails).
+export function useRefundedThisWeekTotal(): number | undefined {
+  return useAdminSalesKpisQuery("week").data?.refundsIssued;
 }

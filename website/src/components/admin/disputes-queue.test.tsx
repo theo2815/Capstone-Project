@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -9,7 +9,7 @@ import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
 import { admin, dispute } from "@/test/fixtures/admin";
 import { DisputesQueue } from "./disputes-queue";
 
-const fixtures = vi.hoisted(() => ({ search: "", router: { replace: vi.fn() } }));
+const fixtures = vi.hoisted(() => ({ search: "", router: { replace: vi.fn() }, kpis: {} as Record<string, number> }));
 vi.mock("next/navigation", () => ({
   useRouter: () => fixtures.router,
   usePathname: () => "/admin/disputes",
@@ -18,23 +18,27 @@ vi.mock("next/navigation", () => ({
 
 // An old dispute that is not in the loaded list: only the detail endpoint knows it.
 const older: Dispute = { ...dispute, id: "dispute-old", runnerHandle: "old-runner" };
-const firstPageKey = adminDisputeKeys.page(admin.id, { view: "needs_me", offset: 0 });
+const firstPageKey = adminDisputeKeys.page(admin.id, { view: "needs_me" });
 const page = (items: Dispute[], total = items.length, offset = 0, limit = 50) => ({ items, total, offset, limit });
 const numbered = (n: number): Dispute => ({ ...dispute, id: `dispute-${n}`, runnerHandle: `runner-${n}` });
+// The queue reads the server pages through useInfiniteList, so the cache holds {pages, pageParams}.
+const seed = (items: Dispute[]) => client.setQueryData(firstPageKey, { pages: [page(items)], pageParams: [0] });
 
 let client: QueryClient;
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   fixtures.search = "";
   fixtures.router.replace.mockClear();
+  fixtures.kpis = {};
   useAuthStore.getState().setUser(admin);
   vi.spyOn(api, "get").mockImplementation(async (path) => {
     if (path === `/admin/disputes/${older.id}`) return older;
     if (path.startsWith("/admin/disputes?")) return page([dispute]);
+    if (path === "/admin/kpis") return fixtures.kpis;
     throw new Error(`unexpected GET ${path}`);
   });
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  client.setQueryData(firstPageKey, page([dispute]));
+  seed([dispute]);
 });
 afterEach(() => {
   cleanup();
@@ -83,7 +87,7 @@ it("Esc on the deny modal closes the modal and leaves the drawer open", async ()
 
 it("a failed refund row still offers the decision buttons, so the admin can try the refund again", async () => {
   const failed: Dispute = { ...dispute, status: "open", resolution: "refund_full", refundAmount: 100, refundStatus: "failed" };
-  client.setQueryData(firstPageKey, page([failed]));
+  seed([failed]);
   fixtures.search = `row=${failed.id}`;
   renderQueue();
   const aside = within(await screen.findByRole("dialog")).getByRole("complementary", { name: "Admin actions" });
@@ -96,46 +100,99 @@ it("the queue asks the server for the needs-you view first", async () => {
   renderQueue();
   expect(await screen.findByRole("button", { description: dispute.id })).toBeInTheDocument();
   expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&offset=0", expect.anything());
-  expect(screen.getByRole("tab", { name: "Needs you" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("button", { name: /^Needs you/ })).toHaveAttribute("aria-pressed", "true");
+  // One page only: no Load more row and no "All 1 loaded" line, as with the old pager.
+  expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/loaded/)).not.toBeInTheDocument();
 });
 
 it("switching to Closed asks for view=closed and starts at the first page", async () => {
   const user = userEvent.setup();
   vi.mocked(api.get).mockImplementation(async (path) => path.includes("view=closed")
     ? page([{ ...dispute, status: "denied" }])
-    : page([numbered(1), numbered(2)], 4, path.includes("offset=2") ? 2 : 0, 2));
+    : page([numbered(1), numbered(2)], 54, path.includes("offset=2") ? 2 : 0, 2));
   client.removeQueries({ queryKey: firstPageKey });
   renderQueue();
-  await user.click(await screen.findByRole("button", { name: "Next →" }));
+  await user.click(await screen.findByRole("button", { name: "Load more" }));
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&offset=2", expect.anything()));
-  await user.click(screen.getByRole("tab", { name: "Closed" }));
+  await user.click(screen.getByRole("button", { name: "Closed" }));
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=closed&offset=0", expect.anything()));
-  expect(screen.getByRole("tab", { name: "Closed" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("button", { name: "Closed" })).toHaveAttribute("aria-pressed", "true");
   expect(fixtures.router.replace).toHaveBeenCalledWith("/admin/disputes?view=closed", { scroll: false });
 });
 
-it("Next asks for the following page and shows x–y of total", async () => {
+it("Load more appends the following server page under the first", async () => {
   const user = userEvent.setup();
   vi.mocked(api.get).mockImplementation(async (path) => path.includes("offset=2")
-    ? page([numbered(3), numbered(4)], 5, 2, 2)
-    : page([numbered(1), numbered(2)], 5, 0, 2));
+    ? page([numbered(3), numbered(4)], 55, 2, 2)
+    : page([numbered(1), numbered(2)], 55, 0, 2));
   client.removeQueries({ queryKey: firstPageKey });
   renderQueue();
-  expect(await screen.findByText("1–2 of 5")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Next →" }));
-  expect(await screen.findByText("3–4 of 5")).toBeInTheDocument();
+  expect(await screen.findByText("Showing 2 of 55")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+  expect(await screen.findByText("Showing 4 of 55")).toBeInTheDocument();
   expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&offset=2", expect.anything());
+  expect(screen.getByRole("button", { description: "dispute-1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { description: "dispute-3" })).toBeInTheDocument();
+});
+
+it("a failed refresh with rows on screen says so and offers Retry", async () => {
+  const user = userEvent.setup();
+  seed([dispute]);
+  renderQueue();
+  expect(screen.getByRole("button", { description: dispute.id })).toBeInTheDocument();
+  vi.mocked(api.get).mockRejectedValue(new Error("offline"));
+  await act(() => client.refetchQueries({ queryKey: firstPageKey }));
+  const notice = await screen.findByRole("alert");
+  expect(notice).toHaveTextContent("Couldn't refresh.");
+  expect(screen.getByRole("button", { description: dispute.id })).toBeInTheDocument();
+  vi.mocked(api.get).mockResolvedValue(page([dispute]));
+  await user.click(within(notice).getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+});
+
+it("the view tabs count from the KPIs, and show no count when a field is missing", async () => {
+  fixtures.kpis = { disputesNeedingAdmin: 7, disputesOverdue: 2 };
+  seed([dispute]);
+  renderQueue();
+  expect(await screen.findByRole("button", { name: "Needs you 7" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Overdue 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Closed" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+  cleanup();
+  client.clear();
+  fixtures.kpis = { openDisputes: 4 };
+  seed([dispute]);
+  renderQueue();
+  expect(await screen.findByRole("button", { name: "Needs you 4" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Overdue" })).toBeInTheDocument();
+});
+
+it("on a phone the actions scroll with the drawer instead of a capped footer", async () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+  try {
+    const drawer = await openDrawerFor(dispute);
+    expect(drawer.querySelector("footer")).toBeNull();
+    expect(within(drawer).getByRole("complementary", { name: "Admin actions" })).toBeInTheDocument();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("on a wider screen the actions stay in the drawer footer", async () => {
+  const drawer = await openDrawerFor(dispute);
+  const footer = drawer.querySelector("footer")!;
+  expect(within(footer).getByRole("complementary", { name: "Admin actions" })).toBeInTheDocument();
 });
 
 it("search sends q and starts at the first page", async () => {
   const user = userEvent.setup();
   vi.mocked(api.get).mockImplementation(async (path) => path.includes("q=")
     ? page([numbered(9)])
-    : page([numbered(1), numbered(2)], 4, path.includes("offset=2") ? 2 : 0, 2));
+    : page([numbered(1), numbered(2)], 54, path.includes("offset=2") ? 2 : 0, 2));
   client.removeQueries({ queryKey: firstPageKey });
   renderQueue();
-  await user.click(await screen.findByRole("button", { name: "Next →" }));
+  await user.click(await screen.findByRole("button", { name: "Load more" }));
   await user.type(screen.getByRole("searchbox", { name: "Search disputes" }), "  pay_ABC ");
   await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=needs_me&q=pay_ABC&offset=0", expect.anything()));
   expect(await screen.findByRole("button", { description: "dispute-9" })).toBeInTheDocument();
@@ -146,7 +203,7 @@ it("an overdue dispute shows the overdue chip", async () => {
     ...dispute, attention: "review", overdue: true,
     dueAt: new Date(Date.now() - 2 * 24 * 3600 * 1000 - 60_000).toISOString(),
   };
-  client.setQueryData(firstPageKey, page([late]));
+  seed([late]);
   renderQueue();
   const card = screen.getByRole("button", { description: late.id }).closest("article")!;
   expect(card).toHaveTextContent("Overdue · 2d");
@@ -156,7 +213,7 @@ it("an overdue dispute shows the overdue chip", async () => {
 it("Esc on the Deny opened from Approve closes Deny and leaves the drawer open", async () => {
   const user = userEvent.setup();
   const blocked: Dispute = { ...dispute, refundable: false, refundBlockedReason: "window_closed", refundBlockedMessage: "Window closed." };
-  client.setQueryData(firstPageKey, page([blocked]));
+  seed([blocked]);
   vi.mocked(api.get).mockImplementation(async (path) => {
     if (path === "/admin/disputes/deny-reasons") {
       return page([{ code: "window_closed", label: "Window closed", runnerText: "Window closed.", noteRequired: false }] as never);
@@ -176,7 +233,7 @@ it("Esc on the Deny opened from Approve closes Deny and leaves the drawer open",
 });
 
 async function openDrawerFor(d: Dispute) {
-  client.setQueryData(firstPageKey, page([d]));
+  seed([d]);
   fixtures.search = `row=${d.id}`;
   renderQueue();
   return screen.findByRole("dialog");

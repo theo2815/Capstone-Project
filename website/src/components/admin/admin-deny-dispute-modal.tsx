@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   AdminFormSection,
   AdminRadioGroup,
@@ -69,7 +70,7 @@ export function AdminDenyDisputeModal({
             <button
               type="button"
               onClick={() => void reasons.refetch()}
-              className="font-mono uppercase tracking-[0.14em] text-[13px] text-ink underline"
+              className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
             >
               Retry
             </button>
