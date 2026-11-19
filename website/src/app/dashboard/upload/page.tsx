@@ -93,21 +93,26 @@ export default function UploadPickerPage() {
 
   if (liveEvents === null) {
     return loadFailed(catalogQuery) ? (
-      <LoadError what="events" paused={catalogQuery.isPaused} onRetry={() => void catalogQuery.refetch()} className="pt-10 md:pt-20" />
+      <LoadError what="events" paused={catalogQuery.isPaused} onRetry={() => { void catalogQuery.refetch(); void mineQuery.refetch(); }} className="pt-10 md:pt-20" />
     ) : <PickerSkeleton />;
   }
   // Hold until "My events" lands too, so it doesn't pop in above Race events
-  // and renumber it. A failed owner read just leaves that section out.
+  // and renumber it.
   if (mineQuery.isLoading) return <PickerSkeleton />;
+  const mineFailed = loadFailed(mineQuery);
 
   // No events at all — skip the filter bar (filtering nothing yields nothing)
   // and show the wider PickerEmpty.
-  if (catalog.length === 0 && owned.length === 0) {
+  if (catalog.length === 0 && owned.length === 0 && !mineFailed) {
     return <PickerEmpty />;
   }
 
   return (
     <>
+      {/* Without this, a failed owner read hid "My events" and read as "you have none". */}
+      {mineFailed && (
+        <LoadError what="your own events" paused={mineQuery.isPaused} onRetry={() => void mineQuery.refetch()} className="pt-10 md:pt-20" />
+      )}
       {owned.length > 0 && (
         <UploadSection
           id="mine"

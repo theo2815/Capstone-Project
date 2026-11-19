@@ -142,7 +142,7 @@ function AppealForm({ c, outcome }: { c: PhotographerRelevanceCase; outcome: str
       </fieldset>
       <FieldError id="relevance-appeal-error" message={tooLong ? APPEAL_FORM.tooLong : error} />
       <div className="flex flex-wrap items-center justify-end gap-3">
-        <button type="button" disabled={busy} onClick={() => { setReason(""); setError(null); }} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+        <button type="button" disabled={busy || reason.length === 0} onClick={() => { setReason(""); setError(null); }} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
           {APPEAL_FORM.cancel}
         </button>
         <button type="button" disabled={!canSend} onClick={() => void send()} className={cn(BTN_PRIMARY, BTN_SIZE.md)}>
