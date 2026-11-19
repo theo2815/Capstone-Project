@@ -13,7 +13,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
     number: "01",
     href: ROUTES.ADMIN_INBOX,
     label: "Inbox",
-    body: "Your morning landing. Pending verifications by default — event requests, disputes and payouts arrive as filter chips.",
+    body: "Your morning landing: every queue waiting on an admin, one chip at a time.",
   },
   {
     number: "02",

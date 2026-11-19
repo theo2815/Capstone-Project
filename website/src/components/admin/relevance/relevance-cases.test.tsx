@@ -227,3 +227,10 @@ it("Escape on an enlarged sample closes the photo and keeps the case open", asyn
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(fixtures.router.replace).not.toHaveBeenCalled();
 });
+
+it("the Inbox opens on the cases a person must decide", async () => {
+  fixtures.search = "";
+  render(<QueryClientProvider client={client}><RelevanceCases defaultTab="cant_tell" /></QueryClientProvider>);
+  expect(screen.getByRole("button", { name: "Can't tell" })).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining("tab=cant_tell"), expect.anything()));
+});

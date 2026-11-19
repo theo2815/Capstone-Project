@@ -19,7 +19,8 @@ const PAGE = 20;
 const verifiedPhotos = (c: PhotoRemovalRequestDto["phaseCounts"]) => c.verified + c.removalAuthorized + c.removed + c.retained + c.retainedRestricted;
 const SOURCE_LABEL: Record<RemovalRequestSource, string> = { RUNNER: "Runner", SUPPORT: "Support" };
 
-export function RemovalRequestList() {
+// needsActionOnly: the Inbox shows only the cases waiting on an admin, without the checkbox.
+export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnly?: boolean }) {
   // Filters live in the URL so Back from a case returns to the same view (loaded pages stay cached).
   const [statusRaw] = useUrlState<string>("status", "");
   const [sourceRaw] = useUrlState<string>("source", "");
@@ -27,10 +28,10 @@ export function RemovalRequestList() {
   const writeUrl = useUrlStateBatch();
   const status = (Object.hasOwn(REMOVAL_STATUS_LABEL, statusRaw) ? statusRaw : "") as RemovalRequestStatus | "";
   const source = (Object.hasOwn(SOURCE_LABEL, sourceRaw) ? sourceRaw : "") as RemovalRequestSource | "";
-  const needsAction = needsRaw === "1";
+  const needsAction = needsActionOnly || needsRaw === "1";
   // A filter change starts a new list; the old offset param from Prev/Next is dropped.
   const setFilter = (patch: Record<string, string | null>) => writeUrl({ ...patch, offset: null });
-  const filtered = status !== "" || source !== "" || needsAction;
+  const filtered = status !== "" || source !== "" || needsRaw === "1";
   const list = useAdminRemovalRequests({ ...(status && { status }), ...(source && { source }), ...(needsAction && { needsAction }) }, PAGE);
   const rows = list.items;
   return (
@@ -53,10 +54,12 @@ export function RemovalRequestList() {
             <option value="SUPPORT">Support requests</option>
           </select>
         </div>
-        <label className="flex min-h-[44px] items-center gap-2 text-sm text-ink cursor-pointer">
-          <input type="checkbox" checked={needsAction} onChange={(e) => setFilter({ needs: e.target.checked ? "1" : null })} />
-          Needs action
-        </label>
+        {!needsActionOnly && (
+          <label className="flex min-h-[44px] items-center gap-2 text-sm text-ink cursor-pointer">
+            <input type="checkbox" checked={needsAction} onChange={(e) => setFilter({ needs: e.target.checked ? "1" : null })} />
+            Needs action
+          </label>
+        )}
       </div>
       {list.isLoading && <p role="status" className="text-slate">Loading cases…</p>}
       {!!list.error && (
@@ -70,7 +73,7 @@ export function RemovalRequestList() {
           <p className="text-slate">No cases match these filters.</p>
           <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} onClick={() => setFilter({ status: null, source: null, needs: null })}>Clear filters</button>
         </div>
-      ) : <p className="text-slate">No removal cases yet.</p>)}
+      ) : <p className="text-slate">{needsActionOnly ? "No cases need action." : "No removal cases yet."}</p>)}
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((row) => {
           const runner = row.source === "RUNNER";
