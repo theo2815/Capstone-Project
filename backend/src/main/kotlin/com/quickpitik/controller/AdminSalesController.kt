@@ -4,6 +4,8 @@ import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.dto.admin.AdminSalesEventRowDto
 import com.quickpitik.dto.admin.AdminSalesKpisDto
+import com.quickpitik.dto.admin.AdminSalesTrendDto
+import com.quickpitik.dto.admin.AdminTopPhotographersDto
 import com.quickpitik.service.admin.AdminSalesService
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.GetMapping
@@ -21,6 +23,17 @@ class AdminSalesController(
     @GetMapping("/kpis")
     fun kpis(@RequestParam(required = false) range: String?): AdminSalesKpisDto =
         adminSalesService.kpis(range)
+
+    @GetMapping("/trend")
+    fun trend(@RequestParam(required = false) weeks: Int?): AdminSalesTrendDto =
+        adminSalesService.trend(weeks)
+
+    @GetMapping("/top-photographers")
+    fun topPhotographers(
+        @RequestParam(required = false) range: String?,
+        @RequestParam(required = false) limit: Int?,
+    ): AdminTopPhotographersDto =
+        adminSalesService.topPhotographers(range, limit)
 
     @GetMapping("/by-event")
     fun byEvent(

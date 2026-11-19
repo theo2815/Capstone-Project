@@ -31,6 +31,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class AdminSalesIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var service: AdminSalesService
@@ -137,6 +138,70 @@ class AdminSalesIntegrationTest : PostgresIntegrationTest() {
         assertEquals(BigDecimal("375.00"), eventRow.impliedGmv)
         assertEquals(BigDecimal("75.00"), eventRow.impliedCut)
     }
+
+    // AX-12: the newest trend week is the same Manila week as kpis(range=week),
+    // read from the same rows, so the two must agree to the centavo.
+    @Test
+    fun `the trend's current week equals kpis for this week`() {
+        val now = OffsetDateTime.now(ZoneOffset.ofHours(8))
+        val photographer = photographer()
+        val event = event()
+        val order = order(event.id)
+        val photo = photo(event.id, photographer.id)
+        orderItems.saveAndFlush(OrderItem(OrderItemId(order.id, photo.id), BigDecimal("150.00"), discountPhp = BigDecimal("22.50")))
+        transactions.saveAndFlush(sale(now, photographer.id, event.id, photo.id, order.id, "90.00", "22.50"))
+        dispute(order.id, photo.id, "12.34", "succeeded", now)
+
+        val week = service.kpis("week")
+        val point = service.trend(12).weeks.last()
+
+        assertEquals(12, service.trend(12).weeks.size)
+        assertEquals(week.gmv, point.gmv)
+        assertEquals(week.platformRevenue, point.platformRevenue)
+        assertEquals(week.refundsIssued, point.refundsIssued)
+        assertEquals(week.totalSalesCount, point.salesCount)
+        assertTrue(point.salesCount >= 1)
+    }
+
+    // List gross per photographer, net of the share a refund reversed; the
+    // amounts are large so these two outrank whatever other tests left behind.
+    @Test
+    fun `top photographers rank by list gross net of refunds`() {
+        val now = OffsetDateTime.now(ZoneOffset.ofHours(8))
+        val event = event()
+        val order = order(event.id)
+        val refunded = photographer()
+        val steady = photographer()
+        val big = photo(event.id, refunded.id)
+        val small = photo(event.id, steady.id)
+        val small2 = photo(event.id, steady.id)
+        orderItems.saveAndFlush(OrderItem(OrderItemId(order.id, big.id), BigDecimal("900000.00")))
+        orderItems.saveAndFlush(OrderItem(OrderItemId(order.id, small.id), BigDecimal("300000.00")))
+        orderItems.saveAndFlush(OrderItem(OrderItemId(order.id, small2.id), BigDecimal("300000.00")))
+        val bigSale = transactions.saveAndFlush(sale(now, refunded.id, event.id, big.id, order.id, "675000.00", "0"))
+        transactions.saveAndFlush(refund(bigSale, "-450000.00"))
+        transactions.saveAndFlush(sale(now, steady.id, event.id, small.id, order.id, "225000.00", "0"))
+        transactions.saveAndFlush(sale(now, steady.id, event.id, small2.id, order.id, "225000.00", "0"))
+
+        val items = service.topPhotographers("ytd", 20).items
+            .filter { it.userId == refunded.id.toString() || it.userId == steady.id.toString() }
+
+        assertEquals(listOf(steady.id.toString(), refunded.id.toString()), items.map { it.userId })
+        assertEquals(BigDecimal("600000.00"), items[0].gmv)
+        assertEquals(2L, items[0].salesCount)
+        assertEquals(BigDecimal("300000.00"), items[1].gmv)
+        assertEquals(1L, items[1].salesCount)
+        assertEquals("Admin Sales", items[1].displayName)
+    }
+
+    private fun photographer(): User = users.saveAndFlush(
+        User(
+            email = "admin-sales-${UUID.randomUUID()}@test.local",
+            passwordHash = "unused",
+            name = "Admin Sales",
+            role = Role.PHOTOGRAPHER,
+        ),
+    )
 
     private fun refund(sale: Transaction, kept: String) = Transaction(
         paidAt = sale.paidAt,

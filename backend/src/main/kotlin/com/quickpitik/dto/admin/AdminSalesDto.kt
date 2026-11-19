@@ -12,6 +12,28 @@ data class AdminSalesKpisDto(
     val totalSalesCount: Long,
 )
 
+// AX-12: GET /admin/sales/trend, oldest week first; weekStart is a Manila Monday.
+data class AdminSalesTrendDto(val weeks: List<AdminSalesWeekDto>)
+
+data class AdminSalesWeekDto(
+    val weekStart: String,
+    val gmv: BigDecimal,
+    val platformRevenue: BigDecimal,
+    val refundsIssued: BigDecimal,
+    val salesCount: Long,
+)
+
+// AX-12: GET /admin/sales/top-photographers, highest GMV first.
+data class AdminTopPhotographersDto(val items: List<AdminTopPhotographerDto>)
+
+data class AdminTopPhotographerDto(
+    val userId: String,
+    val handle: String?,
+    val displayName: String,
+    val gmv: BigDecimal,
+    val salesCount: Long,
+)
+
 // Mirrors AdminSalesEventRow.
 data class AdminSalesEventRowDto(
     val id: String,
