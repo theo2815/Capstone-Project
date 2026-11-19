@@ -6,6 +6,7 @@ import type { AdminPhotographerSettingsResponse } from "@/lib/api-admin";
 import { getPhotographerByHandle, type CoverSource } from "@/lib/photographer-registry";
 import type { BrandColor, PayoutAccount, PhotographerRegion, SocialLink } from "@/store/photographer-settings-store";
 import type { WatermarkPreview } from "@/lib/admin-photographer-settings-seed";
+import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 
 export interface EffectivePhotographerSettings {
   brandName: string;
@@ -84,6 +85,40 @@ export function useEffectivePhotographerSettings(userId: string) {
   const query = useAdminPhotographerSettings(userId);
   const data = useMemo(() => query.data ? beToEffective(query.data) : null, [query.data]);
   return { ...query, data };
+}
+
+const COMPLETENESS_FIELDS: ReadonlyArray<{ key: keyof PhotographerSettingsSnapshot; label: string }> = [
+  { key: "hasCover", label: "Cover banner" },
+  { key: "hasBrandName", label: "Brand name" },
+  { key: "hasWatermark", label: "Watermark" },
+  { key: "hasHandle", label: "Public handle" },
+  { key: "hasRegion", label: "Region" },
+];
+
+export function snapshotFromSettings(s: EffectivePhotographerSettings): PhotographerSettingsSnapshot {
+  return {
+    hasCover: !!s.cover,
+    hasBrandName: s.brandName.trim().length > 0,
+    hasWatermark: !!s.watermark,
+    hasHandle: s.handle.trim().length >= 3,
+    hasRegion: !!s.region,
+    socialCount: s.socials.length,
+    payoutCount: s.payouts.length,
+  };
+}
+
+// The one completeness checklist: the queue, the directory card and the detail page all count these seven.
+export function completenessItems(snapshot: PhotographerSettingsSnapshot): Array<{ label: string; filled: boolean; detail?: string }> {
+  return [
+    ...COMPLETENESS_FIELDS.map((f) => ({ label: f.label, filled: !!snapshot[f.key] })),
+    { label: "Social profiles", filled: snapshot.socialCount > 0, detail: `${snapshot.socialCount} on file` },
+    { label: "Payout accounts", filled: snapshot.payoutCount > 0, detail: `${snapshot.payoutCount} on file` },
+  ];
+}
+
+export function computeCompleteness(snapshot: PhotographerSettingsSnapshot | null): { filled: number; total: number } {
+  const total = COMPLETENESS_FIELDS.length + 2;
+  return { filled: snapshot ? completenessItems(snapshot).filter((i) => i.filled).length : 0, total };
 }
 
 export function syntheticCoverGradient(userId: string): { from: string; to: string } {
