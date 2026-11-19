@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
+import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -115,7 +116,7 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
     deciding.current = true;
     try {
       await decide({ appealId: appeal.appealId, outcome, note: note.trim() || undefined });
-      showToast({ kind: "info", message: `${APPEAL_TEXT.done[outcome]}: ${appeal.eventName ?? appeal.appealId}` });
+      showToast({ kind: "success", message: `${APPEAL_TEXT.done[outcome]}: ${appeal.eventName ?? appeal.appealId}` });
       onClose();
     } catch (error) {
       // The drawer stays open: the server's reason is shown, the note is kept for a retry.
@@ -181,10 +182,8 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
           )}
           {isOpen && (
             <section className="space-y-2">
-              <Kicker as="label" tone="soft" htmlFor="relevance-appeal-note" className="block">{APPEAL_TEXT.note}</Kicker>
-              <textarea id="relevance-appeal-note" value={note} maxLength={APPEAL_NOTE_MAX} disabled={decidePending}
-                onChange={(e) => setNote(e.target.value)} aria-describedby="relevance-appeal-note-hint"
-                className="w-full font-sans text-sm text-ink bg-surface border border-line rounded-xl px-4 py-3 min-h-[120px] resize-y focus:outline-none focus:border-ink" />
+              <AdminTextarea id="relevance-appeal-note" label={APPEAL_TEXT.note} value={note} onChange={setNote}
+                maxLength={APPEAL_NOTE_MAX} rows={5} describedBy="relevance-appeal-note-hint" disabled={decidePending} />
               <p id="relevance-appeal-note-hint" className="font-sans text-sm text-slate-soft">{APPEAL_TEXT.noteHint}</p>
             </section>
           )}

@@ -239,6 +239,9 @@ interface TextareaProps {
   /** Inline error; pass it only after the field was left or a submit was tried. */
   error?: string | null;
   required?: boolean;
+  /** Id of a plain hint shown outside the field, read out with it. */
+  describedBy?: string;
+  disabled?: boolean;
 }
 export function AdminTextarea({
   id,
@@ -251,6 +254,8 @@ export function AdminTextarea({
   showCounter = true,
   error,
   required,
+  describedBy,
+  disabled,
 }: TextareaProps) {
   return (
     <div className="space-y-2">
@@ -261,10 +266,11 @@ export function AdminTextarea({
         onChange={(e) => onChange(e.target.value.slice(0, maxLength))}
         rows={rows}
         placeholder={placeholder}
-        className={cn(INPUT_BASE, INPUT_PADDING_DEFAULT, "resize-none")}
+        className={cn(INPUT_BASE, INPUT_PADDING_DEFAULT, "resize-none disabled:opacity-50 disabled:cursor-not-allowed")}
         required={required}
+        disabled={disabled}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : undefined}
+        aria-describedby={[describedBy, error && `${id}-error`].filter(Boolean).join(" ") || undefined}
       />
       <FieldError id={`${id}-error`} message={error} density="tight" />
       {showCounter && (

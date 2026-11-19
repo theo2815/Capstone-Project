@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Kicker } from "@/components/ui/kicker";
+import { Modal } from "@/components/ui/modal";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -15,7 +16,7 @@ import {
   type RelevanceBatch,
   type RelevanceEvidence,
 } from "@/lib/admin-flags";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { useFlagActions, useFlagHiddenPhotos, useFlagRelevance } from "@/hooks/use-admin-data";
 import { useToast } from "@/hooks/use-toast";
 
@@ -29,11 +30,50 @@ const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** A photo preview: a missing or broken image says so, and a click shows it larger before the admin decides. */
 export function Thumb({ url, alt }: { url: string | null; alt: string }) {
-  return url ? (
-    <img src={url} alt={alt} loading="lazy" decoding="async" className="aspect-[3/2] w-full rounded-lg border border-line object-cover bg-bone-deep" />
-  ) : (
-    <div role="img" aria-label={`${alt} (no longer available)`} className="aspect-[3/2] w-full rounded-lg border border-line bg-bone-deep" />
+  // Keyed to the link: a refetch can bring a fresh signed link for the same photo.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [big, setBig] = useState(false);
+  if (!url || failedUrl === url) {
+    return (
+      <div role="img" aria-label={`${alt} (no longer available)`} className="aspect-[3/2] w-full rounded-lg border border-line bg-bone-deep flex items-center justify-center p-2 text-center font-sans text-sm text-slate-soft">
+        Photo unavailable
+      </div>
+    );
+  }
+  // A link can also die while the photo is enlarged: close it and show the fallback.
+  const fail = () => {
+    setFailedUrl(url);
+    setBig(false);
+  };
+  return (
+    <>
+      <button type="button" aria-label={`Enlarge ${alt}`} onClick={() => setBig(true)} className="block w-full rounded-lg cursor-zoom-in">
+        <img src={url} alt={alt} loading="lazy" decoding="async" onError={fail} className="aspect-[3/2] w-full rounded-lg border border-line object-cover bg-bone-deep" />
+      </button>
+      {big && <PhotoModal url={url} alt={alt} onClose={() => setBig(false)} onError={fail} />}
+    </>
+  );
+}
+
+function PhotoModal({ url, alt, onClose, onError }: { url: string; alt: string; onClose: () => void; onError: () => void }) {
+  // The previews sit inside a drawer that closes on Escape too. A capture listener on window runs before the
+  // drawer's document listener, so one Escape closes only the photo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+  return (
+    <Modal isOpen onClose={onClose} title={alt} escDisabled className="max-w-3xl">
+      {/* eslint-disable-next-line @next/next/no-img-element -- a presigned or data URL, shown as is */}
+      <img src={url} alt={alt} onError={onError} className="mt-4 max-h-[70vh] w-full rounded-lg object-contain bg-bone-deep" />
+    </Modal>
   );
 }
 
@@ -50,15 +90,15 @@ function ofTotal(part: number | null, total: number | null): string {
   return part === null || total === null ? "Not available" : `${part} of ${total}`;
 }
 
-function CopyPair({ sample }: { sample: CopySample }) {
+function CopyPair({ sample, of }: { sample: CopySample; of: string }) {
   // An exact copy names the earlier same file; a near copy names the nearest photo in the event.
   const otherUrl = sample.exact ? sample.exactThumbnailUrl : sample.matchThumbnailUrl;
   const handle = sample.exact ? sample.exactPhotographerHandle : sample.matchPhotographerHandle;
   return (
     <li className="rounded-xl border border-line p-3">
       <div className="grid grid-cols-2 gap-3">
-        <Thumb url={sample.thumbnailUrl} alt="Uploaded photo" />
-        <Thumb url={otherUrl} alt="Earlier photo" />
+        <Thumb url={sample.thumbnailUrl} alt={`Uploaded photo ${of}`} />
+        <Thumb url={otherUrl} alt={`Earlier photo ${of}`} />
       </div>
       <p className={`${labelCls} mt-2 tnum`}>
         {sample.exact ? "Exact copy" : `Distance ${sample.distance ?? "n/a"}`}
@@ -91,7 +131,7 @@ function BatchCard({ flag, batch }: { flag: Flag; batch: RelevanceBatch }) {
         .map(([, data]) => data?.batches.find((b) => b.eventId === batch.eventId))
         .find(Boolean);
       const hidden = fresh?.hiddenPhotos ?? batch.hiddenPhotos;
-      showToast({ kind: "info", message: `${plural(hidden, "photo", "photos")} hidden in ${batch.eventName}` });
+      showToast({ kind: "success", message: `${plural(hidden, "photo", "photos")} hidden in ${batch.eventName}` });
       setConfirming(false);
     } catch (error) {
       showToast({
@@ -132,8 +172,8 @@ function BatchCard({ flag, batch }: { flag: Flag; batch: RelevanceBatch }) {
         <div className="space-y-3">
           <p className="font-sans text-sm text-ink-soft">{COPY_PAIR_NOTICE}</p>
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {batch.copySamples.slice(0, MAX_SAMPLES).map((s) => (
-              <CopyPair key={s.photoId} sample={s} />
+            {batch.copySamples.slice(0, MAX_SAMPLES).map((s, i, shown) => (
+              <CopyPair key={s.photoId} sample={s} of={`${i + 1} of ${shown.length}, ${batch.eventName}`} />
             ))}
           </ul>
         </div>
@@ -143,9 +183,9 @@ function BatchCard({ flag, batch }: { flag: Flag; batch: RelevanceBatch }) {
         <div className="space-y-3">
           <p className={labelCls}>Photos dated outside the event window</p>
           <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {batch.dateSamples.slice(0, MAX_SAMPLES).map((s) => (
+            {batch.dateSamples.slice(0, MAX_SAMPLES).map((s, i, shown) => (
               <li key={s.photoId}>
-                <Thumb url={s.thumbnailUrl} alt="Uploaded photo" />
+                <Thumb url={s.thumbnailUrl} alt={`Uploaded photo ${i + 1} of ${shown.length}, ${batch.eventName}, taken ${sentenceCaseDate(formatLongDate(s.takenOn, true))}`} />
                 <p className={`${labelCls} mt-1 tnum`}>{formatLongDate(s.takenOn, true)}</p>
               </li>
             ))}
@@ -190,7 +230,7 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
 
   async function handleRestore(photoId: string) {
     try {
-      if (await restorePhoto(flag.id, photoId)) showToast({ kind: "info", message: "Photo restored" });
+      if (await restorePhoto(flag.id, photoId)) showToast({ kind: "success", message: "Photo restored" });
     } catch (error) {
       showToast({
         kind: "error",
@@ -212,9 +252,9 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
   return (
     <>
     <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-      {items.map((p) => (
+      {items.map((p, i) => (
         <li key={p.photoId} data-restored={p.restoredAt ? "true" : undefined} className={p.restoredAt ? "opacity-50" : undefined}>
-          <Thumb url={p.thumbnailUrl} alt="Hidden photo" />
+          <Thumb url={p.thumbnailUrl} alt={`Hidden photo ${i + 1} of ${query.total}, hidden ${sentenceCaseDate(formatLongDate(p.hiddenAt))}`} />
           <p className={`${labelCls} mt-1 tnum`}>
             {p.restoredAt ? `Restored ${formatLongDate(p.restoredAt)}` : `Hidden ${formatLongDate(p.hiddenAt)}`}
           </p>

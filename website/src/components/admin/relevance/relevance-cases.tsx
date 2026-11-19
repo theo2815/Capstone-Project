@@ -3,8 +3,11 @@
 import { useMemo, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useOpenRelevanceAppealsCount, useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
 import { useUrlState } from "@/hooks/use-url-state";
 import {
@@ -20,7 +23,6 @@ import {
   type RelevanceTab,
 } from "@/lib/admin-relevance";
 import { formatLongDate } from "@/lib/format";
-import { RelevanceTabBar } from "./relevance-tab-bar";
 import { RelevanceCaseBody, RelevanceCaseSubtitle } from "./relevance-case-drawer";
 import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-actions";
 import { RelevanceAppeals } from "./relevance-appeals";
@@ -28,7 +30,7 @@ import { RelevanceAppeals } from "./relevance-appeals";
 const PAGE_INCREMENT = 50;
 const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
 
-// RV-1.11a: read-only. The tab (`?tab=`) and the open case (`?row=`) live in the URL, so a link opens the same view.
+// The cases and their actions. The tab (`?tab=`) and the open case (`?row=`) live in the URL, so a link opens the same view.
 export function RelevanceCases() {
   const [tab, setTab] = useUrlState<RelevanceTab>("tab", "hidden", { parse: parseRelevanceTab });
   const [rowId, setRowId] = useUrlState<string>("row", "");
@@ -37,6 +39,13 @@ export function RelevanceCases() {
   const repeat = tab === "all" && repeatParam === "1";
   const appeals = tab === "appeals";
   const openAppeals = useOpenRelevanceAppealsCount();
+  const kpis = useAdminKpis();
+  // AX-8 tab totals; an older backend leaves them out and the tabs show no number (appeals keep their own count).
+  const counts: Partial<Record<RelevanceTab, number>> = {
+    hidden: kpis?.relevanceHidden,
+    cant_tell: kpis?.relevanceCantTell,
+    appeals: kpis?.relevanceAppealsOpen ?? (openAppeals || undefined),
+  };
   const list = useRelevanceCases(tab, repeat);
   const byId = useMemo(() => new Map(list.items.map((c) => [c.caseId, c])), [list.items]);
   // RV-3.5: on the Appeals tab `?row=` names an appeal, which RelevanceAppeals reads itself.
@@ -52,9 +61,10 @@ export function RelevanceCases() {
 
   return (
     <div className="pt-6 md:pt-8 space-y-6">
-      <RelevanceTabBar
-        tab={tab}
-        counts={{ appeals: openAppeals }}
+      <AdminStatusTabs
+        label="Photo Relevance views"
+        tabs={RELEVANCE_TABS.map((t) => ({ key: t.value, label: t.label, count: counts[t.value] }))}
+        value={tab}
         onChange={(next) => {
           // A new view starts with no case open and no filter.
           setRowId("");
@@ -71,7 +81,7 @@ export function RelevanceCases() {
             setRowId("");
             setRepeatParam(repeat ? "" : "1");
           }}
-          className={`${kicker} rounded-full border px-4 py-2 transition-colors ${repeat ? "border-ink bg-ink/5 text-ink" : "border-line text-slate-soft hover:text-ink"}`}
+          className={`${kicker} min-h-[44px] rounded-full border px-4 py-2 transition-colors ${repeat ? "border-ink bg-ink/5 text-ink" : "border-line text-slate-soft hover:text-ink"}`}
         >
           {CONSEQUENCES_TEXT.repeat}
         </button>
@@ -80,7 +90,9 @@ export function RelevanceCases() {
       {appeals ? (
         <RelevanceAppeals appealId={rowId} onOpen={setRowId} />
       ) : list.isLoading ? (
-        <p role="status" className="font-sans text-sm text-slate-soft">Loading cases…</p>
+        <div role="status" aria-busy="true" aria-label="Loading cases" className="space-y-3">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
+        </div>
       ) : list.error && list.items.length === 0 ? (
         <div role="alert" className="space-y-3">
           <p className="font-sans text-sm text-ink-soft">Could not load the cases.</p>

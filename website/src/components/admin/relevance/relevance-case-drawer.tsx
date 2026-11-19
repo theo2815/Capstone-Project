@@ -37,7 +37,7 @@ export function RelevanceCaseSubtitle({ row }: { row: RelevanceCaseRow }) {
 }
 
 /**
- * The read-only body of a case: verdict, the model's reason, the numbers, words, samples and alerts. No actions yet.
+ * The body of a case: verdict, the model's reason, the numbers, words, samples and alerts. The actions sit in the drawer footer.
  * RV-3.5: the appeal drawer leaves the samples out (`samples={false}`) and shows them once the admin opened them.
  */
 export function RelevanceCaseBody({ detail, samples = true }: { detail: RelevanceCaseDetail; samples?: boolean }) {
@@ -187,13 +187,13 @@ function Field({ label, value }: { label: string; value: string }) {
 export function RelevanceCaseSamples({ detail }: { detail: RelevanceCaseDetail }) {
   return (
     <>
-      <Samples title="Junk samples" samples={detail.junkSamples} empty="No sampled photo counts as junk." />
-      <Samples title="Clean samples" samples={detail.cleanSamples} empty="No sampled photo is listed as clean or not judged." />
+      <Samples title="Junk samples" noun="Junk sample" event={detail.case.eventName} samples={detail.junkSamples} empty="No sampled photo counts as junk." />
+      <Samples title="Clean samples" noun="Clean sample" event={detail.case.eventName} samples={detail.cleanSamples} empty="No sampled photo is listed as clean or not judged." />
     </>
   );
 }
 
-function Samples({ title, samples, empty }: { title: string; samples: RelevanceSample[]; empty: string }) {
+function Samples({ title, noun, event, samples, empty }: { title: string; noun: string; event: string; samples: RelevanceSample[]; empty: string }) {
   return (
     <section className="space-y-3">
       <Kicker as="p" tone="soft">{title}</Kicker>
@@ -201,9 +201,9 @@ function Samples({ title, samples, empty }: { title: string; samples: RelevanceS
         <p className="font-sans text-sm text-slate-soft">{empty}</p>
       ) : (
         <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {samples.map((s) => (
+          {samples.map((s, i) => (
             <li key={s.photoId}>
-              <Thumb url={s.thumbnailUrl} alt="Sampled photo" />
+              <Thumb url={s.thumbnailUrl} alt={`${noun} ${i + 1} of ${samples.length}, ${event}`} />
               <p className="mt-1 font-sans text-sm font-medium text-ink">{sampleLabel(s)}</p>
               <p className={`${labelCls} tnum`}>
                 Sharp {score(s.fgSharpness ?? s.sharpness)} · Bright {score(s.brightness)}

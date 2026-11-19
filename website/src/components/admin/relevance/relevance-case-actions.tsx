@@ -27,7 +27,7 @@ import {
   type RelevanceCaseDetail,
   type RelevanceRestoreResult,
 } from "@/lib/admin-relevance";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 
 const labelCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
 const BTN_CLS: Record<RelevanceCaseAction, string> = {
@@ -64,7 +64,7 @@ export function RelevanceCaseActions({
     try {
       const result = await runAction({ kind, caseId: row.caseId });
       const count = kind === "restore" ? ` (${(result as RelevanceRestoreResult).restoredPhotos.toLocaleString()} photos)` : "";
-      showToast({ kind: "info", message: `${text.done}: ${row.eventName}${count}` });
+      showToast({ kind: "success", message: `${text.done}: ${row.eventName}${count}` });
       onConfirming(null);
     } catch (error) {
       // The confirm stays open: nothing changed, the admin can read the reason and try again.
@@ -119,7 +119,8 @@ export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail 
   async function handleRestore(photoId: string) {
     try {
       const result = await restorePhoto({ caseId, photoId });
-      showToast({ kind: "info", message: result.status === "HIDDEN" ? PHOTO_STILL_HIDDEN : PHOTO_RESTORED });
+      // Still hidden by another hold is not a success: it stays a plain notice.
+      showToast(result.status === "HIDDEN" ? { kind: "info", message: PHOTO_STILL_HIDDEN } : { kind: "success", message: PHOTO_RESTORED });
     } catch (error) {
       showToast({ kind: "error", message: serverMessage(error) ?? PHOTO_RESTORE_FAILED });
     }
@@ -142,7 +143,7 @@ export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail 
           <ul aria-label="Held photos" className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {items.map((p, i) => (
               <li key={p.id} className={p.restoredAt ? "opacity-50" : undefined}>
-                <Thumb url={p.thumbnailUrl} alt="Held photo" />
+                <Thumb url={p.thumbnailUrl} alt={`Held photo ${i + 1} of ${query.total}, ${detail.case.eventName}${p.hiddenAt ? `, hidden ${sentenceCaseDate(formatLongDate(p.hiddenAt))}` : ""}`} />
                 <p className={`${labelCls} mt-1 tnum`}>
                   {p.restoredAt ? `Restored ${formatLongDate(p.restoredAt)}` : `Hidden ${formatLongDate(p.hiddenAt)}`}
                   {` · ${heldByLabel(p.heldBy)}`}

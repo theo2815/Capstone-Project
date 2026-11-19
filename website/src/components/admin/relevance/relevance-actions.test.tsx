@@ -109,6 +109,7 @@ it("each action waits for the server before the row changes", async () => {
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Looks fine…" }));
+  const invalidate = vi.spyOn(client, "invalidateQueries");
   await user.click(screen.getByRole("button", { name: "Confirm looks fine" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/looks-fine");
   // The server has not answered: the row is still listed and the case still offers its actions.
@@ -120,6 +121,8 @@ it("each action waits for the server before the row changes", async () => {
   release(cantTell);
   await waitFor(() => expect(within(d).queryByRole("button", { name: "Hide batch…" })).not.toBeInTheDocument());
   expect(toasts()).toEqual(["Marked looks fine: Cebu City Marathon 2003"]);
+  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] });
+  expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["success"]);
   expect(await screen.findByText("No batch is waiting on a person to judge it.")).toBeInTheDocument();
 });
 
@@ -153,6 +156,7 @@ it("restoring one photo marks it restored in the list", async () => {
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/photos/p1/restore");
   expect(within(list).getByText(/^Restored/)).toBeInTheDocument();
   expect(toasts()).toEqual(["Photo restored"]);
+  expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["success"]);
 });
 
 // Review fixes on PR #154.

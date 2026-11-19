@@ -33,6 +33,7 @@ const detail = (r: RelevanceCaseRow = row, extra: Partial<RelevanceCaseDetail> =
 
 let list: (url: string) => Promise<unknown>;
 let one: () => Promise<RelevanceCaseDetail>;
+let kpis: () => Promise<unknown>;
 let client: QueryClient;
 beforeEach(() => {
   fixtures.search = "";
@@ -41,8 +42,10 @@ beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   list = async () => ({ items: [row], total: 1, offset: 0, limit: 50 });
   one = async () => detail();
+  kpis = async () => ({});
   vi.spyOn(api, "get").mockImplementation(((url: string) =>
     url.startsWith("/admin/relevance/cases?") ? list(url)
+      : url === "/admin/kpis" ? kpis()
       // RV-3.5: the Appeals tab and its count read the appeals list.
       : url.startsWith("/admin/relevance/appeals?") ? Promise.resolve({ items: [], total: 0, offset: 0, limit: 50 })
       : url.includes("/hidden-photos") ? Promise.resolve({ items: [], total: 0, offset: 0, limit: 100 }) : one()) as typeof api.get);
@@ -80,12 +83,13 @@ it("a URL with both tab and row selects that tab and opens that case", async () 
 it("a record-only case is labelled would have hidden and shows no action", async () => {
   fixtures.search = "row=c1";
   mount();
-  const card = await screen.findByRole("button", { name: /Cebu City Marathon 2003/ });
+  const card = await screen.findByRole("button", { name: /^(?!Enlarge).*Cebu City Marathon 2003/ });
   expect(within(card).getByText("Would have hidden")).toBeInTheDocument();
   const drawer = await screen.findByRole("dialog");
   expect(await within(drawer).findByText(/Would have hidden: Hide the whole batch/)).toBeInTheDocument();
   expect(within(drawer).getByText(/Record-only: nothing was hidden/)).toBeInTheDocument();
-  expect(within(drawer).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Close"]);
+  // Enlarge only shows a photo; it is not an action on the case.
+  expect(within(drawer).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent).filter((n) => !n?.startsWith("Enlarge"))).toEqual(["Close"]);
   // Server codes read as words: the evidence gets a label, and the stage (always APPLIED here) is not shown.
   expect(within(drawer).getByText("Evidence used: Junk share")).toBeInTheDocument();
   expect(within(drawer).queryByText("APPLIED")).not.toBeInTheDocument();
@@ -125,7 +129,7 @@ it("an unknown verdict from the server renders as text, not a crash", async () =
   one = async () => detail(odd, { band: "NEW_BAND", modelVerdict: "OTHER" });
   fixtures.search = "row=c1";
   mount();
-  const card = await screen.findByRole("button", { name: /Cebu City Marathon 2003/ });
+  const card = await screen.findByRole("button", { name: /^(?!Enlarge).*Cebu City Marathon 2003/ });
   expect(within(card).getByText("NEW_VERDICT")).toBeInTheDocument();
   const drawer = await screen.findByRole("dialog");
   expect(await within(drawer).findByText("NEW_NOTE")).toBeInTheDocument();
@@ -138,7 +142,7 @@ it("a tab shows loading, failed with retry, empty, and Showing S of T with Load 
   let release!: (v: unknown) => void;
   list = () => new Promise((r) => { release = r; });
   mount();
-  expect(screen.getByText("Loading cases…")).toBeInTheDocument();
+  expect(screen.getByRole("status", { name: "Loading cases" })).toHaveAttribute("aria-busy", "true");
   release({ items: [], total: 0, offset: 0, limit: 50 });
   expect(await screen.findByText("No batch is hidden, or would have been hidden.")).toBeInTheDocument();
   cleanup();
@@ -194,4 +198,32 @@ it("the All tab filters to repeat cases", async () => {
   await screen.findByText("No batch is hidden, or would have been hidden.");
   expect(screen.queryByRole("button", { name: "Repeat cases" })).not.toBeInTheDocument();
   expect(urls().at(-1)).not.toContain("repeat");
+});
+
+// AX-35 REL2: the tabs are the admin status tabs, with the KPI counts when the backend sends them.
+it("the tabs carry the queue counts from /admin/kpis", async () => {
+  kpis = async () => ({ relevanceHidden: 7, relevanceCantTell: 2, relevanceAppealsOpen: 3 });
+  mount();
+  expect(await screen.findByRole("button", { name: "Hidden 7", pressed: true })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Can't tell 2" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Appeals 3" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+});
+
+it("an older backend without the counts shows the tabs without numbers", async () => {
+  mount();
+  await screen.findByRole("button", { name: /Cebu City Marathon 2003/ });
+  expect(screen.getByRole("button", { name: "Hidden", pressed: true })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Can't tell" })).toBeInTheDocument();
+});
+
+it("Escape on an enlarged sample closes the photo and keeps the case open", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "row=c1";
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Enlarge Junk sample 1 of 1, Cebu City Marathon 2003" }));
+  expect(screen.getAllByRole("dialog")).toHaveLength(2);
+  await user.keyboard("{Escape}");
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(fixtures.router.replace).not.toHaveBeenCalled();
 });
