@@ -10,6 +10,8 @@ import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import org.springframework.jdbc.core.JdbcTemplate
+import java.sql.Date
+import java.time.LocalDate
 import kotlin.test.assertEquals
 
 // AX-8: each queue count comes from the query its list uses, so the badge equals the list's total.
@@ -24,9 +26,10 @@ class AdminKpiServiceTest {
     private val appeals = Mockito.mock(RelevanceAppealRepository::class.java)
     private val removals = Mockito.mock(PhotoRemovalQueryService::class.java)
     private val disputeService = Mockito.mock(AdminDisputeService::class.java)
+    private val photos = Mockito.mock(PhotoRepository::class.java)
     private val service = AdminKpiService(settings, Mockito.mock(UserRepository::class.java), cycles, disputes, flags,
         Mockito.mock(EventRepository::class.java), Mockito.mock(AdminDecisionLogRepository::class.java),
-        Mockito.mock(JdbcTemplate::class.java), disputeService, sellerDetails, reports, cases, appeals, removals)
+        Mockito.mock(JdbcTemplate::class.java), disputeService, sellerDetails, reports, cases, appeals, removals, photos)
 
     private fun <T> anyArg(): T = Mockito.any()
     private fun total(n: Long): Page<Nothing> = PageImpl(emptyList(), Pageable.ofSize(1), n)
@@ -56,5 +59,19 @@ class AdminKpiServiceTest {
             kpis.openPayoutReports, kpis.relevanceHidden, kpis.relevanceCantTell, kpis.relevanceAppealsOpen,
             kpis.relevanceNeedsPerson, kpis.payoutsAwaitingReview))
         assertEquals(listOf(7L, 9L, 2L, 1L), listOf(kpis.pendingPayouts, kpis.openFlags, kpis.disputesNeedingAdmin, kpis.disputesOverdue))
+    }
+
+    // AX-11: the Overview trend's uploads series, one count per day, 0 on a day with none.
+    @Test
+    fun `trend gives every day an uploads count, 0 when nothing was uploaded`() {
+        val today = LocalDate.now(PH_ZONE)
+        // Days must be cut in Manila: any other zone gets no rows, so the assertion catches it.
+        Mockito.`when`(photos.uploadCountsByDayBetween(anyArg(), anyArg(), anyArg())).thenAnswer {
+            if (it.getArgument<String>(2) == PH_ZONE.id) listOf(arrayOf<Any>(Date.valueOf(today), 5L)) else emptyList()
+        }
+
+        val trend = service.trend(3)
+
+        assertEquals(listOf(0L, 0L, 5L), trend.map { it.uploads })
     }
 }
