@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadMoreButton } from "@/components/ui/load-more-button";
 import {
   AdminEventCard,
   type AdminEventReview,
@@ -12,7 +14,7 @@ import { BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-sty
 import { cn } from "@/lib/utils";
 import { useUrlState } from "@/hooks/use-url-state";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
-import { useAdminEvents, useAdminEventActions, EMPTY_ADMIN_EVENTS } from "@/hooks/use-admin-events";
+import { useAdminEventsInfinite, useAdminEventCounts, useAdminEventActions } from "@/hooks/use-admin-events";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import type { EventState, ListEvent } from "@/types/event";
@@ -65,8 +67,17 @@ const SECTIONS: ReadonlyArray<{
 ];
 
 export default function AdminEventsPage() {
-  const query = useAdminEvents();
-  const catalog = query.data ?? EMPTY_ADMIN_EVENTS;
+  // Proposal 12: one status tab at a time, kept in the URL so Back returns to it.
+  const [tabRaw, setTab] = useUrlState<string>("status", "live");
+  const section = SECTIONS.find((x) => x.id === tabRaw) ?? SECTIONS[0];
+  // AX-21 (EV1): each tab is its own server list, paged, and the search runs on the server.
+  const [search, setSearch] = useUrlState<string>("q", "", { debounceMs: 300 });
+  // The server search follows the URL, which trails typing by the 300 ms debounce.
+  const q = (useSearchParams().get("q") ?? "").trim();
+  const list = useAdminEventsInfinite(section.matchState, q);
+  const catalog = list.items;
+  const counts = useAdminEventCounts(q);
+  const platformCounts = useAdminEventCounts("");
   const { createEvent, editEvent, deleteEvent, setListing, pendingAction, isPending, recoveryNotice } = useAdminEventActions();
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
@@ -74,16 +85,6 @@ export default function AdminEventsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ListEvent | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-
-  const grouped = useMemo(() => {
-    return SECTIONS.map((section) => ({
-      ...section,
-      items: byState(catalog, section.matchState),
-    }));
-  }, [catalog]);
-  // Proposal 12: one status tab at a time, kept in the URL so Back returns to it.
-  const [tabRaw, setTab] = useUrlState<string>("status", "live");
-  const activeTab = SECTIONS.some((x) => x.id === tabRaw) ? tabRaw : "live";
 
   // Owner and review metadata come from the same canonical admin rows.
   const reviewById = useMemo(() => {
@@ -108,8 +109,6 @@ export default function AdminEventsPage() {
     () => new Map(catalog.filter((row) => row.eventType && row.status !== "DRAFT").map((row) => [row.id, !!row.hiddenAt])),
     [catalog],
   );
-
-  const liveCount = byState(catalog, "live").length;
 
   async function handleRaceListing(event: ListEvent, listed: boolean) {
     await confirm({
@@ -251,41 +250,50 @@ export default function AdminEventsPage() {
   return (
     <>
       <Header
-        total={catalog.length}
-        liveCount={liveCount}
+        counts={platformCounts}
         onCreate={() => setCreateOpen(true)}
       />
-      {query.isPending && (
+      <div className="mt-8 md:mt-10">
+        <label htmlFor="event-search" className="sr-only">Search events</label>
+        <input
+          id="event-search"
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by event name or place"
+          className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
+        />
+      </div>
+      {/* No count when the counts route is missing or loading: a 0 would read "nothing here". */}
+      <AdminStatusTabs
+        label="Event status"
+        tabs={SECTIONS.map((g) => ({ key: g.id, label: g.title, count: counts?.[g.matchState] }))}
+        value={section.id}
+        onChange={setTab}
+      />
+      {list.isLoading && (
         <div className="mt-8 md:mt-10 space-y-3" aria-busy="true">
           {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-20 w-full rounded-2xl" />)}
         </div>
       )}
-      {query.isError && (
-        <div role="alert" className="space-y-3">
+      {!!list.error && (
+        <div role="alert" className="mt-6 space-y-3">
           <p className="font-sans text-sm text-error">Couldn&apos;t load events. Please try again.</p>
-          <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
+          <button type="button" onClick={list.refetch} disabled={list.isFetching} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
         </div>
       )}
-      {query.data && (
-        <AdminStatusTabs
-          label="Event status"
-          tabs={grouped.map((g) => ({ key: g.id, label: g.title, count: g.items.length }))}
-          value={activeTab}
-          onChange={setTab}
-        />
-      )}
       {/* EV6: the tab already names the status and its count; only the caption stays. */}
-      {query.data && grouped.filter((section) => section.id === activeTab).map((section) => (
+      {!list.isLoading && !(list.error && catalog.length === 0) && (
           <section key={section.id} id={section.id} aria-labelledby={`${section.id}-heading`} className="pt-6 md:pt-8">
             <h2 id={`${section.id}-heading`} className="sr-only">{section.title}</h2>
             <p className="font-sans text-sm text-slate mb-4">{section.caption}</p>
-            {section.items.length === 0 ? (
+            {catalog.length === 0 ? (
               <p className="font-sans text-sm text-slate-soft">
-                {emptyCopyFor(section.matchState)}
+                {q ? "No events in this tab match this search." : emptyCopyFor(section.matchState)}
               </p>
             ) : (
               <ul className="border border-line rounded-2xl bg-surface divide-y divide-line overflow-hidden">
-                {section.items.map((event) => (
+                {catalog.map((event) => (
                   <li key={event.id}>
                   <AdminEventCard
                     event={event}
@@ -301,8 +309,9 @@ export default function AdminEventsPage() {
                 ))}
               </ul>
             )}
+            <LoadMoreButton shown={catalog.length} total={list.total} increment={50} isLoading={list.isFetchingNextPage} onLoadMore={list.fetchNextPage} />
           </section>
-      ))}
+      )}
 
       <AdminEventFormModal
         open={createOpen}
@@ -326,22 +335,26 @@ export default function AdminEventsPage() {
 }
 
 function Header({
-  total,
-  liveCount,
+  counts,
   onCreate,
 }: {
-  total: number;
-  liveCount: number;
+  counts: Record<EventState, number> | undefined;
   onCreate: () => void;
 }) {
+  const total = counts ? Object.values(counts).reduce((n, c) => n + c, 0) : 0;
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <div className="flex items-start justify-between gap-4">
         <div>
+          {/* Totals come from the counts route; without it (an older backend) the kicker names the page only. */}
           <Kicker as="p">
-            Events ·{" "}
-            <span className="tnum">{total.toLocaleString()}</span> on platform ·{" "}
-            <span className="tnum">{liveCount}</span> live
+            Events
+            {counts && (
+              <>
+                {" "}·{" "}<span className="tnum">{total.toLocaleString()}</span> on platform ·{" "}
+                <span className="tnum">{counts.live.toLocaleString()}</span> live
+              </>
+            )}
           </Kicker>
           <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
             Events.
@@ -360,18 +373,6 @@ function Header({
         race day.
       </p>
     </header>
-  );
-}
-
-function byState(
-  catalog: ReadonlyArray<ListEvent>,
-  state: EventState,
-): ListEvent[] {
-  const matching = catalog.filter((e) => e.state === state);
-  return matching.sort((a, b) =>
-    state === "upcoming"
-      ? a.date.localeCompare(b.date)
-      : b.date.localeCompare(a.date),
   );
 }
 

@@ -8,7 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import { admin, adminEvent } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
-import { adminEventKeys, useAdminEvents, useAdminEventActions } from "./use-admin-events";
+import { adminEventKeys, useAdminEvents, useAdminEventActions, useAdminEventCounts, useAdminEventsInfinite } from "./use-admin-events";
 import { usePublicEvents, usePublicEventsCatalog } from "./use-public-events";
 
 let client: QueryClient;
@@ -356,4 +356,69 @@ it("does not announce an earlier result to a session that changed while the list
   await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(false);
   expect(useToastStore.getState().toasts.filter((toast) => /earlier request went through/.test(toast.message))).toEqual([]);
   expect(post).toHaveBeenCalledTimes(1);
+});
+
+// AX-21: the Events page's own server pages and tab counts.
+function mockPages(total: number) {
+  return vi.spyOn(api, "get").mockImplementation(async (path) => {
+    if (path.startsWith("/admin/events/counts")) return { counts: { upcoming: 0, live: total, open: 0, past: 0 } };
+    const p = new URLSearchParams(path.split("?")[1]);
+    const offset = Number(p.get("offset"));
+    const items = Array.from({ length: Math.max(0, Math.min(50, total - offset)) }, (_, i) =>
+      ({ ...adminEvent, id: `${p.get("state")}-${p.get("q") ?? ""}-${offset + i}` }));
+    return { items, total, offset, limit: 50 };
+  });
+}
+it("sends the tab state, the search and the offset, then pages on", async () => {
+  const get = mockPages(120);
+  const { result } = renderHook(() => useAdminEventsInfinite("live", "cebu"), { wrapper });
+  await waitFor(() => expect(result.current.items).toHaveLength(50));
+  expect(get).toHaveBeenCalledWith("/admin/events?state=live&q=cebu&offset=0&limit=50", expect.anything());
+  act(() => result.current.fetchNextPage());
+  await waitFor(() => expect(result.current.items).toHaveLength(100));
+  expect(get).toHaveBeenLastCalledWith("/admin/events?state=live&q=cebu&offset=50&limit=50", expect.anything());
+  expect(result.current.total).toBe(120);
+});
+it("starts again from the first page on a new search", async () => {
+  const get = mockPages(120);
+  const { result, rerender } = renderHook(({ q }) => useAdminEventsInfinite("past", q), { wrapper, initialProps: { q: "" } });
+  await waitFor(() => expect(result.current.items).toHaveLength(50));
+  act(() => result.current.fetchNextPage());
+  await waitFor(() => expect(result.current.items).toHaveLength(100));
+  rerender({ q: "run" });
+  await waitFor(() => expect(result.current.items[0]?.id).toBe("past-run-0"));
+  expect(result.current.items).toHaveLength(50);
+  expect(get).toHaveBeenLastCalledWith("/admin/events?state=past&q=run&offset=0&limit=50", expect.anything());
+});
+it("reads the tab counts, and shows none when the backend has no counts route", async () => {
+  mockPages(3);
+  const found = renderHook(() => useAdminEventCounts("cebu"), { wrapper });
+  await waitFor(() => expect(found.result.current).toEqual({ upcoming: 0, live: 3, open: 0, past: 0 }));
+  expect(api.get).toHaveBeenCalledWith("/admin/events/counts?q=cebu", expect.anything());
+  const get = vi.mocked(api.get).mockRejectedValue(new ApiError([{ code: "NOT_FOUND", message: "Not found" }], 404));
+  const missing = renderHook(() => useAdminEventCounts("old"), { wrapper });
+  await waitFor(() => expect(get).toHaveBeenCalledWith("/admin/events/counts?q=old", expect.anything()));
+  await waitFor(() => expect(client.isFetching()).toBe(0));
+  expect(missing.result.current).toBeUndefined();
+  expect(get.mock.calls.filter(([path]) => path === "/admin/events/counts?q=old")).toHaveLength(1);
+});
+it.each(["edit", "hide", "approve"])("refreshes the paged list after %s without throwing", async (action) => {
+  let name = "Cebu Race";
+  vi.spyOn(api, "get").mockImplementation(async (path) => path.startsWith("/admin/events/counts")
+    ? { counts: { upcoming: 0, live: 1, open: 0, past: 0 } }
+    : { items: [{ ...adminEvent, name }], total: 1, offset: 0, limit: 50 });
+  const changed = { ...adminEvent, name: "Changed" };
+  vi.spyOn(api, "fetch").mockResolvedValue(changed); vi.spyOn(api, "post").mockResolvedValue(changed);
+  const { result } = renderHook(() => ({
+    list: useAdminEventsInfinite("live", ""), counts: useAdminEventCounts(""), actions: useAdminEventActions(),
+  }), { wrapper });
+  await waitFor(() => expect(result.current.list.items[0]?.name).toBe("Cebu Race"));
+  name = "Changed";
+  await act(async () => {
+    const run = action === "edit" ? result.current.actions.editEvent(adminEvent.id, { title: "Changed" })
+      : action === "hide" ? result.current.actions.setListing(adminEvent.id, false)
+      : result.current.actions.approve(adminEvent.id, 4);
+    await expect(run).resolves.toBe(true);
+  });
+  await waitFor(() => expect(result.current.list.items[0]?.name).toBe("Changed"));
 });
