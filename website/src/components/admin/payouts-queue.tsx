@@ -5,7 +5,8 @@ import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { AdminPayoutRow, PayoutFlagLine, PayoutTableHeader } from "@/components/admin/admin-payout-row";
+import { AdminPayoutRow, PayoutFlagLine, PayoutTableHeader, payoutStatusTone } from "@/components/admin/admin-payout-row";
+import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
 import { AdminPayoutBulkApproveModal } from "@/components/admin/admin-payout-bulk-approve-modal";
 import { AdminPayoutHoldModal } from "@/components/admin/admin-payout-hold-modal";
@@ -17,9 +18,9 @@ import {
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { PayoutAccountCard } from "@/components/admin/payout-account-card";
 import { ReadyToSendCard } from "@/components/admin/ready-to-send-card";
-import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
+import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { useAdminPayouts, usePayoutActions, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -34,7 +35,7 @@ import {
   type AdminPayoutStatus,
 } from "@/lib/admin-payouts";
 import { formatLongDate } from "@/lib/format";
-import { formatPrice } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 
 interface SingleHoldTarget {
@@ -50,37 +51,6 @@ interface BulkHoldTarget {
 type HoldTarget = SingleHoldTarget | BulkHoldTarget | null;
 
 type MarkPaidTarget = AdminPayoutCycle;
-
-// Terminal states carry no further admin action and can't be bulk-selected.
-function isTerminal(status: AdminPayoutStatus): boolean {
-  return (
-    status === "paid" ||
-    status === "failed" ||
-    status === "returned" ||
-    status === "rejected" ||
-    status === "cancelled"
-  );
-}
-
-function statusTone(status: AdminPayoutStatus): AdminStatusPillTone {
-  switch (status) {
-    case "pending_review":
-      return "amber";
-    case "approved":
-      return "fresh";
-    case "processing":
-    case "held":
-      return "ink";
-    case "paid":
-      return "slate";
-    case "failed":
-    case "returned":
-      return "amber";
-    case "rejected":
-    case "cancelled":
-      return "muted";
-  }
-}
 
 // Payouts queue body — extracted from /admin/payouts/page.tsx so the
 // universal /admin/inbox can render the same four slabs + bulk-select
@@ -111,6 +81,11 @@ export function PayoutsQueue() {
     kind: PayoutReasonKind;
     cycle: AdminPayoutCycle;
   } | null>(null);
+  // A single Approve or Mark processing waits for this confirm, like bulk Approve.
+  const [confirmTarget, setConfirmTarget] = useState<{
+    kind: "approve" | "processing";
+    cycle: AdminPayoutCycle;
+  } | null>(null);
   const [rowId, setRowId] = useUrlState<string>("row", "");
   // Proposal 10: one status at a time, as tabs, instead of five stacked sections.
   const [tabRaw, setTab] = useUrlState<string>("status", "pending");
@@ -120,6 +95,7 @@ export function PayoutsQueue() {
     : holdTarget?.kind === "bulk" ? holdTarget.payoutIds
     : markPaidTarget ? [markPaidTarget.id]
     : reasonTarget ? [reasonTarget.cycle.id]
+    : confirmTarget ? [confirmTarget.cycle.id]
     : bulkApproveOpen ? [...selected] : rowId ? [rowId] : [...selected];
   const submitting = isPending(actionIds);
 
@@ -142,23 +118,20 @@ export function PayoutsQueue() {
     if (query.isSuccess && !query.isFetching && rowId && !openRow) setRowId("");
   }, [query.isSuccess, query.isFetching, rowId, openRow, setRowId]);
 
+  // A ticked row whose status left the shown tab (a refetch, or a tab change by
+  // button, Back/Forward or a ?status= link) drops out, so bulk actions never reach off-screen rows.
   useEffect(() => {
     setSelected((prev) => {
       let mutated = false;
       const next = new Set<string>();
       for (const id of prev) {
         const cycle = byId.get(id);
-        if (cycle && !isTerminal(cycle.status)) next.add(id);
+        if (cycle && PAYOUT_TAB_OF[cycle.status] === tab) next.add(id);
         else mutated = true;
       }
       return mutated ? next : prev;
     });
-  }, [byId]);
-
-  // Any tab change (buttons, Back/Forward, a ?status= link) drops the selection so bulk actions never reach off-screen rows.
-  useEffect(() => {
-    setSelected((prev) => (prev.size ? new Set() : prev));
-  }, [tab]);
+  }, [byId, tab]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -169,6 +142,7 @@ export function PayoutsQueue() {
         holdTarget !== null ||
         markPaidTarget !== null ||
         reasonTarget !== null ||
+        confirmTarget !== null ||
         openRow
       )
         return;
@@ -184,6 +158,7 @@ export function PayoutsQueue() {
     holdTarget,
     markPaidTarget,
     reasonTarget,
+    confirmTarget,
     openRow,
   ]);
 
@@ -266,7 +241,8 @@ export function PayoutsQueue() {
     bulkApproveOpen ||
     holdTarget !== null ||
     markPaidTarget !== null ||
-    reasonTarget !== null;
+    reasonTarget !== null ||
+    confirmTarget !== null;
 
   // Pagination — load-more model. Pending review keeps full visibility
   // because the bulk-bar + J/K nav target that triage list. Read-only
@@ -295,8 +271,8 @@ export function PayoutsQueue() {
   );
 
   // Keyboard nav iterates pending → approved → held → paid in render
-  // order. Drawer verbs are status-conditional: E approves a pending or
-  // held cycle, H opens the Hold reason modal whenever the cycle isn't
+  // order. Drawer verbs are status-conditional: E opens the Approve confirm for a
+  // pending or held cycle, H opens the Hold reason modal whenever the cycle isn't
   // already on hold. Mark-paid stays click-only — its modal asks for a
   // payment reference string and isn't sensible to trigger from a
   // single keystroke. Use the visible slices for paginated slabs so J/K
@@ -354,9 +330,8 @@ export function PayoutsQueue() {
     setRowId(id);
   }
 
-  async function handleSingleApprove(cycle: AdminPayoutCycle) {
-    const ok = await approve(cycle.id);
-    if (ok) showToast({ kind: "success", message: `Approval recorded · ${cycle.id}` });
+  function handleSingleApprove(cycle: AdminPayoutCycle) {
+    setConfirmTarget({ kind: "approve", cycle });
   }
   function handleSingleHoldRequest(cycle: AdminPayoutCycle) {
     setHoldTarget({
@@ -369,14 +344,8 @@ export function PayoutsQueue() {
     setMarkPaidTarget(cycle);
   }
 
-  async function handleDrawerApprove() {
-    if (!openRow) return;
-    const id = openRow.id;
-    const ok = await approve(id);
-    if (ok) {
-      showToast({ kind: "success", message: `Approval recorded · ${id}` });
-      setRowId("");
-    }
+  function handleDrawerApprove() {
+    if (openRow) handleSingleApprove(openRow);
   }
   function handleDrawerHoldRequest() {
     if (!openRow) return;
@@ -391,17 +360,24 @@ export function PayoutsQueue() {
     setMarkPaidTarget(openRow);
   }
 
-  // mark-processing takes no reason — fire directly. The drawer stays open
-  // (a processing cycle is still actionable: mark paid / mark failed).
-  async function runMarkProcessing(id: string) {
-    const ok = await markProcessing(id);
-    if (ok) showToast({ kind: "success", message: `Processing · ${id}` });
-  }
   function handleSingleMarkProcessing(cycle: AdminPayoutCycle) {
-    void runMarkProcessing(cycle.id);
+    setConfirmTarget({ kind: "processing", cycle });
   }
   function handleDrawerMarkProcessing() {
-    if (openRow) void runMarkProcessing(openRow.id);
+    if (openRow) handleSingleMarkProcessing(openRow);
+  }
+
+  // The confirm stays open with the pending label until the backend answers;
+  // a failure keeps it open so the admin can try again.
+  async function handleConfirmSubmit() {
+    if (!confirmTarget) return;
+    const { kind, cycle } = confirmTarget;
+    const ok = await (kind === "approve" ? approve : markProcessing)(cycle.id);
+    if (!ok) return;
+    setConfirmTarget(null);
+    showToast({ kind: "success", message: `${kind === "approve" ? "Approval recorded" : "Processing"} · ${cycle.id}` });
+    // An approval closes its drawer; a processing payout stays actionable (mark paid / mark failed).
+    if (kind === "approve" && openRow?.id === cycle.id) setRowId("");
   }
 
   // reject / mark-failed / mark-returned are drawer-only (they need a reason
@@ -533,16 +509,20 @@ export function PayoutsQueue() {
     return <p role="status" className="font-sans text-sm text-slate">Loading payouts…</p>;
   }
 
+  const loadError = query.isError && (
+    <div role="alert" className="space-y-3">
+      <p className="font-sans text-sm text-error">Couldn&apos;t load payouts. Please try again.</p>
+      <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
+        Retry
+      </button>
+    </div>
+  );
+  // No data at all: tabs reading 0 would look like "nothing to do".
+  if (!query.data) return loadError;
+
   return (
     <>
-      {query.isError && (
-        <div role="alert" className="space-y-3">
-          <p className="font-sans text-sm text-error">Couldn&apos;t load payouts. Please try again.</p>
-          <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
-            Retry
-          </button>
-        </div>
-      )}
+      {loadError}
       <AdminStatusTabs
         label="Payout status"
         tabs={PAYOUT_TABS.map((key) => ({ key, label: PAYOUT_TAB_LABEL[key], count: tabCounts[key] }))}
@@ -673,6 +653,8 @@ export function PayoutsQueue() {
         }}
       />}
 
+      {/* Room under the last row, so the fixed bulk bar never covers its buttons. */}
+      {selectionActive && <div aria-hidden="true" className="h-48" />}
       <AdminPayoutBulkBar
         count={selected.size}
         totalAmount={totalSelected}
@@ -730,6 +712,29 @@ export function PayoutsQueue() {
           onSubmit={handleReasonSubmit}
         />
       )}
+      {confirmTarget && (
+        <AdminConfirmModal
+          open={true}
+          submitting={submitting}
+          pendingLabel={confirmTarget.kind === "approve" ? "Approving…" : "Processing…"}
+          onClose={() => setConfirmTarget(null)}
+          onConfirm={() => void handleConfirmSubmit()}
+          title={confirmTarget.kind === "approve" ? "Approve payout" : "Mark processing"}
+          confirmLabel={confirmTarget.kind === "approve" ? "Approve" : "Mark processing"}
+        >
+          <p className="font-sans text-sm text-ink-soft">
+            {confirmTarget.kind === "approve" ? "Approve" : "Mark"} payout{" "}
+            <span className="text-ink font-mono">{confirmTarget.cycle.id}</span> for{" "}
+            <span className="text-ink tnum">{formatPrice(confirmTarget.cycle.amount)}</span>
+            {confirmTarget.kind === "approve" ? "?" : " as processing?"}
+          </p>
+          <p className="font-sans text-sm text-slate">
+            {confirmTarget.kind === "approve"
+              ? "Approving a payout does not send funds. Requests that need two admins stay pending until a different admin records the second approval."
+              : "Do this once the transfer has started. Then mark it paid with the bank reference, or mark it failed."}
+          </p>
+        </AdminConfirmModal>
+      )}
 
       {openRow && (
         <AdminDetailDrawer
@@ -741,7 +746,7 @@ export function PayoutsQueue() {
           rightHeader={
             <AdminStatusPill
               label={ADMIN_PAYOUT_STATUS_LABEL[openRow.status]}
-              tone={statusTone(openRow.status)}
+              tone={payoutStatusTone(openRow.status)}
             />
           }
           subtitle={<PayoutSubtitle cycle={openRow} />}
@@ -776,6 +781,12 @@ const PAYOUT_TAB_LABEL: Record<PayoutTab, string> = {
   paid: "Paid",
   closed: "Closed",
 };
+const PAYOUT_TAB_OF: Record<AdminPayoutStatus, PayoutTab> = {
+  pending_review: "pending", approved: "in-progress", processing: "in-progress", held: "held",
+  paid: "paid", failed: "closed", returned: "closed", rejected: "closed", cancelled: "closed",
+};
+// Paid and Closed have no bulk action, so their rows get no checkbox.
+const SELECTABLE_TABS: readonly string[] = ["pending", "in-progress", "held"];
 
 function PayoutSlab({
   id,
@@ -836,13 +847,15 @@ function PayoutSlab({
         <p className="font-sans text-sm text-slate-soft">{empty}</p>
       ) : (
         <>
-          <div className="border border-line rounded-2xl bg-surface overflow-hidden">
+          {/* @container: the table grid follows this box's width, not the viewport, since the admin rail takes room. */}
+          <div className="@container border border-line rounded-2xl bg-surface overflow-hidden">
           <PayoutTableHeader />
           <ul className="divide-y divide-line">
             {rows.map((row) => (
               <li key={row.id}>
                 <AdminPayoutRow
                   cycle={row}
+                  selectable={SELECTABLE_TABS.includes(id)}
                   selected={selected.has(row.id)}
                   selectionActive={selectionActive}
                   submitting={isPending([row.id])}
@@ -919,12 +932,10 @@ function PayoutDrawerActions({
   onMarkFailed: () => void;
   onMarkReturned: () => void;
 }) {
-  const PILL =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-line hover:bg-ink hover:text-surface hover:border-ink transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
-  const PRIMARY =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
-  const GHOST =
-    "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed";
+  // Same verbs, same look as the row: the main step is primary, a step that stops or undoes money is danger.
+  const PRIMARY = cn(BTN_PRIMARY, BTN_SIZE.sm);
+  const SECONDARY = cn(BTN_SECONDARY, BTN_SIZE.sm);
+  const DANGER = cn(BTN_DANGER, BTN_SIZE.sm);
 
   const s = cycle.status;
   const blocked = submitting || payoutActionsBlockedByHold(cycle);
@@ -939,7 +950,7 @@ function PayoutDrawerActions({
   }
   if (s === "paid") {
     return (
-      <button type="button" disabled={submitting} onClick={onMarkReturned} className={PILL}>
+      <button type="button" disabled={submitting} onClick={onMarkReturned} className={DANGER}>
         Mark returned…
       </button>
     );
@@ -948,27 +959,27 @@ function PayoutDrawerActions({
   return (
     <>
       {(s === "pending_review" || s === "approved" || s === "processing") && (
-        <button type="button" disabled={submitting} onClick={onHold} className={GHOST}>
+        <button type="button" disabled={submitting} onClick={onHold} className={DANGER}>
           Hold…
         </button>
       )}
       {(s === "pending_review" || s === "approved" || s === "held") && (
-        <button type="button" disabled={submitting} onClick={onReject} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onReject} className={DANGER}>
           Reject…
         </button>
       )}
       {s === "approved" && (
-        <button type="button" disabled={blocked} onClick={onMarkProcessing} className={PILL}>
+        <button type="button" disabled={blocked} onClick={onMarkProcessing} className={SECONDARY}>
           Mark processing
         </button>
       )}
       {s === "processing" && (
-        <button type="button" disabled={submitting} onClick={onMarkFailed} className={PILL}>
+        <button type="button" disabled={submitting} onClick={onMarkFailed} className={DANGER}>
           Mark failed…
         </button>
       )}
       {(s === "approved" || s === "processing") && (
-        <button type="button" disabled={blocked} onClick={onMarkPaid} className={PILL}>
+        <button type="button" disabled={blocked} onClick={onMarkPaid} className={SECONDARY}>
           Mark paid…
         </button>
       )}
@@ -1191,7 +1202,7 @@ function FieldRow({
       <dd
         className={`mt-1 ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? "font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >
