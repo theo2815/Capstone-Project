@@ -171,6 +171,7 @@ export function CommandPalette() {
       onClose={() => setOpen(false)}
       className="max-w-xl p-0"
       hideClose
+      ariaLabel="Search admin"
     >
       <div className="border-b border-line p-4 md:p-5">
         <input
@@ -187,8 +188,11 @@ export function CommandPalette() {
           // a query no result can ever match.
           maxLength={200}
           placeholder="Search admin · pages, queues, photographers"
+          role="combobox"
           aria-label="Search admin"
-          aria-controls="palette-results"
+          aria-autocomplete="list"
+          aria-expanded={results.length > 0}
+          aria-controls={results.length > 0 ? "palette-results" : undefined}
           aria-activedescendant={
             results[activeIdx] ? `palette-row-${results[activeIdx].id}` : undefined
           }
@@ -228,12 +232,10 @@ export function CommandPalette() {
         )}
       </div>
       <div className="border-t border-line px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
-        <Kicker as="p" tone="soft">
-          {results.length === 0
-            ? trimmed.length === 0
-              ? "Type to search"
-              : "0 matches"
-            : `${results.length} ${results.length === 1 ? "match" : "matches"}`}
+        <Kicker as="p" tone="soft" role="status" aria-live="polite">
+          {results.length === 0 && trimmed.length === 0
+            ? "Type to search"
+            : `${results.length} ${results.length === 1 ? "result" : "results"}`}
         </Kicker>
         <div className="flex items-center gap-3 flex-wrap">
           <Hint label="Move" keys={["↑", "↓"]} />

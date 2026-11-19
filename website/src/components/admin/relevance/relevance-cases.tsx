@@ -31,8 +31,9 @@ const PAGE_INCREMENT = 50;
 const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
 
 // The cases and their actions. The tab (`?tab=`) and the open case (`?row=`) live in the URL, so a link opens the same view.
-export function RelevanceCases() {
-  const [tab, setTab] = useUrlState<RelevanceTab>("tab", "hidden", { parse: parseRelevanceTab });
+// defaultTab: the Inbox opens on "Can't tell", the cases its badge counts; the full page opens on "Hidden".
+export function RelevanceCases({ defaultTab = "hidden" }: { defaultTab?: RelevanceTab }) {
+  const [tab, setTab] = useUrlState<RelevanceTab>("tab", defaultTab, { parse: parseRelevanceTab });
   const [rowId, setRowId] = useUrlState<string>("row", "");
   // RV-4.3: "Repeat cases" lives on the All tab only (`?repeat=1`).
   const [repeatParam, setRepeatParam] = useUrlState<string>("repeat", "");

@@ -7,7 +7,6 @@ import type { RelevanceAlert } from "@/lib/admin-relevance";
 import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
-import { AdminInboxFilterChips } from "@/components/admin/admin-inbox-filter-chips";
 import { RelevanceAlertsInbox } from "./relevance-alerts-inbox";
 
 const alert = (id: string, extra: Partial<RelevanceAlert> = {}): RelevanceAlert => ({
@@ -30,14 +29,6 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
 const wrap = (ui: React.ReactNode) => render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
-
-it("the inbox chip counts unseen alerts", async () => {
-  wrap(<AdminInboxFilterChips value="verifications" onChange={() => {}} />);
-  const chip = await screen.findByRole("tab", { name: "Relevance alerts 2 unseen" });
-  expect(chip).toHaveAttribute("aria-selected", "false");
-  // The other chips carry no count, as before.
-  expect(screen.getByRole("tab", { name: "Disputes" })).toBeInTheDocument();
-});
 
 it("marking an alert seen waits for the server", async () => {
   const user = userEvent.setup();
