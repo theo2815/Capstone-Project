@@ -3,15 +3,22 @@ package com.quickpitik.service.admin
 import com.quickpitik.common.PaginationParams
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.Role
+import com.quickpitik.entity.User
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventPhotographerRepository
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.TransactionRepository
+import com.quickpitik.repository.UserRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import kotlin.test.assertEquals
 
@@ -23,6 +30,8 @@ class AdminSalesServiceTest {
     private lateinit var disputes: DisputeRepository
     private lateinit var eventPhotographers: EventPhotographerRepository
     private lateinit var events: EventRepository
+    private lateinit var settings: PhotographerSettingsRepository
+    private lateinit var users: UserRepository
     private lateinit var service: AdminSalesService
 
     @BeforeEach
@@ -31,7 +40,9 @@ class AdminSalesServiceTest {
         disputes = Mockito.mock(DisputeRepository::class.java)
         eventPhotographers = Mockito.mock(EventPhotographerRepository::class.java)
         events = Mockito.mock(EventRepository::class.java)
-        service = AdminSalesService(transactions, disputes, eventPhotographers, events)
+        settings = Mockito.mock(PhotographerSettingsRepository::class.java)
+        users = Mockito.mock(UserRepository::class.java)
+        service = AdminSalesService(transactions, disputes, eventPhotographers, events, settings, users)
     }
 
     @Test
@@ -121,6 +132,100 @@ class AdminSalesServiceTest {
 
         assertEquals(BigDecimal("94.06"), row.refundsIssued)
     }
+
+    @Test
+    fun `trend gives one point per Manila week, oldest first, ending this week's Monday`() {
+        stubZeroSums()
+
+        val weeks = service.trend(3).weeks
+
+        val thisMonday = LocalDate.now(ZoneId.of("Asia/Manila")).with(DayOfWeek.MONDAY)
+        assertEquals(
+            listOf(thisMonday.minusWeeks(2), thisMonday.minusWeeks(1), thisMonday).map { it.toString() },
+            weeks.map { it.weekStart },
+        )
+    }
+
+    @Test
+    fun `trend defaults to twelve weeks and keeps weeks between 1 and 52`() {
+        stubZeroSums()
+
+        assertEquals(12, service.trend(null).weeks.size)
+        assertEquals(1, service.trend(0).weeks.size)
+        assertEquals(52, service.trend(500).weeks.size)
+    }
+
+    @Test
+    fun `a trend week carries the same figures kpis gives for that window`() {
+        Mockito.`when`(transactions.sumPhotographerKeepInWindow(anyArg(), anyArg())).thenReturn(BigDecimal("90.00"))
+        Mockito.`when`(transactions.sumDiscountsInWindow(anyArg(), anyArg())).thenReturn(BigDecimal("22.50"))
+        Mockito.`when`(transactions.sumListGrossInWindow(anyArg(), anyArg())).thenReturn(BigDecimal("150.00"))
+        Mockito.`when`(disputes.sumSucceededRefundsInWindow(anyArg(), anyArg())).thenReturn(BigDecimal("10.00"))
+        Mockito.`when`(transactions.countSalesInWindow(anyArg(), anyArg())).thenReturn(2L)
+
+        val week = service.trend(1).weeks.single()
+
+        assertEquals(BigDecimal("150.00"), week.gmv)
+        assertEquals(BigDecimal("37.50"), week.platformRevenue)
+        assertEquals(BigDecimal("10.00"), week.refundsIssued)
+        assertEquals(2L, week.salesCount)
+    }
+
+    @Test
+    fun `top photographers show the brand name, else the account name, in server order`() {
+        val branded = UUID.randomUUID()
+        val plain = UUID.randomUUID()
+        Mockito.`when`(transactions.listGrossByPhotographerInWindow(anyArg(), anyArg(), Mockito.eq(5))).thenReturn(
+            listOf(
+                arrayOf<Any>(branded, BigDecimal("300.00"), 3L),
+                arrayOf<Any>(plain, BigDecimal("125.00"), 1L),
+            ),
+        )
+        Mockito.`when`(settings.findAllById(anyArg<Iterable<UUID>>())).thenReturn(
+            listOf(
+                PhotographerSettings(userId = branded, handle = "lens", brandName = "Lens Studio"),
+                PhotographerSettings(userId = plain, handle = "ana", brandName = " "),
+            ),
+        )
+        Mockito.`when`(users.findAllById(anyArg<Iterable<UUID>>())).thenReturn(
+            listOf(user(branded, "Bea Cruz"), user(plain, "Ana Reyes")),
+        )
+
+        val items = service.topPhotographers("week", null).items
+
+        assertEquals(listOf(branded.toString(), plain.toString()), items.map { it.userId })
+        assertEquals(listOf("Lens Studio", "Ana Reyes"), items.map { it.displayName })
+        assertEquals(listOf("lens", "ana"), items.map { it.handle })
+        assertEquals(BigDecimal("300.00"), items[0].gmv)
+        assertEquals(3L, items[0].salesCount)
+    }
+
+    @Test
+    fun `top photographers keep the limit between 1 and 20`() {
+        Mockito.`when`(transactions.listGrossByPhotographerInWindow(anyArg(), anyArg(), Mockito.anyInt())).thenReturn(emptyList())
+
+        service.topPhotographers(null, 500)
+        service.topPhotographers(null, 0)
+
+        Mockito.verify(transactions).listGrossByPhotographerInWindow(anyArg(), anyArg(), Mockito.eq(20))
+        Mockito.verify(transactions).listGrossByPhotographerInWindow(anyArg(), anyArg(), Mockito.eq(1))
+    }
+
+    private fun stubZeroSums() {
+        Mockito.`when`(transactions.sumPhotographerKeepInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(transactions.sumDiscountsInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(transactions.sumListGrossInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(disputes.sumSucceededRefundsInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(transactions.countSalesInWindow(anyArg(), anyArg())).thenReturn(0L)
+    }
+
+    private fun user(id: UUID, name: String) = User(
+        id = id,
+        email = "$id@test.local",
+        passwordHash = "unused",
+        name = name,
+        role = Role.PHOTOGRAPHER,
+    )
 
     private fun event(): Event = Event(
         id = UUID.randomUUID(),
