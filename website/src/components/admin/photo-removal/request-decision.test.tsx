@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -273,4 +273,25 @@ it("the confirm lists every selected photo", async () => {
   render(<>{confirm.mock.calls[0][0].message}</>);
   expect(screen.getAllByRole("listitem").map((li) => li.textContent)).toEqual(["photo-s1", "photo-s2"]);
   expect(screen.getByText(/can miss people/)).toBeInTheDocument();
+});
+
+// AX-36.
+it("a reason field is not marked invalid before the admin types or leaves it", async () => {
+  const user = userEvent.setup();
+  renderDecision();
+  await user.selectOptions(await screen.findByLabelText("Decision for photo-a1"), "RETAIN_RESTRICTED");
+  const reason = screen.getByLabelText("Reason for photo-a1");
+  expect(reason).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByLabelText("Retention review date for photo-a1")).not.toHaveAttribute("aria-invalid");
+  await user.click(reason); await user.tab();
+  expect(reason).toHaveAttribute("aria-invalid", "true");
+});
+
+it("a decision photo has alt text and opens larger", async () => {
+  const user = userEvent.setup();
+  serverCase = { ...mixedCase, items: [removalItem("a1", "Photographer A", { photo: removalPhoto("photo-a1", "Photographer A") })] };
+  renderDecision();
+  await user.click(await screen.findByRole("button", { name: "Enlarge Photo 1 of Private Fun Run" }));
+  const dialog = screen.getByRole("dialog", { name: "Photo 1 of Private Fun Run" });
+  expect(within(dialog).getByRole("img", { name: "Photo 1 of Private Fun Run" })).toBeVisible();
 });

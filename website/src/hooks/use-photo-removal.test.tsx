@@ -49,8 +49,10 @@ it.each(["switch", "same-user-login", "logout"])("lateResponseCannotPopulateAnot
   act(() => { useAuthStore.getState().logout(); client.clear(); if (transition !== "logout") useAuthStore.getState().startSession(transition === "switch" ? { ...admin, id: "admin-b" } : admin); });
   await act(async () => read.resolve({ items: [oldAdminCase], total: 1, offset: 0, limit: 50 }));
   expect(firstSignal?.aborted).toBe(true);
-  expect(result.current.data?.items ?? []).not.toContainEqual(oldAdminCase);
-  expect(client.getQueriesData({ queryKey: removalKeys.admin(session()) }).flatMap(([, data]) => data ? [data] : [])).not.toContainEqual(oldAdminCase);
+  expect(result.current.items).not.toContainEqual(oldAdminCase);
+  // The list is paged (AX-36): look inside every cached page.
+  const cached = client.getQueriesData<{ pages: { items: unknown[] }[] }>({ queryKey: removalKeys.admin(session()) });
+  expect(cached.flatMap(([, data]) => data?.pages.flatMap((page) => page.items) ?? [])).not.toContainEqual(oldAdminCase);
 });
 
 it("failedDecisionDoesNotCreateSuccessState", async () => {
@@ -159,9 +161,9 @@ it("does not imperatively refetch private cases from a disabled role", async () 
   useAuthStore.getState().startSession({ ...admin, role: "RUNNER" });
   const get = vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 50 });
   const { result } = renderHook(useAdminRemovalRequests, { wrapper });
-  const refetch = await result.current.refetch();
+  act(() => result.current.refetch());
+  await waitFor(() => expect((result.current.error as Error | null)?.message).toBe("Session changed"));
   expect(get).not.toHaveBeenCalled();
-  expect(refetch.error?.message).toBe("Session changed");
 });
 
 it("keeps owner projection separate and installs only a backend-confirmed response", async () => {

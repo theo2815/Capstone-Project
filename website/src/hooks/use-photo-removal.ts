@@ -7,8 +7,9 @@ import { useAuthStore } from "@/store/auth-store";
 import { ApiError } from "@/lib/api";
 import * as api from "@/lib/api-photo-removal";
 import { usePrivateQuerySession } from "./use-private-query-session";
+import { useInfiniteList } from "./use-infinite-list";
 import type {
-  PhotoRemovalRequestDto, PhotographerRemovalRequestDto, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters,
+  PhotoRemovalRequestDto, PhotographerRemovalRequestDto, RemovalRequestFilters, RemovalPhotoFilters, RemovalPageFilters, RemovalPage,
   CreateRemovalRequestCommand, MatchRemovalCommand, VerifyRemovalCommand, CancelRemovalCommand, DecideRemovalCommand,
   RespondToRemovalCommand, RetryRemovalCleanupCommand, RemovalSupportUpdateCommand, ReviewSuggestionsCommand, RunnerRemovalRequestDetailDto,
 } from "@/types/photo-removal";
@@ -26,34 +27,51 @@ function scope(role: RemovalRole, session: SessionKey) {
   if (role === "RUNNER") return removalKeys.runner(session);
   return role === "ADMIN" ? removalKeys.admin(session) : removalKeys.photographer(session);
 }
+// A read that started under one session never lands in another session's cache.
+async function readForSession<T>(role: RemovalRole, session: ReturnType<typeof usePrivateQuerySession>, signal: AbortSignal, read: (signal: AbortSignal) => Promise<T>) {
+  const current = useAuthStore.getState();
+  if (!session.enabled || !current.isAuthenticated || current.user?.role !== role ||
+    current.user.id !== session.key[0] || current.sessionVersion !== session.key[2]) throw new Error("Session changed");
+  const isCurrent = captureAuthSession();
+  const data = await read(signal);
+  signal.throwIfAborted();
+  if (!isCurrent()) throw new Error("Session changed");
+  return data;
+}
 function useRemovalQuery<T>(role: RemovalRole, suffix: readonly unknown[], read: (signal: AbortSignal) => Promise<T>, enabled = true) {
   const session = usePrivateQuerySession(role);
   return useQuery({
     queryKey: [...scope(role, session.key), ...suffix],
     enabled: session.enabled && enabled,
-    queryFn: async ({ signal }) => {
-      const current = useAuthStore.getState();
-      if (!session.enabled || !current.isAuthenticated || current.user?.role !== role ||
-        current.user.id !== session.key[0] || current.sessionVersion !== session.key[2]) throw new Error("Session changed");
-      const isCurrent = captureAuthSession();
-      const data = await read(signal);
-      signal.throwIfAborted();
-      if (!isCurrent()) throw new Error("Session changed");
-      return data;
-    },
+    queryFn: ({ signal }) => readForSession(role, session, signal, read),
   });
 }
-export function useAdminRemovalRequests(filters: RemovalRequestFilters = {}) {
-  return useRemovalQuery("ADMIN", ["list", filters], (signal) => api.listAdminRemovalRequests(filters, signal));
+// AX-36: admin lists load more pages instead of Prev/Next. Commands only invalidate this scope, never patch it.
+function useAdminRemovalList<T extends { id: string }>(suffix: readonly unknown[], limit: number,
+  read: (page: { offset: number; limit: number }, signal: AbortSignal) => Promise<RemovalPage<T>>, enabled = true) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useInfiniteList<T>({
+    queryKey: [...scope("ADMIN", session.key), ...suffix],
+    enabled: session.enabled && enabled,
+    limit,
+    fetchPage: (offset, pageLimit, signal) => readForSession("ADMIN", session, signal, (s) => read({ offset, limit: pageLimit }, s)),
+  });
+}
+export function useAdminRemovalRequests(filters: Omit<RemovalRequestFilters, "offset" | "limit"> = {}, limit = 20) {
+  return useAdminRemovalList(["list", filters], limit, (page, signal) => api.listAdminRemovalRequests({ ...filters, ...page }, signal));
 }
 export function useAdminRemovalRequest(id: string) {
   return useRemovalQuery("ADMIN", ["detail", id], (signal) => api.getAdminRemovalRequest(id, signal), !!id);
 }
-export function useRemovalPhotos(id: string, filters: RemovalPhotoFilters = {}) {
-  return useRemovalQuery("ADMIN", ["photos", id, filters], (signal) => api.listRemovalPhotos(id, filters, signal), !!id);
+// Gallery rows carry no top-level id; the photo id keys them.
+export function useRemovalPhotos(id: string, filters: Omit<RemovalPhotoFilters, "offset" | "limit"> = {}, limit = 24) {
+  return useAdminRemovalList(["photos", id, filters], limit, async (page, signal) => {
+    const result = await api.listRemovalPhotos(id, { ...filters, ...page }, signal);
+    return { ...result, items: result.items.map((item) => ({ ...item, id: item.photo.id })) };
+  }, !!id);
 }
-export function useRemovalHistory(id: string, filters: RemovalPageFilters = {}) {
-  return useRemovalQuery("ADMIN", ["history", id, filters], (signal) => api.listRemovalHistory(id, filters, signal), !!id);
+export function useRemovalHistory(id: string, limit = 50) {
+  return useAdminRemovalList(["history", id], limit, (page, signal) => api.listRemovalHistory(id, page, signal), !!id);
 }
 export function useRemovalEvidence(id: string) {
   return useRemovalQuery("ADMIN", ["evidence", id], (signal) => api.getRemovalEvidence(id, signal), !!id);

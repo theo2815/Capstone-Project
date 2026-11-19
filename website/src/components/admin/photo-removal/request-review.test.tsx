@@ -9,7 +9,7 @@ import { useAuthStore } from "@/store/auth-store";
 import type { PhotoRemovalRequestDto, RemovalMatchResult } from "@/types/photo-removal";
 import { RemovalRequestReview } from "./request-review";
 import { RemovalRequestDecision } from "./request-decision";
-import { draftCase, removalItem, removalPhoto, runnerCase } from "./removal-fixtures";
+import { draftCase, openCase, removalItem, removalPhoto, runnerCase } from "./removal-fixtures";
 import { formatLongDate } from "@/lib/format";
 
 vi.mock("@/lib/api-photo-removal");
@@ -162,7 +162,7 @@ it("warns about unassigned owners and requires a note for manual additions", asy
   await fillVerification(user);
   const verify = screen.getByRole("button", { name: "Verify 1 photo" });
   expect(verify).toBeDisabled();
-  await user.type(within(confirmation()).getByLabelText(/Note for photo-orphan/), "Runner pointed to this frame");
+  await user.type(within(confirmation()).getByLabelText(/Note for photo 1/), "Runner pointed to this frame");
   await user.click(verify);
   await waitFor(() => expect(removalApi.verifyRemovalRequest).toHaveBeenCalledTimes(1));
   expect(vi.mocked(removalApi.verifyRemovalRequest).mock.calls[0][1].selectedPhotos)
@@ -304,6 +304,11 @@ it("promote sends the expected version to the suggestions endpoint", async () =>
   vi.mocked(removalApi.reviewRemovalSuggestions).mockImplementation(async () => { serverCase = { ...runnerOpen, version: 8 }; return serverCase; });
   renderReview();
   await user.click(await screen.findByRole("button", { name: "Promote photo-c1" }));
+  // AX-36 RM3: Promote hides a public photo, so it waits for a confirm.
+  const dialog = await screen.findByRole("dialog", { name: "Promote this photo?" });
+  expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Promote and hide" }));
+  expect(await screen.findByText("Photo hidden and sent to its photographer for review.")).toBeVisible();
   await waitFor(() => {
     expect(removalApi.getAdminRemovalRequest).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Dismiss photo-c1" })).toBeEnabled();
@@ -346,4 +351,76 @@ it("a runner case without evidence offers only manual verify or cancel", async (
   expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
   expect(await screen.findByRole("checkbox", { name: /photo-orphan/ })).toBeVisible();
   expect(removalApi.getRemovalEvidence).not.toHaveBeenCalled();
+});
+
+// AX-36.
+it("the header shows the status label, not the raw code", async () => {
+  serverCase = { ...openCase, status: "RESOLVING" };
+  renderReview();
+  expect(await screen.findByText("Closing")).toBeVisible();
+  expect(screen.queryByText("RESOLVING")).toBeNull();
+});
+
+it("the case page has an h1 while loading and on error", async () => {
+  vi.mocked(removalApi.getAdminRemovalRequest).mockRejectedValue(new Error("down"));
+  renderReview();
+  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't load this case.")).toBeVisible();
+  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+});
+
+it("the promote confirm is disabled, not silent, while the case refreshes", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerOpen;
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: "Promote photo-c1" }));
+  const dialog = await screen.findByRole("dialog", { name: "Promote this photo?" });
+  vi.mocked(removalApi.getAdminRemovalRequest).mockReturnValue(new Promise(() => {}));
+  await act(async () => { void client.invalidateQueries(); });
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Promote and hide" })).toBeDisabled());
+});
+
+it("make public again needs a confirm and Cancel sends nothing", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerOpen;
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: /^Make public again, keep as suggestion for photo-h1/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Make this photo public again?" });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();
+});
+
+it("the confirm step shows each photo, not its ID", async () => {
+  const user = userEvent.setup();
+  renderReview();
+  await runMatch(user);
+  await user.click(screen.getByRole("checkbox", { name: /photo-a/ }));
+  expect(within(confirmation()).getByRole("img", { name: "Photo 1 of Private Fun Run" })).toBeVisible();
+  expect(within(confirmation()).queryByText(/(^|[^-])photo-a/)).toBeNull();
+  expect(within(confirmation()).getByText(/Selfie match/)).toBeVisible();
+});
+
+it("a manual note is not marked invalid before the admin types or leaves it", async () => {
+  const user = userEvent.setup();
+  renderReview();
+  await user.click(await screen.findByRole("checkbox", { name: /photo-orphan/ }));
+  const note = within(confirmation()).getByLabelText(/Note for photo 1/);
+  expect(note).not.toHaveAttribute("aria-invalid");
+  await user.click(note); await user.tab();
+  expect(note).toHaveAttribute("aria-invalid", "true");
+});
+
+it("the event gallery loads more photos and keeps the first page", async () => {
+  const user = userEvent.setup();
+  const first = Array.from({ length: 24 }, (_, i) => removalPhoto(`photo-${i}`, "Photographer A"));
+  vi.mocked(removalApi.listRemovalPhotos).mockImplementation(async (_id, filters = {}) => filters.offset
+    ? { items: [removalPhoto("photo-last", "Photographer A")], total: 25, offset: 24, limit: 24 }
+    : { items: first, total: 25, offset: 0, limit: 24 });
+  renderReview();
+  await screen.findByRole("checkbox", { name: /photo-0$/ });
+  await user.click(screen.getByRole("button", { name: "Load 1 more" }));
+  expect(await screen.findByRole("checkbox", { name: /photo-last/ })).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: /photo-0$/ })).toBeVisible();
+  expect(removalApi.listRemovalPhotos).toHaveBeenLastCalledWith("case-1", { offset: 24, limit: 24 }, expect.anything());
 });
