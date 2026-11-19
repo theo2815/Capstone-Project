@@ -290,7 +290,47 @@ class AdminEventServiceReviewTest {
         val page = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20))
 
         assertEquals(2, page.total)
-        Mockito.verify(eventRepository, Mockito.never()).pageForAdmin(anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(eventRepository, Mockito.never()).pageForAdmin(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
+    // AX-9: search, dates and state reach the query, so `total` counts the filtered set.
+    @Test
+    fun `the list passes search, dates and state to the query`() {
+        Mockito.`when`(eventRepository.pageForAdmin(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(emptyList()))
+
+        service.list("  Live ", null, PaginationParams.of(0, 20), "  cebu marathon ", "2026-01-01", "2026-12-31")
+        service.list(null, null, PaginationParams.of(0, 20), "x".repeat(150))
+
+        Mockito.verify(eventRepository).pageForAdmin(eqArg("cebu marathon"), eqArg(LocalDate.of(2026, 1, 1)),
+            eqArg(LocalDate.of(2026, 12, 31)), eqArg("live"), anyArg(), anyArg())
+        Mockito.verify(eventRepository).pageForAdmin(eqArg("x".repeat(100)), eqArg(LocalDate.of(1900, 1, 1)),
+            eqArg(LocalDate.of(9999, 12, 31)), eqArg(""), anyArg(), anyArg())
+    }
+
+    @Test
+    fun `a bad date is a validation error on its own field`() {
+        val error = assertFailsWith<ValidationException> { service.counts(null, "2026-13-01", null) }
+        assertEquals("dateFrom", error.field)
+        assertEquals("dateTo", assertFailsWith<ValidationException> {
+            service.list(null, null, PaginationParams.of(0, 20), dateTo = "soon")
+        }.field)
+    }
+
+    @Test
+    fun `counts asks one count per state with the list's filters`() {
+        val counted = mutableListOf<String>()
+        Mockito.`when`(eventRepository.countForAdmin(anyArg(), anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            assertEquals("cebu", it.getArgument<String>(0))
+            assertEquals(LocalDate.of(2026, 3, 1), it.getArgument<LocalDate>(1))
+            counted += it.getArgument<String>(3)
+            counted.size.toLong()
+        }
+
+        val counts = service.counts(" cebu ", "2026-03-01", null).counts
+
+        assertEquals(listOf("upcoming", "live", "open", "past"), counted)
+        assertEquals(listOf(1L, 2L, 3L, 4L), listOf(counts.upcoming, counts.live, counts.open, counts.past))
     }
 
     // AA-R7: the queue tells the admin why a race waits, who submitted it and which race it may repeat.
