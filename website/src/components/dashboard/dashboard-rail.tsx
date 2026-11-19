@@ -31,7 +31,7 @@ interface DashboardRoute {
   readonly nestedPrefix?: string;
 }
 
-const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
+export const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
   { href: ROUTES.DASHBOARD, label: "Overview" },
   {
     href: ROUTES.DASHBOARD_UPLOAD,
