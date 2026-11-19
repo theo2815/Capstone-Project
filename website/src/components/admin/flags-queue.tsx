@@ -4,14 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
-import { PAGE_SIZE } from "@/lib/pagination-config";
 import { AdminFlagCard, FlagStatusPill, type FlagCardActions } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { useSearchParams } from "next/navigation";
 import {
+  useAdminFlagById,
+  useAdminFlagHistory,
   useAdminFlags,
   useAdminFlagsQuery,
   useFlagActions,
@@ -72,13 +74,20 @@ export function FlagsQueue() {
   // Open flags are fetched on their own so the actionable list is never
   // pushed off the end of the newest-first 200-row page by closed history.
   const openQuery = useAdminFlagsQuery({ status: "open" });
-  const allQuery = useAdminFlagsQuery();
   const openPage = openQuery.data ?? null;
-  const allPage = allQuery.data ?? null;
   const { hide, dismiss, escalate, resolve, confirmHold, isPending, pendingAction } = useFlagActions();
   const { showToast } = useToast();
 
   const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
+  // AX-33 (FLG3): each history slab pages its own server list with the server
+  // search (reason, note, handles, reporter name, flag id). The search follows
+  // the URL, which trails typing by the 300 ms debounce.
+  const q = (useSearchParams().get("q") ?? "").trim();
+  const hiddenList = useAdminFlagHistory("hidden", q);
+  const dismissedList = useAdminFlagHistory("dismissed", q);
+  const resolvedList = useAdminFlagHistory("resolved", q);
+  const escalatedList = useAdminFlagHistory("escalated", q);
+  const historyLists = [hiddenList, dismissedList, resolvedList, escalatedList];
   const [rowId, setRowId] = useUrlState<string>("row", "");
   const submitting = isPending(rowId);
   // One hide and one escalate modal for the whole queue (FLG6). The id stays
@@ -88,34 +97,40 @@ export function FlagsQueue() {
   const [drawerConfirm, setDrawerConfirm] = useState<FlagConfirmKind | null>(null);
   const [missingId, setMissingId] = useState("");
 
-  const effective = useMemo(() => {
-    const openItems = openPage?.items ?? EMPTY_FLAGS;
-    const history = (allPage?.items ?? EMPTY_FLAGS).filter(
-      (f) => f.status !== "open",
-    );
-    return [...openItems, ...history];
-  }, [openPage, allPage]);
-  const truncated =
-    allPage !== null && allPage.total > allPage.items.length
-      ? { shown: allPage.items.length, total: allPage.total }
-      : null;
+  // Open stays one list, searched here, so the actionable flags show in full.
+  const open = useMemo(() => {
+    const needle = q.toLowerCase();
+    return (openPage?.items ?? EMPTY_FLAGS)
+      .filter((f) => needle.length === 0 ||
+        f.id.toLowerCase().includes(needle) ||
+        flagReasonLabel(f.reason).toLowerCase().includes(needle) ||
+        f.photographerHandle.toLowerCase().includes(needle) ||
+        f.reportedBy.toLowerCase().includes(needle) ||
+        f.note.toLowerCase().includes(needle))
+      .sort((a, b) => a.reportedAt.localeCompare(b.reportedAt));
+  }, [openPage, q]);
+  const hidden = hiddenList.items;
+  // Dismissed and resolved share a slab: dismissed pages first, then resolved.
+  const dismissed = dismissedList.hasNextPage
+    ? dismissedList.items
+    : [...dismissedList.items, ...resolvedList.items];
+  const dismissedTotal = dismissedList.total + resolvedList.total;
+  const escalated = escalatedList.items;
 
-  const byId = useMemo(() => {
-    const map = new Map<string, Flag>();
-    for (const f of effective) map.set(f.id, f);
-    return map;
-  }, [effective]);
+  const listRow = rowId
+    ? [openPage?.items ?? EMPTY_FLAGS, ...historyLists.map((l) => l.items)].flat().find((f) => f.id === rowId) ?? null
+    : null;
+  // A flag past the loaded pages is read by id, so its link still opens.
+  const rowQuery = useAdminFlagById(listRow ? "" : rowId);
+  const openRow: Flag | null = listRow ?? rowQuery.data ?? null;
 
-  const openRow = useMemo<Flag | null>(() => {
-    if (!rowId) return null;
-    return byId.get(rowId) ?? null;
-  }, [rowId, byId]);
-
-  // Clear a ?row= only once both lists loaded and it is in neither (FLG1).
+  // Clear a ?row= only once every list and the by-id read loaded and none has it (FLG1).
   // The notice is for links that never matched, not a drawer whose flag left.
   // Not while refetching: a stale cached list may not hold a new flag yet.
   const listsLoaded =
-    openQuery.isSuccess && allQuery.isSuccess && !openQuery.isFetching && !allQuery.isFetching;
+    openQuery.isSuccess && !openQuery.isFetching &&
+    historyLists.every((l) => !l.isLoading && !l.error && !l.isFetching) &&
+    rowQuery.isSuccess && !rowQuery.isFetching;
   const shownRowRef = useRef("");
   if (openRow) shownRowRef.current = openRow.id;
   useEffect(() => {
@@ -133,93 +148,13 @@ export function FlagsQueue() {
     setDrawerConfirm(null);
   }, [rowId]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q.length === 0) return effective;
-    return effective.filter((f) => {
-      return (
-        f.id.toLowerCase().includes(q) ||
-        flagReasonLabel(f.reason).toLowerCase().includes(q) ||
-        f.photographerHandle.toLowerCase().includes(q) ||
-        f.reportedBy.toLowerCase().includes(q) ||
-        f.note.toLowerCase().includes(q)
-      );
-    });
-  }, [effective, query]);
-
-  const open = useMemo(
-    () =>
-      [...filtered.filter((f) => f.status === "open")].sort((a, b) =>
-        a.reportedAt.localeCompare(b.reportedAt),
-      ),
-    [filtered],
-  );
-  const hidden = useMemo(
-    () =>
-      [...filtered.filter((f) => f.status === "hidden")].sort((a, b) =>
-        (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? ""),
-      ),
-    [filtered],
-  );
-  const dismissed = useMemo(
-    () =>
-      [...filtered.filter((f) => f.status === "dismissed" || f.status === "resolved")].sort((a, b) =>
-        (b.reviewedAt ?? "").localeCompare(a.reviewedAt ?? ""),
-      ),
-    [filtered],
-  );
-  const escalated = useMemo(
-    () =>
-      [...filtered.filter((f) => f.status === "escalated")].sort((a, b) =>
-        b.reportedAt.localeCompare(a.reportedAt),
-      ),
-    [filtered],
-  );
-
   const drawerEscDisabled = submitting || modal.kind !== null;
-
-  // Pagination — load-more model. Open keeps full visibility — that's
-  // the actionable triage list. Read-only history slabs start at 10 and
-  // grow by 10 per click. A search-query change resets all three loaded
-  // counts so the user doesn't carry a long load over a narrow filter.
-  const [hiddenLoaded, setHiddenLoaded] = useState(PAGE_SIZE.ADMIN_INITIAL);
-  const [dismissedLoaded, setDismissedLoaded] = useState(
-    PAGE_SIZE.ADMIN_INITIAL,
-  );
-  const [escalatedLoaded, setEscalatedLoaded] = useState(
-    PAGE_SIZE.ADMIN_INITIAL,
-  );
-  useEffect(() => {
-    setHiddenLoaded(PAGE_SIZE.ADMIN_INITIAL);
-    setDismissedLoaded(PAGE_SIZE.ADMIN_INITIAL);
-    setEscalatedLoaded(PAGE_SIZE.ADMIN_INITIAL);
-  }, [query]);
-  const hiddenVisible = useMemo(
-    () => hidden.slice(0, hiddenLoaded),
-    [hidden, hiddenLoaded],
-  );
-  const dismissedVisible = useMemo(
-    () => dismissed.slice(0, dismissedLoaded),
-    [dismissed, dismissedLoaded],
-  );
-  const escalatedVisible = useMemo(
-    () => escalated.slice(0, escalatedLoaded),
-    [escalated, escalatedLoaded],
-  );
 
   // Keyboard nav iterates every flag slab in render order. The drawer
   // wires only the H verb (Hide…) — Dismiss has no corresponding verb in
   // the E/R/H/S whitelist and Escalate is a tertiary action. `/` focuses
-  // the search input from anywhere outside the drawer. Use the visible
-  // slices for paginated slabs so J/K only visits rows currently
-  // rendered.
-  const rowIds = useMemo(
-    () =>
-      [...open, ...hiddenVisible, ...dismissedVisible, ...escalatedVisible].map(
-        (f) => f.id,
-      ),
-    [open, hiddenVisible, dismissedVisible, escalatedVisible],
-  );
+  // the search input from anywhere outside the drawer. Only rendered rows.
+  const rowIds = [...open, ...hidden, ...dismissed, ...escalated].map((f) => f.id);
   const queueNavDisabled = openRow !== null || drawerEscDisabled;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
@@ -312,8 +247,16 @@ export function FlagsQueue() {
       : {},
   });
 
-  const loadFailed = openQuery.isError || allQuery.isError;
-  const ready = openPage !== null && allPage !== null;
+  const loadFailed = openQuery.isError || historyLists.some((l) => !!l.error);
+  // A failed list with no rows is not ready: it must never read as an empty slab (FLG2).
+  const ready = openPage !== null && historyLists.every((l) => !l.isLoading && (!l.error || l.items.length > 0));
+  const matchCount = open.length + hiddenList.total + dismissedTotal + escalatedList.total;
+  const pager = (list: typeof hiddenList, shown: number, total = list.total) => ({
+    shown,
+    total,
+    isLoading: list.isFetchingNextPage,
+    onLoadMore: list.fetchNextPage,
+  });
 
   return (
     <>
@@ -330,14 +273,9 @@ export function FlagsQueue() {
           placeholder="Search by reason, photographer, reporter, or note  ·  /"
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
-        {query.trim().length > 0 && (
+        {q.length > 0 && ready && (
           <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
-            {filtered.length} match{filtered.length === 1 ? "" : "es"}
-          </p>
-        )}
-        {truncated && (
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
-            History shows the newest {truncated.shown} of {truncated.total} flags
+            {matchCount} match{matchCount === 1 ? "" : "es"}
           </p>
         )}
         {missingId && (
@@ -357,8 +295,8 @@ export function FlagsQueue() {
             <p className="font-sans text-sm text-error">Couldn&apos;t load flags. Please try again.</p>
             <button
               type="button"
-              onClick={() => { void openQuery.refetch(); void allQuery.refetch(); }}
-              disabled={openQuery.isFetching || allQuery.isFetching}
+              onClick={() => { void openQuery.refetch(); historyLists.forEach((l) => l.refetch()); }}
+              disabled={openQuery.isFetching || historyLists.some((l) => l.isFetching)}
               className={secondaryBtn}
             >
               Retry
@@ -392,57 +330,39 @@ export function FlagsQueue() {
         number="02"
         title="Hidden"
         caption="Photo removed from runner views"
-        totalCount={hidden.length}
-        rows={hiddenVisible}
+        totalCount={hiddenList.total}
+        rows={hidden}
         empty="No hidden photos."
         onOpenRow={handleOpenRow}
         actions={cardActions}
         focusedId={focusedId}
-        loadMore={{
-          shown: hiddenVisible.length,
-          total: hidden.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setHiddenLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
+        loadMore={pager(hiddenList, hidden.length)}
       />
       <FlagSlab
         id="dismissed"
         number="03"
         title="Dismissed"
         caption="False alarms"
-        totalCount={dismissed.length}
-        rows={dismissedVisible}
+        totalCount={dismissedTotal}
+        rows={dismissed}
         empty="No dismissed flags."
         onOpenRow={handleOpenRow}
         actions={cardActions}
         focusedId={focusedId}
-        loadMore={{
-          shown: dismissedVisible.length,
-          total: dismissed.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setDismissedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
+        loadMore={pager(dismissedList.hasNextPage ? dismissedList : resolvedList, dismissed.length, dismissedTotal)}
       />
       <FlagSlab
         id="escalated"
         number="04"
         title="Escalated"
         caption="Pushed to higher review"
-        totalCount={escalated.length}
-        rows={escalatedVisible}
+        totalCount={escalatedList.total}
+        rows={escalated}
         empty="No escalations."
         onOpenRow={handleOpenRow}
         actions={cardActions}
         focusedId={focusedId}
-        loadMore={{
-          shown: escalatedVisible.length,
-          total: escalated.length,
-          increment: PAGE_SIZE.ADMIN_INCREMENT,
-          onLoadMore: () =>
-            setEscalatedLoaded((c) => c + PAGE_SIZE.ADMIN_INCREMENT),
-        }}
+        loadMore={pager(escalatedList, escalated.length)}
       />
       </>}
 
@@ -530,7 +450,7 @@ function FlagSlab({
   loadMore?: {
     shown: number;
     total: number;
-    increment: number;
+    isLoading: boolean;
     onLoadMore: () => void;
   };
 }) {
@@ -564,7 +484,8 @@ function FlagSlab({
             <LoadMoreButton
               shown={loadMore.shown}
               total={loadMore.total}
-              increment={loadMore.increment}
+              increment={50}
+              isLoading={loadMore.isLoading}
               onLoadMore={loadMore.onLoadMore}
             />
           )}

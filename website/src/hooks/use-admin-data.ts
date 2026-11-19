@@ -26,7 +26,7 @@ import {
   type AdminSalesKpis,
   type AdminSalesRange,
 } from "@/lib/api-admin";
-import type { Flag, HiddenPhoto, RelevanceEvidence } from "@/lib/admin-flags";
+import type { Flag, FlagStatus, HiddenPhoto, RelevanceEvidence } from "@/lib/admin-flags";
 import type { PaginatedResponse } from "@/types/api";
 import { ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { captureAuthSession } from "@/lib/auth-session";
@@ -108,6 +108,34 @@ export function useAdminFlags(
   args: AdminFlagListArgs = {},
 ): PaginatedResponse<Flag> | null {
   return useAdminFlagsQuery(args).data ?? null;
+}
+
+// AX-33: one history slab's server pages for one status and search. Under
+// ["admin", "flags"], so flag actions and live updates refresh it; no code
+// patches that key as an array.
+export function useAdminFlagHistory(status: FlagStatus, q: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useInfiniteList<Flag>({
+    queryKey: ["admin", "flags", "history", status, q, ...session.key],
+    fetchPage: (offset, limit, signal) => fetchAdminFlags({ status, q, offset, limit }, signal),
+    limit: 50,
+    staleTime: LIST_STALE_MS,
+    enabled: session.enabled && ADMIN_FLAGS_ENABLED,
+    keepPreviousData: true,
+  });
+}
+
+// A ?row= link may name a flag past the loaded pages: read it by id (the server
+// q matches a flag id exactly). An empty id reads nothing.
+export function useAdminFlagById(id: string) {
+  const session = usePrivateQuerySession("ADMIN");
+  return useQuery({
+    queryKey: ["admin", "flags", "row", id, ...session.key],
+    queryFn: async ({ signal }) =>
+      (await fetchAdminFlags({ q: id, limit: 50 }, signal)).items.find((f) => f.id === id) ?? null,
+    staleTime: LIST_STALE_MS,
+    enabled: session.enabled && ADMIN_FLAGS_ENABLED && !!id,
+  });
 }
 
 // Flag actions are server-authoritative: no optimistic override, the call
