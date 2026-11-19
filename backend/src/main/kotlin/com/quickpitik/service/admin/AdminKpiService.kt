@@ -14,6 +14,7 @@ import com.quickpitik.repository.EventRepository
 import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PayoutReportRepository
+import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.RelevanceAppealRepository
 import com.quickpitik.repository.RelevanceCaseRepository
@@ -49,6 +50,7 @@ class AdminKpiService(
     private val relevanceCaseRepository: RelevanceCaseRepository,
     private val relevanceAppealRepository: RelevanceAppealRepository,
     private val photoRemovalQueryService: PhotoRemovalQueryService,
+    private val photoRepository: PhotoRepository,
 ) {
 
     fun kpis(): AdminKpisDto {
@@ -110,6 +112,8 @@ class AdminKpiService(
             .associate { extractDate(it[0]) to (it[1] as Number).toLong() }
         val disputeByDay = disputesOpenedByDay(from, to)
         val payoutByDay = payoutsApprovedByDay(from, to)
+        val uploadByDay = photoRepository.uploadCountsByDayBetween(from, to, PH_ZONE.id)
+            .associate { extractDate(it[0]) to (it[1] as Number).toLong() }
 
         return (0 until days).map { i ->
             val day = today.minusDays((days - 1 - i).toLong())
@@ -118,6 +122,7 @@ class AdminKpiService(
                 decisions = decisionByDay[day] ?: 0L,
                 disputes = disputeByDay[day] ?: 0L,
                 payouts = payoutByDay[day] ?: 0L,
+                uploads = uploadByDay[day] ?: 0L,
             )
         }
     }

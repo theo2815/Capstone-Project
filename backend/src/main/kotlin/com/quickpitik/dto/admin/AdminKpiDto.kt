@@ -38,4 +38,5 @@ data class AdminTrendPointDto(
     val decisions: Long,
     val disputes: Long,
     val payouts: Long,
+    val uploads: Long,
 )

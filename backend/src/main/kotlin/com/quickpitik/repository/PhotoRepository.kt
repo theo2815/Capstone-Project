@@ -1002,6 +1002,26 @@ interface PhotoRepository : JpaRepository<Photo, UUID> {
         @Param("to") to: LocalDate,
         @Param("min") min: Int,
     ): List<SharedBibEvent>
+
+    // AX-11: the admin Overview trend's uploads series. A photo row is written when its upload
+    // commits, so uploaded_at is the commit time; removed photos still count as uploaded that day.
+    // Days are cut in `zone` (Manila), not the session's zone, which is UTC on the servers.
+    // shortcut: no index leads with uploaded_at, so this scans photos; add one if the Overview trend gets slow.
+    @Query(
+        value = """
+        SELECT (uploaded_at AT TIME ZONE :zone)::date AS day, COUNT(*) AS upload_count
+        FROM photos
+        WHERE uploaded_at >= :from AND uploaded_at < :to
+        GROUP BY day
+        ORDER BY day
+        """,
+        nativeQuery = true,
+    )
+    fun uploadCountsByDayBetween(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+        @Param("zone") zone: String,
+    ): List<Array<Any>>
 }
 
 interface RaceProofCounts {
