@@ -122,18 +122,20 @@ function Hero() {
             Three taps. No sorting through thousands of photos.
           </p>
           <div className="mt-10 flex items-center gap-5 flex-wrap">
-            <a
-              href="#step-1"
+            {/* The runner came for their photos: the main button goes there;
+                the explainer is the secondary choice. */}
+            <Link
+              href={ROUTES.EVENTS}
               className="group inline-flex items-center gap-2 rounded-full bg-fresh px-6 py-3.5 font-display font-bold text-[15px] text-surface transition-colors hover:bg-fresh-deep"
             >
-              See how
+              Find my photos
               <Arrow />
-            </a>
+            </Link>
             <a
-              href="#cta"
+              href="#step-1"
               className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-ink transition-colors"
             >
-              Skip to search
+              See how
             </a>
           </div>
         </div>

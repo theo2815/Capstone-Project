@@ -186,6 +186,17 @@ describe("CheckoutModal QRPH", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
+  // Runner audit P2-6: on a phone, the QR shows on the same screen the runner must scan it with.
+  it("tells a phone payer how to pay a QR shown on the same phone", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderModal();
+    await user.type(screen.getByLabelText("Email"), "runner@example.com");
+    await user.type(screen.getByLabelText("Confirm email"), "runner@example.com");
+    await user.click(screen.getByRole("button", { name: "Continue →" }));
+    const hint = screen.getByText(/On this phone\?/);
+    expect(hint).toHaveTextContent("On this phone? Tap Save QR code on the next step, then pick the saved image");
+  });
+
   it("quotes photographer discounts automatically on the pay step", async () => {
     const order = {
       id: ORDER_ID,

@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent, RefObject } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/auth-store";
 import { useSelfiesList } from "@/hooks/use-selfies";
@@ -46,6 +46,7 @@ export function BibPanel({
 }) {
   // Review S10: no bib search before the tick, whatever submits the form.
   const bibOk = useBibConsent();
+  const hintId = useId();
   return (
     <form onSubmit={(e) => (bibOk ? onSubmit(e) : e.preventDefault())} className="mt-8">
       <BibNotice className="mb-3" />
@@ -53,10 +54,16 @@ export function BibPanel({
       <button
         type="submit"
         disabled={!bibOk}
+        aria-describedby={bibOk ? undefined : hintId}
         className="mt-5 inline-flex items-center bg-fresh hover:bg-fresh-deep text-surface px-6 py-3 rounded-full font-display font-bold text-[15px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Search by bib →
       </button>
+      {!bibOk && (
+        <p id={hintId} className="mt-2 font-sans text-sm text-slate">
+          Tick the box above to search.
+        </p>
+      )}
 
       <div className="mt-7 flex items-center gap-3">
         <span className="h-px flex-1 bg-line" />
@@ -81,6 +88,10 @@ interface SelfieSearchPanelProps {
   eventSlug: string;
   onSwitchToBib: () => void;
   onSearchSuccess: (result: EventPhotosResult) => void;
+  /** Event page only: a "Browse all N photos" link under bib search, so all
+   *  the ways to find yourself fit on the first phone screen (audit P2-3). */
+  onBrowseAll?: () => void;
+  browseCount?: number;
 }
 
 // Three explicit affordances for runner-side face search (2026-05-19 PM
@@ -103,6 +114,8 @@ export function SelfieSearchPanel({
   eventSlug,
   onSwitchToBib,
   onSearchSuccess,
+  onBrowseAll,
+  browseCount,
 }: SelfieSearchPanelProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -121,6 +134,11 @@ export function SelfieSearchPanel({
   // Privacy plan D2: nothing reaches face matching before the tick.
   const faceOk = useFaceConsent();
   const locked = isSearching || !faceOk;
+  // Runner audit P2-3 (Fokus-style, our text): before the tick the options are
+  // plain choices; picking one shows the full notice in their place. The tick
+  // still gates every search, and no file input exists until it is given.
+  const [chosen, setChosen] = useState<"take" | "upload" | "library" | null>(null);
+  const choose = faceOk ? undefined : (option: "take" | "upload") => () => setChosen(option);
 
   useEffect(() => {
     setIsSearching(false);
@@ -238,14 +256,35 @@ export function SelfieSearchPanel({
         Selfie match · fastest way
       </p>
 
-      <FaceNotice className="mb-3" />
-
+      {!faceOk && chosen ? (
+        <div>
+          <FaceNotice />
+          <button
+            type="button"
+            onClick={() => setChosen(null)}
+            className="mt-3 inline-flex min-h-11 items-center font-sans text-sm text-slate underline decoration-line underline-offset-4 hover:text-ink hover:decoration-ink transition-colors"
+          >
+            ← Back
+          </button>
+        </div>
+      ) : (
+      <>
+      {faceOk && chosen && (
+        <p role="status" className="mb-3 font-sans text-sm text-ink">
+          {chosen === "take"
+            ? "Tap Take a selfie to open your camera."
+            : chosen === "upload"
+              ? "Tap Upload a selfie to pick your photo."
+              : "Tap Use saved selfie to choose one."}
+        </p>
+      )}
       <div className="space-y-3">
         <SelfieActionCard
           label="Take a selfie"
           caption="Use your camera to snap one now."
           isPrimary={!hasLibrary}
-          disabled={locked}
+          disabled={faceOk ? locked : isSearching}
+          onChoose={choose?.("take")}
           accept={ACCEPTED_IMAGE_MIME.join(",")}
           captureUser
           onFile={(f) => void searchWithFile(f)}
@@ -255,7 +294,8 @@ export function SelfieSearchPanel({
           label="Upload a selfie"
           caption="Pick an existing photo from your device."
           isPrimary={false}
-          disabled={locked}
+          disabled={faceOk ? locked : isSearching}
+          onChoose={choose?.("upload")}
           accept={ACCEPTED_IMAGE_MIME.join(",")}
           captureUser={false}
           onFile={(f) => void searchWithFile(f)}
@@ -264,9 +304,9 @@ export function SelfieSearchPanel({
         {hasLibrary && (
           <SelfieLibraryCard
             isPrimary={true}
-            disabled={locked}
-            open={libraryOpen}
-            onToggle={() => setLibraryOpen((v) => !v)}
+            disabled={faceOk ? locked : isSearching}
+            open={faceOk && libraryOpen}
+            onToggle={() => (faceOk ? setLibraryOpen((v) => !v) : setChosen("library"))}
             selfies={selfies}
             onPick={(s) => {
               setLibraryOpen(false);
@@ -279,6 +319,8 @@ export function SelfieSearchPanel({
           />
         )}
       </div>
+      </>
+      )}
 
       {canSave && (
         <label className="mt-3 flex min-h-11 cursor-pointer items-center gap-3 font-sans text-sm text-slate select-none">
@@ -317,6 +359,24 @@ export function SelfieSearchPanel({
         </p>
       )}
 
+      {/* Right under the selfie options (audit P2-3): the other ways in. */}
+      <button
+        type="button"
+        onClick={onSwitchToBib}
+        className="mt-4 w-full inline-flex items-center justify-center rounded-xl border border-line px-6 py-4 font-mono uppercase tracking-[0.14em] text-[13px] text-ink hover:border-line-strong hover:bg-bone-deep transition-colors"
+      >
+        Search by bib →
+      </button>
+      {onBrowseAll && (
+        <button
+          type="button"
+          onClick={onBrowseAll}
+          className="mt-2 w-full inline-flex min-h-11 items-center justify-center font-sans text-sm text-slate underline decoration-line-strong underline-offset-4 hover:text-ink hover:decoration-fresh transition-colors"
+        >
+          Browse all{browseCount ? <span className="tnum">&nbsp;{browseCount}</span> : null}&nbsp;photos →
+        </button>
+      )}
+
       {!isAuthenticated && (
         <p className="mt-6 font-sans text-sm text-slate leading-relaxed">
           Want to save selfies for next time?{" "}
@@ -346,13 +406,6 @@ export function SelfieSearchPanel({
         </p>
       )}
 
-      <button
-        type="button"
-        onClick={onSwitchToBib}
-        className="mt-6 w-full inline-flex items-center justify-center rounded-xl border border-line px-6 py-4 font-mono uppercase tracking-[0.14em] text-[13px] text-ink hover:border-line-strong hover:bg-bone-deep transition-colors"
-      >
-        Search by bib →
-      </button>
     </div>
   );
 }
