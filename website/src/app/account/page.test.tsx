@@ -17,6 +17,16 @@ function mount(role: "RUNNER" | "PHOTOGRAPHER") {
   return render(<QueryClientProvider client={new QueryClient()}><AccountPage /></QueryClientProvider>);
 }
 
+describe("account name slab", () => {
+  it("the Full name label names its input, and the Name link targets the section", () => {
+    const { container } = mount("RUNNER");
+    expect(screen.getByLabelText("Full name")).toHaveValue("A");
+    expect(container.querySelectorAll('[id="name"]')).toHaveLength(1);
+    const href = screen.getAllByRole("link", { name: "Name" })[0].getAttribute("href")!;
+    expect(container.querySelector(href)?.tagName).toBe("SECTION");
+  });
+});
+
 describe("account danger slab", () => {
   it("the account slab links to the request page", () => {
     mount("RUNNER");

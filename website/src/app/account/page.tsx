@@ -48,7 +48,7 @@ import type { User } from "@/types/user";
 // matters now that the slab can change it — this is the credential that
 // receives password resets, not a contact field.
 const RUNNER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
-  { id: "name", label: "Name" },
+  { id: "full-name", label: "Name" },
   { id: "picture", label: "Picture" },
   { id: "email", label: "Sign-in email" },
   { id: "password", label: "Password" },
@@ -60,7 +60,7 @@ const RUNNER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
 // slab here would split the photographer's identity-editing surface across two
 // pages. Runner accounts are unaffected.
 const PHOTOGRAPHER_JUMP_SECTIONS: ReadonlyArray<JumpSection> = [
-  { id: "name", label: "Name" },
+  { id: "full-name", label: "Name" },
   { id: "email", label: "Sign-in email" },
   { id: "password", label: "Password" },
   { id: "danger", label: "Danger" },
@@ -170,8 +170,9 @@ function NameSlab({ user, number }: { user: User; number: string }) {
     }
   }
 
+  // Not "name": the input below owns that id, so its label and autofill find it.
   return (
-    <Slab id="name" number={number} title="Name">
+    <Slab id="full-name" number={number} title="Name">
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
         <FieldShell id="name" label="Full name">
           <input
