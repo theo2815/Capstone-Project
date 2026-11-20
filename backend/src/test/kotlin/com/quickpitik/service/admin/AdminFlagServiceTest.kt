@@ -929,4 +929,29 @@ class AdminFlagServiceTest {
         assertEquals(0, service().list(null, "NSFW", PaginationParams.of(0, 10)).total)
         assertEquals(3L, service().counts("NSFW").counts["hidden"])
     }
+
+    // AX-59: the backend is the one home of the reason labels.
+    @Test
+    fun `a reason code gets its label word for word and an unknown code gets none`() {
+        assertEquals("Inappropriate or NSFW", flagReasonLabel("inappropriate"))
+        assertEquals("Uploads may not belong to the event", flagReasonLabel("batch_relevance_low"))
+        assertNull(flagReasonLabel("zebra"))
+        SystemFlagReason.entries.forEach { assertNotNull(flagReasonLabel(it.wire), it.wire) }
+    }
+
+    @Test
+    fun `the list rows carry their reason label`() {
+        val known = Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = UUID.randomUUID(), reason = "possible_duplicate")
+        val unknown = Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = UUID.randomUUID(), reason = "zebra")
+        Mockito.`when`(flagRepository.pageForAdmin(
+            Mockito.isNull(),
+            Mockito.eq("") ?: "",
+            Mockito.eq(emptyList<String>()) ?: emptyList(),
+            Mockito.any(org.springframework.data.domain.Pageable::class.java) ?: org.springframework.data.domain.Pageable.unpaged(),
+        )).thenReturn(org.springframework.data.domain.PageImpl(listOf(known, unknown)))
+
+        val items = service().list(null, null, PaginationParams.of(0, 10)).items
+
+        assertEquals(listOf("Possible duplicate of another race", null), items.map { it.reasonLabel })
+    }
 }

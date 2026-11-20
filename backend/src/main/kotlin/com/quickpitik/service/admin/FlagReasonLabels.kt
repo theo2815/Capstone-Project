@@ -1,7 +1,6 @@
 package com.quickpitik.service.admin
 
-// shortcut: labels copied from the website, upgrade when the website reads reason labels from the backend
-// Word for word from website/src/lib/admin-flags.ts FLAG_REASON_LABEL (AX-48).
+// The one home of the flag reason labels: admin flag rows carry them as reasonLabel (AX-59).
 private val FLAG_REASON_LABEL = mapOf(
     "wrong_runner" to "Wrong runner / face mismatch",
     "low_quality" to "Quality below threshold",
@@ -24,6 +23,8 @@ private val FLAG_REASON_LABEL = mapOf(
     "runner_removal_held" to "Runner deletion held",
     "batch_relevance_low" to "Uploads may not belong to the event",
 )
+
+fun flagReasonLabel(code: String): String? = FLAG_REASON_LABEL[code]
 
 // AX-48: the reason codes an admin flag search names, by their label ("NSFW") or by the
 // code read with spaces ("low quality").

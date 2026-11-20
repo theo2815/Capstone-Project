@@ -503,6 +503,7 @@ class AdminFlagService(
                 targetId = flag.targetId,
                 reporterId = flag.reporterId,
                 payoutHoldAt = flag.payoutHoldAt?.toString(),
+                reasonLabel = flagReasonLabel(flag.reason),
             )
         }
     }
