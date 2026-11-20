@@ -1,12 +1,23 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 // Open dialogs, newest last: only the top one traps Tab.
 const openDialogs: HTMLElement[] = [];
+const listeners = new Set<() => void>();
+const notify = () => listeners.forEach((l) => l());
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+
+/** True while any Modal or drawer is open; toasts move off its footer (AX-53). */
+export function useAnyDialogOpen(): boolean {
+  return useSyncExternalStore(subscribe, () => openDialogs.length > 0, () => false);
+}
 
 function focusables(root: HTMLElement): HTMLElement[] {
   // Skip controls a disabled fieldset turns off and hidden ones (jsdom has no checkVisibility).
@@ -55,6 +66,7 @@ export function useDialogFocus(
     }
 
     openDialogs.push(container);
+    notify();
     const onKeyDown = (e: KeyboardEvent) => {
       if (!trap || e.key !== "Tab" || openDialogs[openDialogs.length - 1] !== container) return;
       const items = focusables(container);
@@ -77,6 +89,7 @@ export function useDialogFocus(
       document.removeEventListener("keydown", onKeyDown);
       const at = openDialogs.indexOf(container);
       if (at >= 0) openDialogs.splice(at, 1);
+      notify();
       // Leave focus alone if it already sits in another dialog that is still open.
       const now = document.activeElement;
       const free = !now || now === document.body || container.contains(now);
