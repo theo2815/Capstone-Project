@@ -91,7 +91,7 @@ export function AdminSalesEventTable() {
       {/* Column headings for the desktop grid; each cell also carries its label for screen readers. */}
       <div
         aria-hidden="true"
-        className="hidden md:grid md:grid-cols-[2fr_1fr_1fr_1fr_1fr] md:gap-6 pb-3"
+        className="hidden lg:grid lg:grid-cols-[2fr_1fr_1fr_1fr_1fr] lg:gap-6 pb-3"
       >
         <Kicker tone="soft">Event</Kicker>
         <Kicker tone="soft" className="text-right">Date</Kicker>
@@ -125,7 +125,7 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
         href={href}
         className="group block py-4 md:py-5 transition-colors"
       >
-        <div className="md:grid md:grid-cols-[2fr_1fr_1fr_1fr_1fr] md:items-baseline md:gap-6">
+        <div className="lg:grid lg:grid-cols-[2fr_1fr_1fr_1fr_1fr] lg:items-baseline lg:gap-6">
           <div className="min-w-0">
             <div className="flex items-baseline gap-3 flex-wrap">
               <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
@@ -178,8 +178,8 @@ function DataCell({
         ? "text-slate-soft"
         : "text-ink";
   return (
-    <div className="mt-3 md:mt-0 flex items-baseline justify-between md:block md:text-right gap-3">
-      <Kicker tone="soft" className="md:sr-only">
+    <div className="mt-3 lg:mt-0 flex items-baseline justify-between lg:block lg:text-right gap-3">
+      <Kicker tone="soft" className="lg:sr-only">
         {label}
       </Kicker>
       <p

@@ -56,7 +56,7 @@ export default function AdminSalesPage() {
           </div>
         ) : !kpis ? (
           <div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8"
+            className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8"
             aria-busy="true"
           >
             {Array.from({ length: 4 }, (_, i) => (
@@ -64,7 +64,7 @@ export default function AdminSalesPage() {
             ))}
           </div>
         ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8">
           <AdminStatTile
             kicker="Gross merch volume"
             value={formatPrice(kpis.gmv)}

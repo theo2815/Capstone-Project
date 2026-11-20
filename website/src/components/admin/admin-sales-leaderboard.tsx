@@ -7,6 +7,7 @@ import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useAdminTopPhotographersQuery } from "@/hooks/use-admin-data";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate } from "@/lib/format";
+import { photographerHref } from "@/lib/admin-photographer-view";
 import { cn, formatPrice } from "@/lib/utils";
 import { useTopEvents, type SalesEventRow } from "@/lib/admin-sales";
 import type { AdminTopPhotographer } from "@/lib/api-admin";
@@ -23,7 +24,7 @@ export function AdminSalesLeaderboard() {
   const events = useTopEvents(TOP_LIMIT);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-14">
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-10 md:gap-14">
       <Column
         title="Top photographers"
         caption="Year to date"
@@ -109,9 +110,7 @@ function PhotographerRow({
   rank: number;
   row: AdminTopPhotographer;
 }) {
-  const href = row.handle
-    ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${row.handle}`
-    : ROUTES.ADMIN_PHOTOGRAPHERS;
+  const href = photographerHref(row);
   return (
     <li>
       <Link
@@ -123,7 +122,7 @@ function PhotographerRow({
             {rank.toString().padStart(2, "0")}
           </span>
           <div className="min-w-0">
-            <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
+            <p className="font-display text-base text-ink break-words group-hover:text-fresh transition-colors">
               {row.displayName}
             </p>
             <Kicker as="p" tone="soft" tnum className="mt-1">
@@ -154,7 +153,7 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
           </span>
           <div className="min-w-0">
             <div className="flex items-baseline gap-3 flex-wrap">
-              <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
+              <p className="font-display text-base text-ink break-words group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
               {row.implied && (
