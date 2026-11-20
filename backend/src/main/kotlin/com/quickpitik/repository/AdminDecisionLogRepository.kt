@@ -62,10 +62,10 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
         @Param("to") to: OffsetDateTime,
     ): Long
 
-    // KPI trend per day — native SQL bucket on decided_at::date.
+    // KPI trend per day, cut in `zone` (Manila), not the session's zone, which is UTC on the servers (AX-47).
     @Query(
         value = """
-        SELECT decided_at::date AS day,
+        SELECT (decided_at AT TIME ZONE :zone)::date AS day,
                COUNT(DISTINCT COALESCE(group_id::text, id::text)) AS decision_count
         FROM admin_decision_log
         WHERE decided_at >= :from AND decided_at < :to AND NOT automatic
@@ -78,6 +78,7 @@ interface AdminDecisionLogRepository : JpaRepository<AdminDecisionLog, UUID> {
     fun decisionCountsByDayBetween(
         @Param("from") from: OffsetDateTime,
         @Param("to") to: OffsetDateTime,
+        @Param("zone") zone: String,
     ): List<Array<Any>>
 
     // Idempotent-bulk fast path (C-3): given a (admin_id, idempotency_key)
