@@ -60,6 +60,22 @@ it("suspends the runner whose row opened the shared Suspend modal", async () => 
   await waitFor(() => expect(adminApi.suspendUser).toHaveBeenCalledWith("runner-7", "Compliance review requested"));
 });
 
+it("turns the row to Unsuspend at once after a suspend, before the list refetch lands", async () => {
+  vi.mocked(adminApi.fetchAdminUsersPage)
+    .mockResolvedValueOnce(page([runner]))
+    .mockReturnValue(new Promise(() => {})); // the refetch is held
+  vi.mocked(adminApi.suspendUser).mockResolvedValue({ ...runner, suspendedAt: "2026-11-20T00:00:00Z" });
+  mount();
+  const row = (await screen.findByText("Ana Runner")).closest("li")!;
+  await userEvent.click(within(row).getByRole("button", { name: /Suspend/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Suspend account" });
+  await userEvent.click(within(dialog).getByLabelText("Compliance review requested"));
+  await userEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
+  expect(await within(row).findByRole("button", { name: "Unsuspend" })).toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: /Suspend…/ })).toBeNull();
+  expect(adminApi.suspendUser).toHaveBeenCalledTimes(1);
+});
+
 it("never carries a message draft from one runner to another", async () => {
   vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([{ ...runner, userId: "runner-1", name: "Other Runner" }, runner]));
   mount();

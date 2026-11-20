@@ -160,6 +160,16 @@ it("clearing an old session prevents late list/detail/settings reads from repopu
   await act(async () => request.resolve({ ...detail, items: [adminUser], total: 1 }));
   expect(client.getQueryCache().getAll()).toHaveLength(0);
 });
+it("patches the paged photographer list with the confirmed row, so its buttons flip before the refetch", async () => {
+  const pagedKey = [...adminUserKeys.owner(admin.id), "photographers", "suspended", ""];
+  const suspended = { ...adminUser, id: adminUser.userId, suspendedAt: "2026-11-01T00:00:00Z" };
+  client.setQueryData(pagedKey, { pages: [{ items: [suspended], total: 1, offset: 0, limit: 50 }], pageParams: [0] });
+  vi.spyOn(api, "post").mockResolvedValue({ ...adminUser, suspendedAt: null });
+  const { result } = renderHook(useAdminUserActions, { wrapper });
+  await act(async () => { expect(await result.current.unsuspend(adminUser.userId)).toBe(true); });
+  const data = client.getQueryData<{ pages: { items: { id: string; suspendedAt: string | null }[] }[] }>(pagedKey);
+  expect(data?.pages[0].items[0]).toMatchObject({ id: adminUser.userId, suspendedAt: null });
+});
 it("cancels an older directory read before installing a confirmed mutation", async () => {
   const old = deferred<unknown>();
   const read = client.fetchQuery({ queryKey: listKey, queryFn: () => old.promise }).catch(() => undefined);
