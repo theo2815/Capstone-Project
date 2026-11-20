@@ -3,7 +3,7 @@ import { ADMIN_ROUTES } from "@/components/admin/admin-rail";
 import { ADMIN_QUEUES, queuePath } from "@/lib/admin-queues";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
-import { photographerHref } from "@/lib/admin-photographer-view";
+import { photographerHref, photographerStatus } from "@/lib/admin-photographer-view";
 import {
   DISPUTE_REASON_LABEL,
   type Dispute,
@@ -253,14 +253,7 @@ function buildPhotographerEntries(
   const photographers = userPool.filter((u) => u.role === "PHOTOGRAPHER");
   return photographers.map((u) => {
     const subjectLabel = u.brandName ?? u.name;
-    const isSuspended = u.suspendedAt !== null;
-    const status = isSuspended
-      ? "Suspended"
-      : u.verificationStatus === "approved"
-        ? "Approved"
-        : u.verificationStatus === "pending"
-          ? "Pending"
-          : "Incomplete";
+    const status = photographerStatus(u).label;
     const subtitle = `${status} · @${u.handle ?? "no-handle"} · ${u.city}`;
     const route = photographerHref(u);
     return {
