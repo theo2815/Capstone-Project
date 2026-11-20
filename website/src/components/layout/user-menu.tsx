@@ -185,7 +185,7 @@ export function UserMenu({ user }: UserMenuProps) {
           )}
         >
           <div className="px-6 pt-6 pb-5">
-            <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
+            <p className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft">
               Signed in
             </p>
             <p className="font-display text-2xl text-ink leading-[1.1] tracking-tight mt-3 truncate">
@@ -196,11 +196,11 @@ export function UserMenu({ user }: UserMenuProps) {
                 className="size-1.5 rounded-full bg-fresh"
                 aria-hidden="true"
               />
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate">
+              <span className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate">
                 {user.role}
               </span>
             </div>
-            <p className="font-mono text-[11px] text-slate-soft mt-4 truncate">
+            <p className="font-mono text-[12px] text-slate-soft mt-4 truncate">
               {user.email}
             </p>
           </div>
@@ -216,7 +216,7 @@ export function UserMenu({ user }: UserMenuProps) {
                 >
                   <span
                     aria-hidden="true"
-                    className="font-mono text-[10px] tracking-[0.15em] text-slate-soft tnum group-hover:text-fresh transition-colors"
+                    className="font-mono text-[12px] tracking-[0.15em] text-slate-soft tnum group-hover:text-fresh transition-colors"
                   >
                     {pad2(idx + 1)}
                   </span>
@@ -251,7 +251,7 @@ export function UserMenu({ user }: UserMenuProps) {
               type="button"
               role="menuitem"
               onClick={handleSignOut}
-              className="group w-full flex items-center justify-between px-6 py-3.5 font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-ink hover:bg-bone-deep transition-colors"
+              className="group w-full flex items-center justify-between px-6 py-3.5 font-mono uppercase tracking-[0.14em] text-[12px] text-slate hover:text-ink hover:bg-bone-deep transition-colors"
             >
               <span>Sign out</span>
               <svg

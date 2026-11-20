@@ -67,7 +67,7 @@ export function BibPanel({
 
       <div className="mt-7 flex items-center gap-3">
         <span className="h-px flex-1 bg-line" />
-        <span className="font-mono uppercase tracking-[0.14em] text-[9px] text-slate-soft">
+        <span className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate-soft">
           or
         </span>
         <span className="h-px flex-1 bg-line" />
@@ -252,7 +252,7 @@ export function SelfieSearchPanel({
 
   return (
     <div className="mt-8" style={{ animation: "fade-in 0.3s ease-out both" }}>
-      <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-4">
+      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-4">
         Selfie match · fastest way
       </p>
 
@@ -353,7 +353,7 @@ export function SelfieSearchPanel({
       {isSearching && (
         <p
           role="status"
-          className="mt-4 font-mono uppercase tracking-[0.14em] text-[10px] text-fresh"
+          className="mt-4 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-fresh"
         >
           Matching…
         </p>
@@ -526,7 +526,7 @@ function SelfieLibraryCard({
                     draggable={false}
                   />
                   {s.isPrimary && (
-                    <span className="absolute top-1.5 left-1.5 font-mono uppercase tracking-[0.18em] text-[8px] bg-fresh text-surface px-1.5 py-0.5 rounded-full">
+                    <span className="absolute top-1.5 left-1.5 font-mono uppercase tracking-[0.04em] text-[12px] bg-fresh text-surface px-1.5 py-0.5 rounded-full">
                       Primary
                     </span>
                   )}

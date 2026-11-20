@@ -295,8 +295,11 @@ function SelfieTile({
         draggable={false}
       />
 
+      {/* One wrapping row, so the two badges stack instead of overlapping on a
+          narrow tile (they collided once their text reached 12 px, P3-1). */}
+      <div className="absolute inset-x-2 top-2 flex flex-wrap items-start gap-1">
       {selfie.isPrimary && (
-        <span className="absolute top-2 left-2 inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-fresh text-surface font-mono uppercase tracking-[0.14em] text-[9px]">
+        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-fresh text-surface font-mono uppercase tracking-[0.06em] text-[12px]">
           <span aria-hidden="true" className="size-1 rounded-full bg-bone" />
           Primary
         </span>
@@ -309,18 +312,19 @@ function SelfieTile({
       {selfie.qualityTestStatus !== "passed" && (
         <span
           title="Uploaded before face matching was switched on — re-upload if search misses you."
-          className="absolute top-2 right-2 px-2 py-1 rounded-full bg-ink/70 backdrop-blur text-bone font-mono uppercase tracking-[0.14em] text-[9px]"
+          className="px-2 py-1 rounded-full bg-ink/70 backdrop-blur text-bone font-mono uppercase tracking-[0.06em] text-[12px]"
         >
           Not checked
         </span>
       )}
+      </div>
 
-      <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+      <div className="absolute inset-x-2 bottom-2 flex flex-wrap items-center justify-between gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
         {!selfie.isPrimary ? (
           <button
             type="button"
             onClick={onSetPrimary}
-            className="font-mono uppercase tracking-[0.14em] text-[9px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-bone transition-colors"
+            className="font-mono uppercase tracking-[0.06em] text-[12px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-bone transition-colors"
           >
             Make primary
           </button>
@@ -331,7 +335,7 @@ function SelfieTile({
           type="button"
           onClick={onRemove}
           aria-label="Remove selfie"
-          className="font-mono uppercase tracking-[0.14em] text-[9px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-error hover:text-bone transition-colors"
+          className="font-mono uppercase tracking-[0.06em] text-[12px] bg-bone/90 backdrop-blur text-ink px-2 py-1 rounded-full hover:bg-error hover:text-bone transition-colors"
         >
           Remove
         </button>
@@ -359,7 +363,7 @@ function SelfieAddTile({
       <span aria-hidden="true" className="text-2xl leading-none">
         +
       </span>
-      <span className="font-mono uppercase tracking-[0.14em] text-[10px]">
+      <span className="font-mono uppercase tracking-[0.14em] text-[12px]">
         {busy ? "Processing" : "Add selfie"}
       </span>
       <input
