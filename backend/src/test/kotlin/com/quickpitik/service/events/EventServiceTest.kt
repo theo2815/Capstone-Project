@@ -84,6 +84,16 @@ class EventServiceTest {
         }
     }
 
+    // AX-45: the admin row carries when the event was submitted.
+    @Test
+    fun `admin mapping carries the submission time`() {
+        val submitted = java.time.OffsetDateTime.parse("2026-11-19T08:30:00+08:00")
+        val event = Event(slug = "run-a", name = "Run", date = LocalDate.of(2026, 10, 10), location = "Cebu City",
+            status = EventStatus.DRAFT, createdAt = submitted)
+
+        assertEquals(submitted, mapper.toAdminListDto(event).createdAt)
+    }
+
     private fun event(status: EventStatus) = Event(
         slug = "run-${UUID.randomUUID().toString().take(6)}",
         name = "Run",
