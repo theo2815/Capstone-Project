@@ -287,9 +287,9 @@ function ApproveSummary({ row }: { row: AdminEventRow }) {
   );
 }
 
-// ER3: only a change request carries its request time; a new submission's time is not sent.
+// ER3: a change request waits from its request time, a new submission from createdAt (absent on an older backend).
 function waitingLine(row: AdminEventRow) {
-  const at = row.pendingChange?.requestedAt;
+  const at = row.reviewStatus === "change_pending" ? row.pendingChange?.requestedAt : row.createdAt;
   if (!at) return null;
   const days = Math.floor((Date.now() - new Date(at).getTime()) / 86_400_000);
   if (Number.isNaN(days) || days < 0) return null;
