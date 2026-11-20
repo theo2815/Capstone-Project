@@ -81,8 +81,8 @@ class AdminFlagService(
         // '' not null: PG 18 types a null bind inside LOWER(CONCAT(...)) as
         // bytea and the query 500s (seen in prod 2026-09-04). Same shape as
         // EventRepository/PayoutCycleRepository.
-        val q = escapeLike(query?.takeIf { it.isNotBlank() }?.take(100) ?: "")
-        val page = flagRepository.pageForAdmin(statusWire, q, OffsetLimitPageable(params))
+        val raw = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
+        val page = flagRepository.pageForAdmin(statusWire, escapeLike(raw), flagReasonCodesMatching(raw), OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
         return PaginatedResponse.of(items, page.totalElements, params)
@@ -92,8 +92,9 @@ class AdminFlagService(
     @Transactional(readOnly = true)
     fun counts(query: String?): AdminStatusCountsDto {
         ensureEnabled()
-        val q = escapeLike(query?.takeIf { it.isNotBlank() }?.take(100) ?: "")
-        val found = flagRepository.countByStatusForAdmin(q).associate { it.status to it.total }
+        val raw = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
+        val found = flagRepository.countByStatusForAdmin(escapeLike(raw), flagReasonCodesMatching(raw))
+            .associate { it.status to it.total }
         return AdminStatusCountsDto(FlagStatus.entries.associate { it.wire to (found[it.wire] ?: 0L) })
     }
 
