@@ -810,6 +810,8 @@ export interface AdminEventRow extends ListEvent {
   heldCoverUrl?: string | null;
   /** When the event was submitted (AX-45); optional so an older backend still parses. */
   createdAt?: string | null;
+  /** When a rejected event was last sent again for review (AX-60); null if never, absent on an older backend. */
+  resubmittedAt?: string | null;
 }
 
 /** AA-R5 held race edit: only the changed fields, never a price. */
