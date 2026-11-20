@@ -396,6 +396,19 @@ class AdminEventServiceReviewTest {
         assertEquals("https://signed.test/held", row.heldCoverUrl)
     }
 
+    // AX-60: every queue row carries its first submission time; a resent one also its resend time.
+    @Test
+    fun `queue rows carry their submission time and a resent row its resend time`() {
+        val first = submitted()
+        val resent = submitted().apply { resubmittedAt = java.time.OffsetDateTime.parse("2026-11-20T03:00:00Z") }
+        queueOf(first, resent)
+
+        val rows = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items
+
+        assertEquals(listOf(first.createdAt, resent.createdAt), rows.map { it.createdAt })
+        assertEquals(listOf(null, resent.resubmittedAt), rows.map { it.resubmittedAt })
+    }
+
     @Test
     fun `a row with no held cover has no link`() {
         queueOf(live().apply { reviewStatus = EventReviewStatus.CHANGE_PENDING; coverS3Key = "events/covers/live.jpg" })

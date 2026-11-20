@@ -145,6 +145,7 @@ class EventDtoMapper(
         heldCoverUrl = RaceEdit.heldCover(event.pendingChange)
             ?.let { storageService.presignedGetUrl(it, storageProperties.presignedTtl.cover) },
         createdAt = event.createdAt,
+        resubmittedAt = event.resubmittedAt,
     )
 
     fun resolveBannerUrl(event: Event): String? =

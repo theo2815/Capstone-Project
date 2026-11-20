@@ -253,6 +253,32 @@ class PhotographerOwnedEventServiceTest {
         assertNotNull(event.createdBy)
     }
 
+    // AX-60: the admin queue shows how long a resent event has waited since it came back.
+    @Test
+    fun `resending a rejected event stamps the resend time`() {
+        val event = liveEvent().apply {
+            status = EventStatus.DRAFT
+            reviewStatus = EventReviewStatus.REJECTED
+        }
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(title = "Cebu Fun Run 2"), null)
+
+        assertNotNull(event.resubmittedAt)
+    }
+
+    @Test
+    fun `a first submission and an edit while pending carry no resend time`() {
+        service.create(photographerId, paidRequest(), null)
+        assertNull(saved.single().resubmittedAt)
+
+        val pending = liveEvent().apply {
+            status = EventStatus.DRAFT
+            reviewStatus = EventReviewStatus.PENDING
+        }
+        service.update(photographerId, pending.id, UpdateMyEventRequest(title = "Cebu Fun Run 2"), null)
+        assertNull(pending.resubmittedAt)
+    }
+
     @Test
     fun `owner cover replacement uploads outside the write and cleans up after commit`() {
         val event = liveEvent().apply { coverS3Key = "old-cover" }
