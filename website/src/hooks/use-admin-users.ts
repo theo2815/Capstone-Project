@@ -51,6 +51,21 @@ export function useAdminPhotographersPage(status: AdminUserStatusFilter, q: stri
   });
 }
 
+// AX-41: same owner prefix as the photographers list, so suspend and unsuspend refresh it.
+export function useAdminRunnersPage(q: string) {
+  const user = useAuthStore((s) => s.user);
+  return useInfiniteList<AdminUserRow & { id: string }>({
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), "runners", q],
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchAdminUsersPage({ role: "RUNNER", q: q || undefined, offset, limit }, signal);
+      return { ...page, items: page.items.map((row) => ({ ...row, id: row.userId })) };
+    },
+    limit: 50,
+    enabled: user?.role === "ADMIN",
+    staleTime: 30_000,
+  });
+}
+
 export function useAdminUserDetail(id: string | null) {
   const user = useAuthStore((s) => s.user);
   return useQuery({
