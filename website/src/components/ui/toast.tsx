@@ -9,11 +9,14 @@ import {
 } from "@/store/toast-store";
 import { cn } from "@/lib/utils";
 import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
+import { useAnyDialogOpen } from "@/hooks/use-dialog-focus";
 
 const MAX_VISIBLE = 3;
 
 export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts);
+  // A modal's buttons sit at its foot: while one is open, toasts move to the top.
+  const dialogOpen = useAnyDialogOpen();
   // Show the latest 3; older queued toasts wait for room. Newest sits at top
   // of the visible stack via flex-col-reverse.
   const visible = toasts.slice(-MAX_VISIBLE);
@@ -22,7 +25,10 @@ export function ToastContainer() {
     <div
       role="region"
       aria-label="Notifications"
-      className="fixed inset-x-4 bottom-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-[80] flex flex-col-reverse gap-2.5 pointer-events-none sm:w-[28rem]"
+      className={cn(
+        "fixed inset-x-4 sm:inset-x-auto sm:right-6 z-[80] flex flex-col-reverse gap-2.5 pointer-events-none sm:w-[28rem]",
+        dialogOpen ? "top-4 sm:top-6" : "bottom-4 sm:bottom-6",
+      )}
     >
       {visible.map((t) => (
         <ToastItem key={t.id} toast={t} />
