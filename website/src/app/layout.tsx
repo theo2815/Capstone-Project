@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Anton, Archivo, Geist_Mono } from "next/font/google";
 import { Providers } from "./providers";
+import { SkipLink } from "@/components/layout/skip-link";
 import "./globals.css";
 
 // Finish Line type system (2026-08-25 overhaul):
@@ -63,6 +64,7 @@ export default function RootLayout({
       <body
         className={`${anton.variable} ${archivo.variable} ${geistMono.variable} antialiased`}
       >
+        <SkipLink />
         <Providers>{children}</Providers>
       </body>
     </html>
