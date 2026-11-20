@@ -50,23 +50,26 @@ export function AdminTrendChart({
 
   return (
     <div>
-      <table className="sr-only">
-        <caption>{ariaLabel}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Date</th>
-            <th scope="col">{unitLabel}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((point) => (
-            <tr key={point.date}>
-              <td>{renderLabel(point.date)}</td>
-              <td>{renderValue(point.amount)}</td>
+      {/* A table ignores sr-only's 1px width, so a clipping div keeps it from widening the page. */}
+      <div className="sr-only">
+        <table>
+          <caption>{ariaLabel}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">{unitLabel}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.map((point) => (
+              <tr key={point.date}>
+                <td>{renderLabel(point.date)}</td>
+                <td>{renderValue(point.amount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {/* Bars are for the eye only; the table above is their text version. */}
       <div
         aria-hidden="true"

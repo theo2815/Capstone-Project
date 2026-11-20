@@ -2,7 +2,7 @@ import { render, renderHook, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import * as sales from "./admin-sales";
 import { useSalesByEvent } from "./admin-sales";
-import { fetchAdminSalesTrend, fetchAdminTopPhotographers } from "./api-admin";
+import { fetchAdminSalesTrend, fetchAdminTopPhotographers, type AdminTopPhotographer } from "./api-admin";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 
@@ -17,7 +17,7 @@ const weeks = [
   { weekStart: "2026-11-09", gmv: 1000, platformRevenue: 200, refundsIssued: 0, salesCount: 8 },
   { weekStart: "2026-11-16", gmv: 2500, platformRevenue: 500, refundsIssued: 0, salesCount: 20 },
 ];
-const top = [{ userId: "u-ana", handle: "anashoots", displayName: "Ana Shoots", gmv: 4200, salesCount: 33 }];
+const top: AdminTopPhotographer[] = [{ userId: "u-ana", handle: "anashoots", displayName: "Ana Shoots", gmv: 4200, salesCount: 33 }];
 type Q<T> = { data?: T; isError: boolean; isFetching: boolean; refetch: () => void };
 const state: {
   live: (typeof serverRow)[] | null;
@@ -78,6 +78,24 @@ it("a failed top-photographers request says so instead of showing an empty board
   within(alert).getByRole("button", { name: "Retry" }).click();
   expect(state.top.refetch).toHaveBeenCalled();
   expect(screen.queryByText(/No photo sales/)).toBeNull();
+});
+
+it("a photographer with no handle links to their own page by user id", () => {
+  state.top = { ...state.top, data: [{ ...top[0], userId: "u-nora", handle: null, displayName: "Nora Lim" }] };
+  render(<AdminSalesLeaderboard />);
+  expect(screen.getByText("Nora Lim").closest("a")).toHaveAttribute("href", "/admin/photographers/u-nora");
+});
+
+it("long photographer and event names wrap instead of being cut", () => {
+  const long = "Mandaue Southern Visayas Endurance Photography Collective Co.";
+  state.top = { ...state.top, data: [{ ...top[0], displayName: long }] };
+  state.live = [{ ...serverRow, name: long }];
+  render(<AdminSalesLeaderboard />);
+  expect(screen.getAllByText(long)).toHaveLength(2);
+  for (const name of screen.getAllByText(long)) {
+    expect(name).not.toHaveClass("truncate");
+    expect(name).toHaveClass("break-words");
+  }
 });
 
 it("a browser-derived top event keeps its Implied badge", () => {
