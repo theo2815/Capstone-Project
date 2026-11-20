@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -48,8 +48,9 @@ const SEARCH_DEBOUNCE_MS = 300;
 // The server's page size, for the Load more count.
 const PAGE_INCREMENT = 50;
 
-// Phones (below md) get the actions inside the drawer's scroll, not a footer that takes half the screen (DSP7).
-// shortcut: crossing 768 px while a dispute modal is open remounts the aside and closes it; fine for rotate and resize.
+// Phones (below md) get the actions inside the drawer's scroll, not a footer that takes half the screen (DSP7);
+// their buttons stay in view in a row stuck to the bottom of that scroll.
+// shortcut: crossing 768 px remounts the aside and the drawer body, closing an open dispute modal or photo preview; fine for rotate and resize.
 const MD_UP = "(min-width: 768px)";
 const subscribeMdUp = (onChange: () => void) => {
   const mq = window.matchMedia?.(MD_UP);
@@ -161,13 +162,15 @@ export function DisputesQueue() {
     ? `No disputes match “${q}”.`
     : VIEWS.find((v) => v.value === view)?.empty;
 
-  const actionsAside = openRow && (
+  // On phones the aside wraps the drawer body, so its buttons can stay stuck to the bottom of the scroll.
+  const actionsAside = (body?: ReactNode) => openRow && (
     <AdminDisputeActionAside
       key={openRow.id}
       dispute={openRow}
       runnerHandle={openRow.runnerHandle}
       onDialogOpenChange={setAsideDialogOpen}
-      className=""
+      className={body ? "mb-10" : ""}
+      body={body}
     />
   );
 
@@ -258,12 +261,10 @@ export function DisputesQueue() {
           subtitle={<DisputeSubtitle dispute={openRow} />}
           actions={
             // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
-            mdUp ? <div className="w-full max-h-[50vh] overflow-y-auto p-1">{actionsAside}</div> : undefined
+            mdUp ? <div className="w-full max-h-[50vh] overflow-y-auto p-1">{actionsAside()}</div> : undefined
           }
         >
-          {/* On phones the actions come first, so the main action is in view when the drawer opens. */}
-          {!mdUp && <div className="mb-10">{actionsAside}</div>}
-          <DisputeDetailBody dispute={openRow} />
+          {mdUp ? <DisputeDetailBody dispute={openRow} /> : actionsAside(<DisputeDetailBody dispute={openRow} />)}
         </AdminDetailDrawer>
       )}
 
