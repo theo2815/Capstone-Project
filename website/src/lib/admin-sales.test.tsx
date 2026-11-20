@@ -4,6 +4,7 @@ import * as sales from "./admin-sales";
 import { useSalesByEvent } from "./admin-sales";
 import { fetchAdminSalesTrend, fetchAdminTopPhotographers, type AdminTopPhotographer } from "./api-admin";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
+import { AdminSalesEventTable } from "@/components/admin/admin-sales-event-table";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 
 vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
@@ -96,6 +97,15 @@ it("long photographer and event names wrap instead of being cut", () => {
     expect(name).not.toHaveClass("truncate");
     expect(name).toHaveClass("break-words");
   }
+});
+
+it("a long event name in Sales by event wraps instead of being cut", () => {
+  const long = "Mandaue Southern Visayas Endurance Marathon and Fun Run 2026";
+  state.live = [{ ...serverRow, name: long }];
+  render(<AdminSalesEventTable />);
+  const name = screen.getByText(long);
+  expect(name).not.toHaveClass("truncate");
+  expect(name).toHaveClass("break-words");
 });
 
 it("a browser-derived top event keeps its Implied badge", () => {
