@@ -1201,23 +1201,6 @@ export function fetchRelevanceCase(
   return api.get(`/admin/relevance/cases/${encodeURIComponent(caseId)}`, { signal });
 }
 
-export function fetchRelevanceAlerts(
-  args: { unseen?: boolean; offset?: number; limit?: number } = {},
-  signal?: AbortSignal,
-): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceAlert>> {
-  const p = new URLSearchParams();
-  if (args.unseen) p.set("unseen", "true");
-  p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
-  return api.get(`/admin/relevance/alerts?${p.toString()}`, { signal });
-}
-
-export function markRelevanceAlertSeen(
-  alertId: string,
-): Promise<import("@/lib/admin-relevance").RelevanceAlert> {
-  return api.post(`/admin/relevance/alerts/${encodeURIComponent(alertId)}/seen`);
-}
-
 // ───────────────────────────────────────────── Photo Relevance actions (RV-2.6)
 
 const relevanceCasePath = (caseId: string) => `/admin/relevance/cases/${encodeURIComponent(caseId)}`;
