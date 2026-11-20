@@ -118,3 +118,11 @@ it("shows a styled Retry when the photographer cannot load", async () => {
   expect(alert).toHaveTextContent(/Couldn.t load this photographer/);
   expect(screen.getByRole("button", { name: "Retry" })).toHaveAttribute("type", "button");
 });
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+it("About reads the joined date as typed, not in capitals", async () => {
+  params.handle = adminUser.handle!;
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: /About/ }));
+  expect(await screen.findByText(/^Sep 10 · 2026$/)).toBeInTheDocument();
+});

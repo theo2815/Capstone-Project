@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
+import { Kicker } from "@/components/ui/kicker";
 import { AdminFlagCard, FlagStatusPill, type FlagCardActions } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
@@ -42,7 +42,7 @@ import {
 } from "@/lib/admin-flags";
 import { FlagRelevanceEvidence } from "@/components/admin/flag-relevance-evidence";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 
 const DONE_LABEL = {
   hide: "Hidden",
@@ -498,15 +498,15 @@ function FlagSlab({
 function FlagSubtitle({ flag }: { flag: Flag }) {
   const eventName = flagEventName(flag);
   return (
-    <Kicker as="p" tone="soft" className="tnum">
+    <p className="font-sans text-sm text-slate-soft tnum break-words">
       {flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`}
       <span className="text-slate-soft"> · </span>
       @{flag.photographerHandle}
       <span className="text-slate-soft"> · </span>
       {eventName}
       <span className="text-slate-soft"> · </span>
-      {formatLongDate(flag.reportedAt)}
-    </Kicker>
+      {sentenceCaseDate(formatLongDate(flag.reportedAt))}
+    </p>
   );
 }
 
@@ -673,13 +673,13 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
           <FieldRow label="Event" value={eventName} mono={false} />
           <FieldRow
             label="Reported at"
-            value={formatLongDate(flag.reportedAt)}
+            value={sentenceCaseDate(formatLongDate(flag.reportedAt))}
             mono
           />
           {flag.reviewedAt && (
             <FieldRow
               label="Reviewed at"
-              value={formatLongDate(flag.reviewedAt)}
+              value={sentenceCaseDate(formatLongDate(flag.reviewedAt))}
               mono
             />
           )}
@@ -690,7 +690,7 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
         <>
           {flag.payoutHoldAt && (
             <p className="font-sans text-sm font-medium text-ink tnum">
-              Payouts on hold since {formatLongDate(flag.payoutHoldAt)}
+              Payouts on hold since {sentenceCaseDate(formatLongDate(flag.payoutHoldAt))}
             </p>
           )}
           <FlagRelevanceEvidence flag={flag} />
@@ -728,9 +728,9 @@ function FieldRow({
         {label}
       </Kicker>
       <dd
-        className={`mt-1 ${
+        className={`mt-1 break-words ${
           mono
-            ? `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink tnum`
+            ? "font-mono text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >

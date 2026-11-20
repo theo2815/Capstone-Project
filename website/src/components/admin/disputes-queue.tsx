@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
+import { Kicker } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { AdminDisputeCard } from "@/components/admin/admin-dispute-card";
@@ -30,7 +30,7 @@ import {
 } from "@/lib/admin-disputes";
 import type { AdminDisputeView } from "@/lib/api-admin";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
 
 // The server's views (no status filter in the UI on purpose; the server keeps `status=`).
@@ -275,13 +275,13 @@ export function DisputesQueue() {
 function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   return (
-    <Kicker as="p" tone="soft" className="tnum">
+    <p className="font-sans text-sm text-slate-soft tnum break-words">
       {eventName}
       <span className="text-slate-soft"> · </span>
       Order total {formatPrice(dispute.orderSnapshot.total)}
       <span className="text-slate-soft"> · </span>
-      Reported {formatLongDate(dispute.reportedAt)}
-    </Kicker>
+      Reported {sentenceCaseDate(formatLongDate(dispute.reportedAt))}
+    </p>
   );
 }
 
@@ -367,7 +367,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
           <FieldRow label="Method" value={paymentLabel} mono={false} />
           <FieldRow
             label="Paid at"
-            value={formatLongDate(dispute.orderSnapshot.paidAt)}
+            value={sentenceCaseDate(formatLongDate(dispute.orderSnapshot.paidAt))}
             mono
           />
         </dl>
@@ -384,7 +384,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
             <Kicker as="p" tone="soft">
               Runner
             </Kicker>
-            <p className="font-display text-lg text-ink mt-2">
+            <p className="font-display text-lg text-ink mt-2 break-words">
               @{dispute.runnerHandle}
             </p>
           </div>
@@ -392,7 +392,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
             <Kicker as="p" tone="soft">
               Photographer
             </Kicker>
-            <p className="font-display text-lg text-ink mt-2">
+            <p className="font-display text-lg text-ink mt-2 break-words">
               @{dispute.photographerHandle}
             </p>
           </div>
@@ -462,7 +462,7 @@ function DecisionFacts({ dispute: d }: { dispute: Dispute }) {
                 ? "No download record"
                 : d.downloadCount === 0
                   ? "No downloads yet"
-                  : `${d.downloadCount}${d.lastDownloadedAt ? ` · last ${formatLongDate(d.lastDownloadedAt)}` : ""}`
+                  : `${d.downloadCount}${d.lastDownloadedAt ? ` · last ${sentenceCaseDate(formatLongDate(d.lastDownloadedAt))}` : ""}`
             }
             help="Counts download starts; retries and share attempts count again. Gallery and receipt previews are not counted."
             mono={d.downloadCount !== null && d.downloadCount > 0}
@@ -535,9 +535,9 @@ function FieldRow({
         {label}
       </Kicker>
       <dd
-        className={`mt-1 ${
+        className={`mt-1 break-words ${
           mono
-            ? `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink tnum`
+            ? "font-mono text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink tnum"
         }`}
       >
@@ -566,7 +566,7 @@ function ResolutionNote({
       <p className="font-sans text-sm text-ink-soft mt-2">
         {DISPUTE_RESOLUTION_LABEL[resolution]}
         {refundAmount !== null && ` · ${formatPrice(refundAmount)} refunded`}
-        {resolvedAt && ` · ${formatLongDate(resolvedAt)}`}
+        {resolvedAt && ` · ${sentenceCaseDate(formatLongDate(resolvedAt))}`}
       </p>
     </div>
   );

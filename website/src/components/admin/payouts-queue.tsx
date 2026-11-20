@@ -34,7 +34,7 @@ import {
   type AdminPayoutCycle,
   type AdminPayoutStatus,
 } from "@/lib/admin-payouts";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 
@@ -735,13 +735,13 @@ function PayoutSlab({
 // the deprecated `weekOf`. No `dateOnly` flag: this is a full ISO timestamp.
 function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
   return (
-    <Kicker as="p" tone="soft" className="tnum">
+    <p className="font-sans text-sm text-slate-soft tnum break-words">
       {cycle.handle ? `@${cycle.handle}` : "—"}
       <span className="text-slate-soft"> · </span>
-      {formatLongDate(cycle.submittedAt)}
+      {sentenceCaseDate(formatLongDate(cycle.submittedAt))}
       <span className="text-slate-soft"> · </span>
       {formatPrice(cycle.amount)}
-    </Kicker>
+    </p>
   );
 }
 
@@ -855,7 +855,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               .hydrateOne). */}
           <FieldRow
             label="Submitted"
-            value={formatLongDate(cycle.submittedAt)}
+            value={sentenceCaseDate(formatLongDate(cycle.submittedAt))}
             mono
           />
           <FieldRow
@@ -886,9 +886,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               {cycle.brandName ?? cycle.photographerName}
             </p>
             {cycle.handle && (
-              <Kicker as="p" className="mt-1">
+              <p className="font-mono text-[13px] text-slate mt-1 break-all">
                 @{cycle.handle}
-              </Kicker>
+              </p>
             )}
           </div>
           {!isReadyToSend && <PayoutAccountCard cycle={cycle} mode="drawer" />}
@@ -905,9 +905,9 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
               {cycle.holdReason}
             </p>
             {cycle.reviewedAt && (
-              <Kicker as="p" tone="soft" className="mt-2 tnum">
-                Held {formatLongDate(cycle.reviewedAt)}
-              </Kicker>
+              <p className="font-sans text-sm text-slate-soft mt-2 tnum">
+                Held {sentenceCaseDate(formatLongDate(cycle.reviewedAt))}
+              </p>
             )}
           </div>
         </section>
@@ -929,7 +929,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
             {cycle.paidAt && (
               <FieldRow
                 label="Paid at"
-                value={formatLongDate(cycle.paidAt)}
+                value={sentenceCaseDate(formatLongDate(cycle.paidAt))}
                 mono
               />
             )}
@@ -943,7 +943,7 @@ function PayoutDetailBody({ cycle }: { cycle: AdminPayoutCycle }) {
             Approval
           </Kicker>
           <p className="font-sans text-sm text-ink-soft tnum">
-            Approved {formatLongDate(cycle.reviewedAt)} — awaiting payment.
+            Approved {sentenceCaseDate(formatLongDate(cycle.reviewedAt))} — awaiting payment.
           </p>
           {cycle.secondApprovedBy && (
             <p className="font-sans text-sm text-slate-soft mt-1">

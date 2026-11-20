@@ -305,3 +305,16 @@ it("the drawer labels the order total as the order total", async () => {
   expect(drawer).toHaveTextContent(/Order total.*330/);
   expect(within(drawer).queryByText("Total")).not.toBeInTheDocument();
 });
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+const notUpperCased = (els: HTMLElement[]) => { expect(els.length).toBeGreaterThan(0); for (const el of els) expect(el.closest(".uppercase")).toBeNull(); };
+it("the drawer's subtitle, ids and dates are not upper-cased", async () => {
+  fixtures.search = `row=${dispute.id}`;
+  renderQueue();
+  const drawer = await screen.findByRole("dialog");
+  notUpperCased(within(drawer).getAllByText(/Reported Sep 10 · 2026/));
+  notUpperCased(within(drawer).getAllByText("order-1"));
+  notUpperCased(within(drawer).getAllByText(/^Sep 0?9 · 2026$/));
+  // A title holds two handles, so it must wrap at 375.
+  expect(within(drawer).getAllByRole("heading", { level: 2 })[0]).toHaveClass("break-words");
+});

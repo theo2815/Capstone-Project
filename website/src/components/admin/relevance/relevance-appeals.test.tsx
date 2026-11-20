@@ -250,3 +250,11 @@ it("an appeal row's values are not upper-cased", async () => {
   const open = await screen.findByRole("region", { name: "Open" });
   expect((await within(open).findByText(/Feb 16 · 2003/)).closest(".uppercase")).toBeNull();
 });
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+it("the appeal drawer's subtitle is not upper-cased", async () => {
+  mount();
+  const open = await drawer();
+  const subtitle = within(open).getByText(/Filed Feb 16 · 2003/);
+  expect(subtitle.closest(".uppercase")).toBeNull();
+});
