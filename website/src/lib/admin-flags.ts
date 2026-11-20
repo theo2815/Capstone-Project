@@ -62,6 +62,7 @@ export interface Flag {
   payoutHoldAt: string | null;
 }
 
+// shortcut: labels copied to the backend (service/admin/FlagReasonLabels.kt) for flag search, upgrade when the website reads reason labels from the backend
 export const FLAG_REASON_LABEL: Record<FlagReason, string> = {
   wrong_runner: "Wrong runner / face mismatch",
   low_quality: "Quality below threshold",

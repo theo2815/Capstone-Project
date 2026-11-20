@@ -8,6 +8,7 @@ import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.PhotographerSettings
+import com.quickpitik.entity.RaceType
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
 import com.quickpitik.repository.EventRepository
@@ -16,6 +17,7 @@ import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.flagReasonCodesMatching
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.data.domain.PageRequest
@@ -23,6 +25,7 @@ import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 // AX-10: the payouts list takes several statuses at once, both lists have per-status counts
 // that equal the list's total, and the flag search reaches photographer and reporter.
@@ -80,16 +83,41 @@ class AdminPayoutFlagQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(setOf(onPhoto), search("ax10name-$t"))
         assertEquals(setOf(onPhoto), search("ax10rep-$t"))
         assertEquals(setOf(unrelated), search(unrelated.toString().uppercase()))
-        assertEquals(setOf(onEvent), flags.pageForAdmin("resolved", "ax10owner-$t", PageRequest.of(0, 50)).content.map { it.id }.toSet())
+        assertEquals(setOf(onEvent), flags.pageForAdmin("resolved", "ax10owner-$t", emptyList(), PageRequest.of(0, 50)).content.map { it.id }.toSet())
 
-        val counts = flags.countByStatusForAdmin("ax10owner-$t").associate { it.status to it.total }
+        val counts = flags.countByStatusForAdmin("ax10owner-$t", emptyList()).associate { it.status to it.total }
         assertEquals(mapOf("open" to 1L, "resolved" to 1L, "dismissed" to 1L), counts)
     }
 
-    private fun search(q: String): Set<UUID> = flags.pageForAdmin(null, q, PageRequest.of(0, 50)).content.map { it.id }.toSet()
+    // AX-48: History search finds a flag by what its row shows: a handle-less photographer's
+    // name, the reporter's email, and the reason label; a reason code still works.
+    @Test
+    fun `flag search finds a no-handle photographer by name, a reporter by email, and a reason by its label`() {
+        val t = UUID.randomUUID().toString().take(8)
+        val photographer = user(Role.PHOTOGRAPHER, "Ax48 Nohandle $t")
+        val event = events.saveAndFlush(Event(slug = "ax48-${UUID.randomUUID()}", name = "Run", date = LocalDate.of(2026, 10, 1),
+            location = "Cebu", status = EventStatus.ACTIVE, eventType = RaceType.FUN_RUN, submittedBy = photographer.id))
+        val photo = photos.saveAndFlush(Photo(eventId = event.id, photographerId = photographer.id,
+            s3Key = "ax48/${UUID.randomUUID()}.jpg", pricePhp = BigDecimal("100.00")))
+        val reporter = user(Role.RUNNER, "Runner $t")
 
-    private fun flag(kind: String, target: UUID, reporter: UUID? = null, status: FlagStatus = FlagStatus.OPEN): UUID =
-        flags.saveAndFlush(Flag(targetKindWire = kind, targetId = target, reporterId = reporter, reason = "other",
+        val onPhoto = flag("photo", photo.id, reporter = reporter.id, status = FlagStatus.RESOLVED, reason = "inappropriate")
+        val onEvent = flag("event", event.id, status = FlagStatus.DISMISSED, reason = "low_quality")
+        val onUser = flag("user", photographer.id, status = FlagStatus.HIDDEN)
+
+        assertEquals(setOf(onPhoto, onEvent, onUser), search("nohandle $t"))
+        assertEquals(setOf(onPhoto), search(reporter.email.uppercase()))
+        assertTrue(onPhoto in search("NSFW"))
+        assertTrue(onEvent in search("low quality"))
+        assertTrue(onEvent in search("low_quality"))
+    }
+
+    // The reason codes come from the label table, as AdminFlagService passes them.
+    private fun search(q: String): Set<UUID> =
+        flags.pageForAdmin(null, q, flagReasonCodesMatching(q), PageRequest.of(0, 50)).content.map { it.id }.toSet()
+
+    private fun flag(kind: String, target: UUID, reporter: UUID? = null, status: FlagStatus = FlagStatus.OPEN, reason: String = "other"): UUID =
+        flags.saveAndFlush(Flag(targetKindWire = kind, targetId = target, reporterId = reporter, reason = reason,
             statusWire = status.wire)).id
 
     private fun user(role: Role, name: String) = users.saveAndFlush(
