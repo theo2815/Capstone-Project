@@ -85,7 +85,23 @@ export function UserMenu({ user }: UserMenuProps) {
       if (e.key === "Escape") {
         setIsOpen(false);
         triggerRef.current?.focus();
+        return;
       }
+      // Arrow keys, Home and End move between items (runner audit P3-6): the
+      // list is announced as a menu, so screen-reader users expect them.
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      const items = Array.from(
+        wrapRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      );
+      if (items.length === 0) return;
+      e.preventDefault();
+      const at = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        e.key === "Home" ? 0
+        : e.key === "End" ? items.length - 1
+        : e.key === "ArrowDown" ? (at + 1) % items.length
+        : at <= 0 ? items.length - 1 : at - 1;
+      items[next].focus();
     }
 
     document.addEventListener("mousedown", onPointerDown);
