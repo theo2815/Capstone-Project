@@ -217,8 +217,8 @@ const val RACE_CREATION_LOCK_KEY = 78301L
 private const val ADMIN_EVENT_FILTER = """
     e.deletedAt IS NULL
     AND (:search = '' OR
-         LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
-         LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
+         LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) ESCAPE '\' OR
+         LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')) ESCAPE '\')
     AND e.date >= :dateFrom
     AND e.date <= :dateTo
     AND (:state = ''

@@ -108,10 +108,10 @@ private const val ADMIN_USER_FILTER = """
     FROM User u LEFT JOIN PhotographerSettings s ON s.userId = u.id
     WHERE (:role IS NULL OR u.role = :role)
       AND (:search = '' OR
-           LOWER(u.name)  LIKE CONCAT('%', :search, '%') OR
-           LOWER(u.email) LIKE CONCAT('%', :search, '%') OR
-           LOWER(s.handle) LIKE CONCAT('%', :search, '%') OR
-           LOWER(s.brandName) LIKE CONCAT('%', :search, '%'))
+           LOWER(u.name)  LIKE CONCAT('%', :search, '%') ESCAPE '\' OR
+           LOWER(u.email) LIKE CONCAT('%', :search, '%') ESCAPE '\' OR
+           LOWER(s.handle) LIKE CONCAT('%', :search, '%') ESCAPE '\' OR
+           LOWER(s.brandName) LIKE CONCAT('%', :search, '%') ESCAPE '\')
       AND (:status = ''
            OR (:status = 'suspended' AND u.suspendedAt IS NOT NULL)
            OR (:status = 'approved' AND u.suspendedAt IS NULL

@@ -887,4 +887,20 @@ class AdminFlagServiceTest {
         val off = assertFailsWith<ApiException> { service(flagsEnabled = false).counts(null) }
         assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
     }
+
+    // AX-44: % and _ in the search are plain characters, in the list and in the tab counts.
+    @Test
+    fun `the list and the counts pass the search with LIKE wildcards escaped`() {
+        Mockito.`when`(flagRepository.pageForAdmin(
+            Mockito.isNull(),
+            Mockito.eq("nsfw\\_50\\%") ?: "",
+            Mockito.any(org.springframework.data.domain.Pageable::class.java) ?: org.springframework.data.domain.Pageable.unpaged(),
+        )).thenReturn(org.springframework.data.domain.PageImpl(emptyList()))
+        Mockito.`when`(flagRepository.countByStatusForAdmin("nsfw\\_50\\%")).thenReturn(listOf(
+            com.quickpitik.repository.StatusCountRow("open", 2),
+        ))
+
+        assertEquals(0, service().list(null, "nsfw_50%", PaginationParams.of(0, 10)).total)
+        assertEquals(2L, service().counts("nsfw_50%").counts["open"])
+    }
 }

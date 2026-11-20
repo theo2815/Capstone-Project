@@ -5,6 +5,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.escapeLike
 import com.quickpitik.config.StorageProperties
 import com.quickpitik.dto.admin.AdminPhotographerCoverDto
 import com.quickpitik.dto.admin.AdminPhotographerRegionDto
@@ -78,7 +79,7 @@ class AdminUserService(
         params: PaginationParams,
     ): PaginatedResponse<AdminUserRowDto> {
         val role = parseRole(roleFilter)
-        val searchValue = search?.trim()?.lowercase().orEmpty()
+        val searchValue = escapeLike(search?.trim()?.lowercase().orEmpty())
         val pageable = OffsetLimitPageable(params)
         // An unknown status filters nothing, as it always has.
         val status = statusFilter?.lowercase()?.takeIf { it in STATUS_FILTERS }.orEmpty()

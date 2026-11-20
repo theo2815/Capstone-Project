@@ -645,6 +645,24 @@ class AdminPayoutServiceTransitionTest {
         assertEquals(2L, counts["paid"])
         assertEquals(0L, counts["held"])
     }
+
+    // AX-44: % and _ in the search are plain characters, in the list and in the tab counts.
+    @Test
+    fun `the list and the counts pass the search with LIKE wildcards escaped`() {
+        var asked: String? = null
+        Mockito.`when`(payoutCycleRepository.pageForAdmin(anyArg(), anyArg(), anyArg())).thenAnswer {
+            asked = it.getArgument(1)
+            org.springframework.data.domain.PageImpl(emptyList<PayoutCycle>())
+        }
+        Mockito.`when`(payoutCycleRepository.countByStatusForAdmin("50\\%\\_a")).thenReturn(listOf(
+            com.quickpitik.repository.StatusCountRow("paid", 1),
+        ))
+
+        service().list(null, " 50%_A ", com.quickpitik.common.PaginationParams.of(0, 20))
+
+        assertEquals("50\\%\\_a", asked)
+        assertEquals(1L, service().counts(" 50%_A ").counts["paid"])
+    }
 }
 
 class AdminPayoutProcessingIntegrationTest : PostgresIntegrationTest() {

@@ -308,6 +308,19 @@ class AdminEventServiceReviewTest {
             eqArg(LocalDate.of(9999, 12, 31)), eqArg(""), anyArg(), anyArg())
     }
 
+    // AX-44: % and _ in the search are plain characters, in the list and in the tab counts.
+    @Test
+    fun `the list and the counts pass the search with LIKE wildcards escaped`() {
+        Mockito.`when`(eventRepository.pageForAdmin(anyArg(), anyArg(), anyArg(), anyArg(), anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(emptyList()))
+
+        service.list(null, null, PaginationParams.of(0, 20), " 10%_off ")
+        service.counts("10%_off", null, null)
+
+        Mockito.verify(eventRepository).pageForAdmin(eqArg("10\\%\\_off"), anyArg(), anyArg(), anyArg(), anyArg(), anyArg())
+        Mockito.verify(eventRepository, Mockito.times(4)).countForAdmin(eqArg("10\\%\\_off"), anyArg(), anyArg(), anyArg(), anyArg())
+    }
+
     @Test
     fun `a bad date is a validation error on its own field`() {
         val error = assertFailsWith<ValidationException> { service.counts(null, "2026-13-01", null) }

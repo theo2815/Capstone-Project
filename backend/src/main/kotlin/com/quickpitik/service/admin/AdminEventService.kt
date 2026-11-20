@@ -9,6 +9,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.escapeLike
 import com.quickpitik.dto.admin.AdminEventCountsDto
 import com.quickpitik.dto.admin.AdminEventDeleteResponseDto
 import com.quickpitik.dto.admin.AdminEventStateCounts
@@ -128,7 +129,7 @@ class AdminEventService(
     private class ListFilter(val search: String, val from: LocalDate, val to: LocalDate) {
         companion object {
             fun of(q: String?, dateFrom: String?, dateTo: String?) = ListFilter(
-                q?.trim()?.take(100).orEmpty(),
+                escapeLike(q?.trim()?.take(100).orEmpty()),
                 date(dateFrom, "dateFrom") ?: LocalDate.of(1900, 1, 1),
                 date(dateTo, "dateTo") ?: LocalDate.of(9999, 12, 31),
             )

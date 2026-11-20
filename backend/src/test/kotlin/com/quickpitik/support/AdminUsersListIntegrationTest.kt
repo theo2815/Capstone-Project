@@ -60,6 +60,19 @@ class AdminUsersListIntegrationTest : PostgresIntegrationTest() {
         assertEquals(listOf(photographer.id), service.list(null, null, "brand $tag", PaginationParams.of(0, 50)).items.map { it.userId })
     }
 
+    // AX-44: % and _ in the search match only themselves.
+    @Test
+    fun `a percent or underscore in the search is plain text`() {
+        val tag = UUID.randomUUID().toString().take(8)
+        val offer = photographer("$tag 10% off", VerificationStatus.APPROVED)
+        photographer("$tag 100", VerificationStatus.APPROVED)
+
+        fun found(q: String) = service.list(null, null, q, PaginationParams.of(0, 50)).items.map { it.userId }.toSet()
+        assertEquals(setOf(offer.id), found("$tag 10%"))
+        assertEquals(emptySet(), found("$tag 10_"))
+        assertEquals(2, found(tag).size)
+    }
+
     private fun photographer(
         tag: String,
         status: VerificationStatus?,
