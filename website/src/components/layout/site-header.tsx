@@ -63,7 +63,8 @@ export function SiteHeader({
         >
           <BrandLogo className="md:h-11 md:w-44" priority />
         </Link>
-        <nav className="flex items-center gap-6 md:gap-8">
+        {/* Tighter below 400 px so "Sign in" (which no longer wraps) fits narrow phones. */}
+        <nav className="flex items-center gap-3 min-[400px]:gap-6 md:gap-8">
           {!hidePublicNav && (
             <Link
               href={ROUTES.EVENTS}

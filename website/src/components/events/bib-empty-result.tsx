@@ -23,7 +23,7 @@ export function BibEmptyResult({
   return (
     <div className="px-6 md:px-10 py-16 md:py-24">
       <div className="max-w-2xl mx-auto rounded-2xl bg-bone-deep border border-line p-8 md:p-12">
-        <p className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate mb-4">
+        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-4">
           BIB {bib} · {event.name}
         </p>
         <p className="font-display text-3xl md:text-4xl font-medium text-ink tracking-tight leading-tight">
@@ -35,7 +35,7 @@ export function BibEmptyResult({
         <button
           type="button"
           onClick={onClear}
-          className="mt-6 font-mono uppercase tracking-[0.14em] text-[10px] text-slate hover:text-fresh transition-colors"
+          className="mt-6 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate hover:text-fresh transition-colors"
         >
           {ctaLabel}
         </button>

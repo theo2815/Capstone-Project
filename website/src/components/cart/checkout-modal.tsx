@@ -10,6 +10,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
+import { useInertBackground } from "@/hooks/use-inert-background";
 import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 import { useCheckoutWorkflow, type Step, type Outcome, type QrPayment, type Receipt } from "@/hooks/use-checkout-workflow";
 import { useConfirmationStore } from "@/store/confirmation-store";
@@ -153,6 +155,8 @@ export function CheckoutModal({
   // element focused outside the dialog, tracked while the modal is mounted.
   const dialogRef = useRef<HTMLDivElement>(null);
   const lastOutsideRef = useRef<Element | null>(null);
+  // Portaled to <body> with the page behind made inert (runner audit P3-7).
+  useInertBackground(dialogRef, isOpen);
   useEffect(() => {
     const onFocusIn = (e: FocusEvent) => {
       // closest(), not the ref: an autofocused field fires focusin before the ref is attached.
@@ -178,7 +182,7 @@ export function CheckoutModal({
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div
       ref={dialogRef}
       data-checkout-dialog
@@ -323,7 +327,8 @@ export function CheckoutModal({
           )}
         </div>
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
