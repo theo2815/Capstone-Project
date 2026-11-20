@@ -299,7 +299,7 @@ function AboutSlab({
       <dl className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8 max-w-2xl">
         <DefRow label="Region" value={regionLine} />
         <DefRow label="City" value={city} />
-        <DefRow label="Joined" value={formatLongDate(memberSince, true)} />
+        <DefRow label="Joined" value={sentenceCaseDate(formatLongDate(memberSince, true))} />
         <DefRow label="Email" value={email} mono />
         {brandColor && brandColor !== "none" && (
           <DefRow label="Brand accent" value={BRAND_COLOR_LABEL[brandColor]} />

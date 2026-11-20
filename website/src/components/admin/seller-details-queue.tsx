@@ -180,7 +180,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
     <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending || !!zoom}
       kicker="Seller details" title={data?.legalName ?? "Seller details"}
       rightHeader={data && <StatusPill reviewState={data.reviewState} />}
-      subtitle={data && <p className={cn(KICKER, "text-slate")}>{data.email}</p>}
+      subtitle={data && <p className="font-mono text-[13px] text-slate break-all">{data.email}</p>}
       actions={data && (
         <>
           {canReject && (
@@ -236,13 +236,13 @@ function Details({ data, payoutNames }: { data: AdminSellerDetails; payoutNames:
     ["Address", data.address],
     ["Phone", data.phone],
     ["Payout account names", payoutNames === null ? "Loading…" : typeof payoutNames === "string" ? payoutNames : payoutNames.join(", ") || "No payout accounts"],
-    ["Submitted", formatLongDate(data.submittedAt)],
+    ["Submitted", sentenceCaseDate(formatLongDate(data.submittedAt))],
     ["Live check score", score(data.livenessConfidence)],
     ["Face match score", score(data.faceSimilarity)],
     ["Reasons", data.reasonCodes.length > 0
       ? data.reasonCodes.map((code) => REASON_LABEL[code] ?? code).join("; ")
       : data.autoCheckedAt ? "None" : "Sent before automatic checks"],
-    ["Live-selfie consent", data.biometricConsentAt ? formatLongDate(data.biometricConsentAt) : "Not given"],
+    ["Live-selfie consent", data.biometricConsentAt ? sentenceCaseDate(formatLongDate(data.biometricConsentAt)) : "Not given"],
     ["ID number on file", data.hasIdNumber ? "Yes" : "No"],
   ];
   if (data.failedAutoChecks) rows.push(["Failed automatic tries", String(data.failedAutoChecks)]);

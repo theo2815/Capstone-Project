@@ -5,7 +5,7 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
-import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
+import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { BTN_DANGER, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useRelevanceAppealActions, useRelevanceAppeals, useRelevanceCase } from "@/hooks/use-admin-relevance";
@@ -22,7 +22,6 @@ import {
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { RelevanceCaseBody, RelevanceCaseSamples } from "./relevance-case-drawer";
 
-const labelCls = `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
 const who = (a: RelevanceAppealRow) => (a.photographerHandle ? `@${a.photographerHandle}` : (a.photographerName ?? "—"));
 
 // RV-3.5: the Appeals tab. Open appeals first, then the decided ones; `?row=` names the open appeal's id.
@@ -140,7 +139,7 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
       kicker={`Appeal · ${appeal.appealId}`}
       title={appeal.eventName ?? "Appeal"}
       rightHeader={<AdminStatusPill label={status} tone={isOpen ? "amber" : "slate"} />}
-      subtitle={<p className={`${labelCls} tnum`}>{who(appeal)} · {APPEAL_TEXT.filed} {formatLongDate(appeal.createdAt)}</p>}
+      subtitle={<p className="font-sans text-sm text-slate-soft tnum break-words">{who(appeal)} · {APPEAL_TEXT.filed} {sentenceCaseDate(formatLongDate(appeal.createdAt))}</p>}
       actions={isOpen && (
         <>
           <button type="button" disabled={locked} onClick={() => setConfirming("WON")} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>{APPEAL_TEXT.won}</button>
@@ -172,7 +171,7 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
           </section>
           {!isOpen && (
             <section className="space-y-2">
-              <Kicker as="p" tone="soft" tnum>{status} · {formatLongDate(appeal.decidedAt)}</Kicker>
+              <p className="font-sans text-sm text-slate-soft tnum">{status} · {sentenceCaseDate(formatLongDate(appeal.decidedAt))}</p>
               {appeal.decisionNote && (
                 <p className="font-sans text-sm text-ink-soft whitespace-pre-line break-words">
                   {APPEAL_TEXT.decisionNote}: {appeal.decisionNote}

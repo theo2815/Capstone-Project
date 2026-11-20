@@ -606,3 +606,16 @@ it("the search box is labelled Payout id, and the list and counts use its text",
   expect(screen.queryByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeInTheDocument();
 });
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+const notUpperCased = (els: HTMLElement[]) => { expect(els.length).toBeGreaterThan(0); for (const el of els) expect(el.closest(".uppercase")).toBeNull(); };
+it("the drawer's subtitle wraps a long handle in its own case, and its dates are not upper-cased", async () => {
+  navigation.search = `row=${payoutCycle.id}`;
+  await mount();
+  const drawer = await screen.findByRole("dialog");
+  const handles = within(drawer).getAllByText(/@photographer/, { selector: "p" });
+  notUpperCased(handles);
+  for (const el of handles) expect(el.className).toMatch(/break-(words|all)/);
+  notUpperCased(within(drawer).getAllByText(/Sep 10 · 2026/));
+  expect(within(drawer).queryByText(/SEP 10 · 2026/)).toBeNull();
+});

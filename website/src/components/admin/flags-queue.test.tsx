@@ -208,3 +208,14 @@ it("a drawer whose flag leaves the lists closes without the missing-link notice"
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith("/admin/flags", { scroll: false }));
   expect(screen.queryByText("This flag is not in the open list.")).not.toBeInTheDocument();
 });
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+const notUpperCased = (els: HTMLElement[]) => { expect(els.length).toBeGreaterThan(0); for (const el of els) expect(el.closest(".uppercase")).toBeNull(); };
+it("the drawer's subtitle, handles and dates are not upper-cased", async () => {
+  navigation.search = "row=flag-1";
+  mount();
+  const drawer = await screen.findByRole("dialog");
+  notUpperCased(within(drawer).getAllByText(/Sep 10 · 2026/));
+  notUpperCased(within(drawer).getAllByText(/@photographer/));
+  for (const el of within(drawer).getAllByText("@photographer", { selector: "dd" })) expect(el).toHaveClass("break-words");
+});

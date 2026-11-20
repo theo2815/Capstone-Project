@@ -3,6 +3,7 @@ import { ADMIN_ROUTES } from "@/components/admin/admin-rail";
 import { ADMIN_QUEUES, queuePath } from "@/lib/admin-queues";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
+import { photographerHref } from "@/lib/admin-photographer-view";
 import {
   DISPUTE_REASON_LABEL,
   type Dispute,
@@ -261,11 +262,7 @@ function buildPhotographerEntries(
           ? "Pending"
           : "Incomplete";
     const subtitle = `${status} · @${u.handle ?? "no-handle"} · ${u.city}`;
-    // Photographers without a handle have no detail page; fall back to the
-    // directory and let click semantics handle the no-op there.
-    const route = u.handle
-      ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${u.handle}`
-      : ROUTES.ADMIN_PHOTOGRAPHERS;
+    const route = photographerHref(u);
     return {
       id: `phg:${u.userId}`,
       kind: "photographer" as const,

@@ -106,7 +106,7 @@ export function AdminDetailDrawer({
                   kicker && "mt-2",
                 )}
               >
-                <h2 id={titleId} className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-[1.1] text-ink min-w-0">
+                <h2 id={titleId} className="font-display text-2xl md:text-3xl font-medium tracking-tight leading-[1.1] text-ink min-w-0 break-words">
                   {title}
                 </h2>
                 {rightHeader && <div className="shrink-0">{rightHeader}</div>}
