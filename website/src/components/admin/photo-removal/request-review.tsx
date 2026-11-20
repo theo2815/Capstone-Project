@@ -56,7 +56,7 @@ export function RemovalRequestReview({ requestId }: { requestId: string }) {
   );
 }
 
-// Enum display labels (like FLAG_REASON_LABEL); an unknown code shows as itself.
+// Enum display labels; an unknown code shows as itself.
 const RISK_FLAG_LABEL: Record<string, string> = {
   LIVENESS_UNCERTAIN: "The live check was uncertain",
   UNVERIFIED_EMAIL: "Email not verified",

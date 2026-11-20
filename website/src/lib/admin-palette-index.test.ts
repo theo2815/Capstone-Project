@@ -46,3 +46,11 @@ it("labels a rejected photographer Rejected, and Suspended still wins", () => {
   const suspended = entryFor({ ...adminUser, verificationStatus: "rejected", suspendedAt: "2026-11-20T00:00:00Z" });
   expect(suspended.subtitle).toMatch(/^Suspended · /);
 });
+
+// AX-64: a flag entry reads the backend's label, so a relabel on the backend reaches the palette.
+it("a flag entry shows and finds the row's reasonLabel", () => {
+  const flag = { id: "flag-2", photographerHandle: "ana", reportedBy: "system", reason: "user_report", reasonLabel: "Reported by a runner", note: "", status: "open" } as Flag;
+  const [entry] = buildPaletteIndex({ userPool: [], disputes: [], flags: [flag], payouts: [] }).filter((e) => e.kind === "flag");
+  expect(entry.subtitle).toBe("Open · Reported by a runner · System");
+  expect(fuzzyScore("reported by a runner", entry)).not.toBeNull();
+});

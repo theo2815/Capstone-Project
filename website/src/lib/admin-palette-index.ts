@@ -196,7 +196,7 @@ function buildDisputeEntries(disputes: ReadonlyArray<Dispute>): PaletteEntry[] {
 
 function buildFlagEntries(flags: ReadonlyArray<Flag>): PaletteEntry[] {
   return flags.map((f) => {
-    const reasonLabel = flagReasonLabel(f.reason);
+    const reasonLabel = flagReasonLabel(f);
     const statusLabel = capitalize(f.status);
     const reporter = f.reportedBy === "system" ? "System" : `@${f.reportedBy}`;
     const subtitle = `${statusLabel} · ${reasonLabel} · ${reporter}`;

@@ -138,10 +138,10 @@ export function AdminFlagCard({
             <h3 className="font-display text-lg md:text-xl font-medium text-ink mt-1">
               {interactive ? (
                 <button type="button" onClick={onOpen} aria-describedby={idLineId} className={`${ROW_OPEN_BUTTON} after:rounded-2xl`}>
-                  {flagReasonLabel(flag.reason)}
+                  {flagReasonLabel(flag)}
                 </button>
               ) : (
-                flagReasonLabel(flag.reason)
+                flagReasonLabel(flag)
               )}
             </h3>
           </div>
