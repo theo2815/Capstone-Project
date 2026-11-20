@@ -305,6 +305,17 @@ class AdminTransitionConcurrencyIntegrationTest : PostgresIntegrationTest() {
         eventEffects(e.id, 0)
     }
 
+    // AX-60: the resend writes events.resubmitted_at; created_at keeps the first submission.
+    @Test fun `a resent rejected event stores its resend time`() {
+        val e = event(EventReviewStatus.REJECTED)
+        fun at(column: String) = jdbc.queryForObject("SELECT $column FROM events WHERE id = ?", java.time.OffsetDateTime::class.java, e.id)
+        val created = at("created_at")
+        assertNull(at("resubmitted_at"))
+        ownerEvents.update(e.createdBy!!, e.id, UpdateMyEventRequest(title = "Resent"), null)
+        assertNotNull(at("resubmitted_at"))
+        assertEquals(created, at("created_at"))
+    }
+
     @Test fun `accepted review responses expose increasing revision and old v1 calls still work`() {
         val e = event(EventReviewStatus.PENDING); val a = user(Role.ADMIN).id
         assertEquals(0, revision(e))

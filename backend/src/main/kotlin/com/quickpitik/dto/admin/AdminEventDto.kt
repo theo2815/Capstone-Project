@@ -73,6 +73,8 @@ data class AdminListEventDto(
     val heldCoverUrl: String? = null,
     @field:Schema(description = "When the event was submitted (created); a resent rejected race keeps its first time", nullable = true)
     val createdAt: OffsetDateTime? = null,
+    @field:Schema(description = "When a rejected event was last sent again for review; null if it never was", nullable = true)
+    val resubmittedAt: OffsetDateTime? = null,
 )
 
 // PATCH /admin/events/{id}/listing — show or hide a photographer event on /events.

@@ -241,6 +241,7 @@ class PhotographerOwnedEventService(
                 if (event.reviewStatus == EventReviewStatus.REJECTED) {
                     event.reviewStatus = EventReviewStatus.PENDING
                     event.reviewNote = null
+                    event.resubmittedAt = OffsetDateTime.now()
                     notifyAdmins("event_submitted", event, photographerId)
                 }
             }

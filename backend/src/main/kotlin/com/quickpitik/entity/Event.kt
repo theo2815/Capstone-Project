@@ -143,6 +143,10 @@ class Event(
     @Column(name = "reviewed_by")
     var reviewedBy: UUID? = null,
 
+    // V109 (AX-60): when the owner last sent a rejected event back for review; createdAt stays the first submission.
+    @Column(name = "resubmitted_at")
+    var resubmittedAt: OffsetDateTime? = null,
+
     @Column(name = "region_code", length = 20)
     var regionCode: String? = null,
 
