@@ -8,6 +8,15 @@ import * as mfa from "@/lib/api-admin-mfa";
 import * as utils from "@/lib/utils";
 import Page from "./page";
 
+// Records exactly what the page hands the QR package.
+const qr = vi.hoisted(() => ({ values: [] as string[] }));
+vi.mock("qrcode.react", () => ({
+  QRCodeSVG: ({ value, ...rest }: { value: string } & React.SVGProps<SVGSVGElement>) => {
+    qr.values.push(value);
+    return <svg {...rest} />;
+  },
+}));
+
 let client: QueryClient;
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);
@@ -127,4 +136,18 @@ it("treats an empty status reply as unknown, not off", async () => {
   render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load your two-step verification status.");
   expect(screen.queryByRole("button", { name: "Enable 2-step verification" })).not.toBeInTheDocument();
+});
+
+it("draws the QR from exactly the enroll response's otpauthUri and still shows the key", async () => {
+  // Spaces, %-escapes and & prove the value is not trimmed or re-encoded.
+  const uri = "otpauth://totp/QuickPitik%20Admin:a%2Bb%40x.ph?secret=JBSWY3DPEHPK3PXP&issuer=QuickPitik%20Admin ";
+  qr.values.length = 0;
+  vi.spyOn(mfa, "enrollMfa").mockResolvedValue({ secret: "JBSWY3DPEHPK3PXP", otpauthUri: uri });
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable 2-step verification" }));
+  expect(await screen.findByRole("img", { name: "QR code for your authenticator app" })).toBeInTheDocument();
+  expect(new Set(qr.values)).toEqual(new Set([uri]));
+  expect(screen.getByText("JBSWY3DPEHPK3PXP")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Copy key" })).toBeInTheDocument();
+  expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
 });
