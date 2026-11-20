@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_PRIMARY, BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { FieldError } from "@/components/ui/field-error";
@@ -23,8 +24,8 @@ import {
 // /admin/security — admin TOTP two-step verification management. Enroll →
 // scan/enter the secret → confirm with a code → save recovery codes; or disable
 // with a code. Enforcement at login is handled by the backend; this is the
-// setup surface. QR rendering is owed (no QR dependency yet) — the secret is
-// shown for manual entry, which every authenticator app accepts.
+// setup surface. The QR is drawn locally from `otpauthUri`; the secret stays
+// beside it for manual entry, which every authenticator app accepts.
 export default function AdminSecurityPage() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
@@ -252,13 +253,24 @@ function EnrollPanel({
           Step 1 · Add the key to your app
         </Kicker>
         <p className="font-sans text-sm text-ink-soft">
-          In your authenticator app, add an account by entering this key
-          manually. (QR scanning is coming soon.)
+          In your authenticator app, scan this QR code, or add an account by
+          entering the key manually.
         </p>
-        <div className="rounded-xl border border-line bg-bone-deep p-4">
-          <p ref={secretRef} className="font-mono text-base text-ink break-all tracking-[0.08em]">
-            {enroll.secret}
-          </p>
+        <div className="flex flex-wrap items-start gap-4">
+          {/* White margin of 4 modules: the quiet zone phone scanners need. */}
+          <QRCodeSVG
+            value={enroll.otpauthUri}
+            size={160}
+            marginSize={4}
+            role="img"
+            aria-label="QR code for your authenticator app"
+            className="shrink-0 rounded-xl border border-line"
+          />
+          <div className="min-w-0 flex-1 basis-48 rounded-xl border border-line bg-bone-deep p-4">
+            <p ref={secretRef} className="font-mono text-base text-ink break-all tracking-[0.08em]">
+              {enroll.secret}
+            </p>
+          </div>
         </div>
         <button
           type="button"
