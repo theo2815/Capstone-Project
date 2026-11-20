@@ -128,7 +128,7 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
         <div className="lg:grid lg:grid-cols-[2fr_1fr_1fr_1fr_1fr] lg:items-baseline lg:gap-6">
           <div className="min-w-0">
             <div className="flex items-baseline gap-3 flex-wrap">
-              <p className="font-display text-base text-ink truncate group-hover:text-fresh transition-colors">
+              <p className="font-display text-base text-ink break-words group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
               {row.implied && (
