@@ -8,7 +8,6 @@ import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutReportStatus
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.SellerDetailsStatus
-import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
@@ -16,7 +15,6 @@ import com.quickpitik.repository.FlagRepository
 import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PayoutReportRepository
 import com.quickpitik.repository.PhotoRepository
-import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.RelevanceAppealRepository
 import com.quickpitik.repository.RelevanceCaseRepository
 import com.quickpitik.repository.SellerDetailsRepository
@@ -37,7 +35,6 @@ import java.util.Locale
 @Service
 @Transactional(readOnly = true)
 class AdminKpiService(
-    private val photographerSettingsRepository: PhotographerSettingsRepository,
     private val userRepository: UserRepository,
     private val payoutCycleRepository: PayoutCycleRepository,
     private val disputeRepository: DisputeRepository,
@@ -61,9 +58,9 @@ class AdminKpiService(
         val from = monday.atStartOfDay(PH_ZONE).toOffsetDateTime()
         val to = monday.plusWeeks(1).atStartOfDay(PH_ZONE).toOffsetDateTime()
 
-        // AX-46: the Pending tab's own query, so the badge equals its total (suspended photographers left out).
+        // AX-46 / AX-58: the Pending and Approved tabs' own query, so each badge equals its total (suspended left out).
         val pendingVerifications = listTotal { userRepository.searchForAdmin(Role.PHOTOGRAPHER, "", "pending", it) }
-        val approvedPhotographers = photographerSettingsRepository.countByVerificationStatus(VerificationStatus.APPROVED)
+        val approvedPhotographers = listTotal { userRepository.searchForAdmin(Role.PHOTOGRAPHER, "", "approved", it) }
         val suspended = countSuspendedUsers()
         val liveEvents = countLiveEventsToday(now)
         val decisionsThisWeek = adminDecisionLogRepository.countLogicalDecisionsBetween(from, to)
