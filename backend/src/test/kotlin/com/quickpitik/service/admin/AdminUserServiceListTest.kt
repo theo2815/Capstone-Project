@@ -51,4 +51,12 @@ class AdminUserServiceListTest {
 
         assertEquals(listOf<Any?>("", ""), queries.map { it[2] })
     }
+
+    // AX-44: % and _ in the search are plain characters.
+    @Test
+    fun `the search reaches the query with LIKE wildcards escaped`() {
+        service().list(null, null, " 50%_Off ", PaginationParams.of(0, 50))
+
+        assertEquals("50\\%\\_off", queries.single()[1])
+    }
 }

@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.escapeLike
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.PlatformProperties
 import com.quickpitik.config.StorageProperties
@@ -85,7 +86,7 @@ class AdminPayoutService(
         search: String?,
         params: PaginationParams,
     ): PaginatedResponse<AdminPayoutCycleDto> {
-        val searchTerm = search?.trim()?.lowercase().orEmpty()
+        val searchTerm = escapeLike(search?.trim()?.lowercase().orEmpty())
         val page = payoutCycleRepository.pageForAdmin(parseStatusFilter(statusFilter), searchTerm, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
@@ -95,7 +96,7 @@ class AdminPayoutService(
     // GET /admin/payouts/counts (AX-10): one entry per admin status, keyed as the list's `status`.
     @Transactional(readOnly = true)
     fun counts(search: String?): AdminStatusCountsDto {
-        val found = payoutCycleRepository.countByStatusForAdmin(search?.trim()?.lowercase().orEmpty())
+        val found = payoutCycleRepository.countByStatusForAdmin(escapeLike(search?.trim()?.lowercase().orEmpty()))
             .associate { it.status to it.total }
         return AdminStatusCountsDto(PayoutCycleStatus.entries.associate { adminStatusKey(it) to (found[it.wire] ?: 0L) })
     }

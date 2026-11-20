@@ -196,7 +196,7 @@ interface HiddenPhotoCount {
     val hidden: Long
 }
 
-private const val FLAG_CONTAINS = "LIKE LOWER(CONCAT('%', :query, '%'))"
+private const val FLAG_CONTAINS = "LIKE LOWER(CONCAT('%', :query, '%')) ESCAPE '\\'"
 
 // The admin flag search (AX-10): reason, note, the exact flag id, the reporter's name or
 // handle, and the photographer's handle. The photographer is found as

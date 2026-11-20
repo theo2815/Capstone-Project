@@ -1,8 +1,10 @@
 package com.quickpitik.support
 
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.events.EventDtoMapper
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -18,6 +20,9 @@ class AdminEventListQueryIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var eventRepository: EventRepository
+
+    @Autowired
+    private lateinit var service: AdminEventService
 
     private val today = LocalDate.of(2026, 6, 15)
     private val from = LocalDate.of(1900, 1, 1)
@@ -61,6 +66,19 @@ class AdminEventListQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(emptySet(), ids(marker, today.plusDays(1), to))
     }
 
+    // AX-44: through the service, % and _ in the search match only themselves.
+    @Test
+    fun `a percent or underscore in the search is plain text`() {
+        val marker = "ax44-${UUID.randomUUID()}"
+        val offer = save(marker, EventStatus.ACTIVE, today, name = "$marker 10% off run")
+        save(marker, EventStatus.ACTIVE, today, name = "$marker 100 run")
+
+        fun found(q: String) = service.list(null, null, PaginationParams.of(0, 50), q).items.map { it.id }.toSet()
+        assertEquals(setOf(offer), found("$marker 10%"))
+        assertEquals(emptySet(), found("$marker 10_"))
+        assertEquals(2, found(marker).size)
+    }
+
     private fun ids(search: String, dateFrom: LocalDate, dateTo: LocalDate): Set<UUID> =
         eventRepository.pageForAdmin(search, dateFrom, dateTo, "", today, PageRequest.of(0, 50)).content.map { it.id }.toSet()
 
@@ -70,11 +88,12 @@ class AdminEventListQueryIntegrationTest : PostgresIntegrationTest() {
         date: LocalDate,
         location: String = "Cebu City",
         deletedAt: OffsetDateTime? = null,
+        name: String = "$marker race",
     ): UUID =
         eventRepository.save(
             Event(
                 slug = "$marker-${UUID.randomUUID()}",
-                name = "$marker race",
+                name = name,
                 date = date,
                 location = location,
                 status = status,

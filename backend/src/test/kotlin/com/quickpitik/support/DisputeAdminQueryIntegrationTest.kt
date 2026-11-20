@@ -1,5 +1,6 @@
 package com.quickpitik.support
 
+import com.quickpitik.common.escapeLike
 import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.DisputeStatus
 import com.quickpitik.entity.Event
@@ -44,7 +45,7 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
     private val all = listOf("open", "escalated", "resolved", "denied", "withdrawn")
 
     private fun search(q: String, statuses: List<String> = all) =
-        disputes.pageForAdmin(statuses, q, PageRequest.of(0, 50))
+        disputes.pageForAdmin(statuses, q, escapeLike(q), PageRequest.of(0, 50))
 
     private fun assertFinds(q: String, vararg expected: Fixture) {
         val page = search(q)
@@ -71,7 +72,7 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
         val a = fixture()
         val b = fixture(status = DisputeStatus.DENIED)
 
-        val page = disputes.pageForAdmin(all, "", Pageable.unpaged())
+        val page = disputes.pageForAdmin(all, "", "", Pageable.unpaged())
 
         assertTrue(page.content.map { it.id }.containsAll(listOf(a.dispute.id, b.dispute.id)))
         assertEquals(disputes.count(), page.totalElements)
@@ -116,6 +117,17 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
         assertFinds(f.payId.lowercase())
     }
 
+    // AX-44: in the contains matches, % and _ are plain characters.
+    @Test
+    fun `a percent or underscore in q is plain text`() {
+        val tag = token()
+        val offer = fixture(eventName = "Pct $tag 10% off")
+        fixture(eventName = "Pct $tag 100 run")
+
+        assertFinds("$tag 10%", offer)
+        assertFinds("$tag 10_")
+    }
+
     @Test
     fun `q does not match another runner's dispute`() {
         val mine = fixture()
@@ -129,7 +141,7 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
     fun `a dispute whose runner was deleted is still listed and searchable by order id`() {
         val f = fixture(deletedRunner = true)
 
-        assertTrue(f.dispute.id in disputes.pageForAdmin(all, "", Pageable.unpaged()).content.map { it.id })
+        assertTrue(f.dispute.id in disputes.pageForAdmin(all, "", "", Pageable.unpaged()).content.map { it.id })
         assertFinds(f.order.id.toString(), f)
     }
 
