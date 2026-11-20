@@ -103,7 +103,7 @@ export function FlagsQueue() {
     return (openPage?.items ?? EMPTY_FLAGS)
       .filter((f) => needle.length === 0 ||
         f.id.toLowerCase().includes(needle) ||
-        flagReasonLabel(f.reason).toLowerCase().includes(needle) ||
+        flagReasonLabel(f).toLowerCase().includes(needle) ||
         f.photographerHandle.toLowerCase().includes(needle) ||
         f.reportedBy.toLowerCase().includes(needle) ||
         f.note.toLowerCase().includes(needle))
@@ -372,7 +372,7 @@ export function FlagsQueue() {
           onClose={() => setRowId("")}
           escDisabled={drawerEscDisabled}
           kicker={`Flag · ${openRow.id}`}
-          title={flagReasonLabel(openRow.reason)}
+          title={flagReasonLabel(openRow)}
           rightHeader={<FlagStatusPill status={openRow.status} />}
           subtitle={<FlagSubtitle flag={openRow} />}
           actions={

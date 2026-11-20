@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
-import { canConfirmHold, canHide, flagReasonLabel, type Flag } from "@/lib/admin-flags";
+import { canConfirmHold, canHide, type Flag } from "@/lib/admin-flags";
 import { AdminFlagCard, type FlagCardActions } from "./admin-flag-card";
 
 // The queue owns the action hook and modals; a lone card gets inert ones.
@@ -25,10 +25,13 @@ function renderCard(flag: Flag) {
 }
 afterEach(cleanup);
 
-it("labels the system reasons in plain words", () => {
-  expect(flagReasonLabel("same_bib_duplicate")).toBe("Possible duplicate: same bibs as another race");
-  expect(flagReasonLabel("profile_image_flagged")).not.toBe("profile_image_flagged");
-  expect(flagReasonLabel("something_new")).toBe("something_new");
+// AX-64: the title is the row's reasonLabel; a row without one shows its code.
+it("the card shows the backend's label, or the code when there is none", () => {
+  renderCard({ ...eventFlag, reasonLabel: "Possible duplicate of another race" });
+  expect(screen.getByRole("heading", { name: "Possible duplicate of another race" })).toBeInTheDocument();
+  cleanup();
+  renderCard(eventFlag);
+  expect(screen.getByRole("heading", { name: "possible_duplicate" })).toBeInTheDocument();
 });
 
 it("only photo flags can be hidden", () => {
@@ -53,7 +56,7 @@ it("a photographer flag links to their admin page and names no event", () => {
 
 const relevanceFlag: Flag = {
   ...base, id: "flag-r1", reason: "batch_relevance_low", targetKind: "user", targetId: "user-9",
-  note: "event e1: copy 5/8", eventName: "Cebu City Marathon 2027",
+  note: "event e1: copy 5/8", eventName: "Cebu City Marathon 2027", reasonLabel: "Uploads may not belong to the event",
 };
 
 it("a relevance flag shows Hold payouts and no Hide button", () => {
@@ -92,12 +95,12 @@ it("other flags have no Resolve button", () => {
 
 it("an openable card opens through a button named by its title; inner actions do not open it", async () => {
   const onOpen = vi.fn();
-  const photoFlag: Flag = { ...base, reason: "inappropriate", targetKind: "photo", targetId: "photo-9", photoId: "photo-9" };
+  const photoFlag: Flag = { ...base, reason: "inappropriate", reasonLabel: "Inappropriate or NSFW", targetKind: "photo", targetId: "photo-9", photoId: "photo-9" };
   const { container } = render(<QueryClientProvider client={new QueryClient()}><AdminFlagCard flag={photoFlag} actions={actions} onOpen={onOpen} /></QueryClientProvider>);
   expect(container.querySelector('[role="button"]')).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(onOpen).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: flagReasonLabel("inappropriate") }));
+  await userEvent.click(screen.getByRole("button", { name: "Inappropriate or NSFW" }));
   expect(onOpen).toHaveBeenCalledTimes(1);
 });
 
