@@ -35,3 +35,14 @@ it("a photographer with no handle opens their page by id", () => {
   const [entry] = buildPaletteIndex({ userPool: [row], disputes: [], flags: [], payouts: [] }).filter((e) => e.kind === "photographer");
   expect(entry.route).toBe("/admin/photographers/photographer-9");
 });
+
+// AX-61: the palette names a photographer's status the way the directory does.
+it("labels a rejected photographer Rejected, and Suspended still wins", () => {
+  const entryFor = (row: typeof adminUser) =>
+    buildPaletteIndex({ userPool: [row], disputes: [], flags: [], payouts: [] }).find((e) => e.kind === "photographer")!;
+  const rejected = entryFor({ ...adminUser, verificationStatus: "rejected" });
+  expect(rejected.subtitle).toMatch(/^Rejected · /);
+  expect(fuzzyScore("rejected", rejected)).not.toBeNull();
+  const suspended = entryFor({ ...adminUser, verificationStatus: "rejected", suspendedAt: "2026-11-20T00:00:00Z" });
+  expect(suspended.subtitle).toMatch(/^Suspended · /);
+});
