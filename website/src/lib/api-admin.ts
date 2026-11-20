@@ -163,7 +163,8 @@ export type AdminUserStatusFilter =
   | "pending"
   | "approved"
   | "incomplete"
-  | "suspended";
+  | "suspended"
+  | "rejected";
 
 export interface AdminUserListArgs {
   role?: "PHOTOGRAPHER" | "RUNNER";

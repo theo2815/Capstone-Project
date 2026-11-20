@@ -133,12 +133,12 @@ export function computeCompleteness(snapshot: PhotographerSettingsSnapshot | nul
   return { filled: snapshot ? completenessItems(snapshot).filter((i) => i.filled).length : 0, total };
 }
 
-const STATUS_LABEL = { approved: "Approved", pending: "Pending", incomplete: "Incomplete" } as const;
+const STATUS_LABEL = { approved: "Approved", pending: "Pending", incomplete: "Incomplete", rejected: "Rejected" } as const;
 
 // PH3: the one status look for the directory card and the detail page. Suspended wins; amber = waiting on an admin.
 export function photographerStatus(row: AdminUserRow): { label: string; tone: AdminStatusPillTone } {
   if (row.suspendedAt !== null) return { label: "Suspended", tone: "ink" };
-  const tone = { approved: "fresh", pending: "amber", incomplete: "slate" } as const;
+  const tone = { approved: "fresh", pending: "amber", incomplete: "slate", rejected: "muted" } as const;
   return { label: STATUS_LABEL[row.verificationStatus], tone: tone[row.verificationStatus] };
 }
 

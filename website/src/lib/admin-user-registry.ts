@@ -33,7 +33,8 @@ export interface AdminUserRow {
   region: string | null;
   city: string;
   createdAt: string;
-  verificationStatus: VerificationStatus;
+  /** The admin list also sends legacy "rejected" rows (the Rejected tab). */
+  verificationStatus: VerificationStatus | "rejected";
   verificationRevision: number;
   suspendedAt: string | null;
   suspensionReason: string | null;

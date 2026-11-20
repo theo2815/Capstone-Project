@@ -1,4 +1,4 @@
-import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
@@ -52,6 +52,33 @@ it("keeps the tab in the URL", async () => {
   expect(nav.replace).toHaveBeenCalledWith("/admin/photographers?status=suspended", { scroll: false });
 });
 
+it("keeps the Rejected tab in the URL", async () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([adminUser]));
+  mount();
+  await screen.findByText("Test Studio");
+  await userEvent.click(screen.getByRole("button", { name: /^Rejected/ }));
+  expect(nav.replace).toHaveBeenCalledWith("/admin/photographers?status=rejected", { scroll: false });
+});
+
+it("lists rejected photographers on their own tab", async () => {
+  nav.search = new URLSearchParams("status=rejected");
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([{ ...adminUser, verificationStatus: "rejected" }]));
+  mount();
+  const card = await screen.findByText("Test Studio");
+  expect(adminApi.fetchAdminUsersPage).toHaveBeenLastCalledWith(
+    { role: "PHOTOGRAPHER", status: "rejected", q: undefined, offset: 0, limit: 50 }, expect.anything());
+  expect(screen.getByRole("button", { name: /^Rejected/ })).toHaveAttribute("aria-pressed", "true");
+  expect(within(card.closest("a")!).getByText("Rejected")).toBeInTheDocument();
+});
+
+it("says so when no photographer is rejected", async () => {
+  nav.search = new URLSearchParams("status=rejected");
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([]));
+  mount();
+  // Reject saves the profile as incomplete today; only older rows carry "rejected".
+  expect(await screen.findByText("No rejected photographers. A profile rejected now goes back to Incomplete.")).toBeInTheDocument();
+});
+
 it("shows tab counts from the KPIs, and none where no KPI fits", async () => {
   vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({ pendingVerifications: 3, approvedPhotographers: 12, suspended: 9 } as adminApi.AdminKpis);
   vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([adminUser]));
@@ -61,6 +88,7 @@ it("shows tab counts from the KPIs, and none where no KPI fits", async () => {
   // The suspended KPI counts runners and admins too, so this photographers tab shows no count.
   expect(screen.getByRole("button", { name: /^Suspended/ })).toHaveTextContent(/^Suspended$/);
   expect(screen.getByRole("button", { name: /^Incomplete/ })).toHaveTextContent(/^Incomplete$/);
+  expect(screen.getByRole("button", { name: /^Rejected/ })).toHaveTextContent(/^Rejected$/);
 });
 
 it("links a photographer with no handle by user id", async () => {
