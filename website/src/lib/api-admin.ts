@@ -807,6 +807,8 @@ export interface AdminEventRow extends ListEvent {
   adminApproved?: boolean;
   /** Link to the new cover of a held race edit; admin only. */
   heldCoverUrl?: string | null;
+  /** When the event was submitted (AX-45); optional so an older backend still parses. */
+  createdAt?: string | null;
 }
 
 /** AA-R5 held race edit: only the changed fields, never a price. */
