@@ -132,6 +132,19 @@ it("a new request created three days ago says how long it has waited", () => {
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   expect(screen.getByText(/Waiting 3 days/)).toBeInTheDocument();
 });
+it("a race sent again counts from its resend, not its first submission", () => {
+  const createdAt = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  const resubmittedAt = new Date(Date.now() - 2 * 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt, resubmittedAt }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Waiting 2 days/)).toBeInTheDocument();
+});
+it("a race never sent again (resend time null) counts from its submission", () => {
+  const createdAt = new Date(Date.now() - 3 * 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt, resubmittedAt: null }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Waiting 3 days/)).toBeInTheDocument();
+});
 it("a new request without a submission time (older backend) shows no age", () => {
   client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt: undefined }]);
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
@@ -140,7 +153,7 @@ it("a new request without a submission time (older backend) shows no age", () =>
 it("a change request counts from its request time, not the event's submission time", () => {
   const requestedAt = new Date(Date.now() - 86_400_000 - 60_000).toISOString();
   client.setQueryData(key, [{ ...adminEvent, reviewStatus: "change_pending", createdAt: "2026-01-01T00:00:00Z",
-    pendingChange: { pricingMode: "free", pricePerPhoto: "0", watermarkPolicy: "platform", requestedAt } }]);
+    resubmittedAt: "2026-02-01T00:00:00Z", pendingChange: { pricingMode: "free", pricePerPhoto: "0", watermarkPolicy: "platform", requestedAt } }]);
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   expect(screen.getByText(/Waiting 1 day\b/)).toBeInTheDocument();
 });
