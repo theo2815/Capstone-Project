@@ -15,6 +15,8 @@ interface AdminSuspendModalProps {
   /** Resolves false when the request failed, so the modal keeps its input and shows why. */
   onSubmit: (reason: string) => Promise<boolean | void>;
   photographerName: string;
+  /** What suspending does to this account; defaults to the photographer wording. */
+  intro?: string;
 }
 
 const SUSPEND_REASONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -36,6 +38,7 @@ export function AdminSuspendModal({
   onClose,
   onSubmit,
   photographerName,
+  intro,
 }: AdminSuspendModalProps) {
   // AX-28: no reason starts picked, so a quick Enter never records one the admin did not choose.
   const [selectedReason, setSelectedReason] = useState("");
@@ -70,7 +73,7 @@ export function AdminSuspendModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Suspend account"
-      intro={`${photographerName} will be hidden from public listings and unable to upload until you unsuspend. The reason is logged.`}
+      intro={intro ?? `${photographerName} will be hidden from public listings and unable to upload until you unsuspend. The reason is logged.`}
       submitLabel="Suspend"
       submitDisabled={!selectedReason}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}

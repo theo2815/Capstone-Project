@@ -22,7 +22,9 @@ const rowNames = () => screen.getAllByRole("link").map((l) => l.textContent?.rep
 it("the rail groups the rows: queues first, Security last under Account", () => {
   render(<AdminRail />);
   expect(rowNames()).toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts",
-    "Photo Relevance", "Photo removals", "Events", "Photographers", "Overview", "Sales", "Security"]);
+    "Photo Relevance", "Photo removals", "Events", "Photographers", "Runners", "Overview", "Sales", "Security"]);
+  const catalog = screen.getByText("Catalog").parentElement!;
+  expect(within(catalog).getByRole("link", { name: /Runners/ })).toHaveAttribute("href", "/admin/runners");
   const account = screen.getByText("Account").parentElement!;
   expect(within(account).getByRole("link", { name: /Security/ })).toHaveAttribute("href", "/admin/security");
 });

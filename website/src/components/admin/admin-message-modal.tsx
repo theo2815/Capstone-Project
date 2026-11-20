@@ -46,7 +46,7 @@ export function AdminMessageModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send message"
-      intro={`Reach out to ${photographerName} privately. The message lands directly in their dashboard inbox.`}
+      intro={`Reach out to ${photographerName} privately. The message lands directly in their inbox.`}
       submitLabel="Send"
       submitting={submitting}
       pendingLabel="Sending…"

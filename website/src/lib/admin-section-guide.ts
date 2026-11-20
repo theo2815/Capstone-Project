@@ -71,18 +71,25 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<SectionGuideEntry> = [
   },
   {
     number: "11",
+    href: ROUTES.ADMIN_RUNNERS,
+    label: "Runners",
+    // Under 72 characters, so the palette's length penalty never ranks it below a "@runner…" flag.
+    body: "Find a runner by name or email, then suspend or message them.",
+  },
+  {
+    number: "12",
     href: ROUTES.ADMIN_OVERVIEW,
     label: "Overview",
     body: "Weekly review — eight KPIs, a 30-day trend, and your latest decisions. Not the daily home.",
   },
   {
-    number: "12",
+    number: "13",
     href: ROUTES.ADMIN_SALES,
     label: "Sales",
     body: "Where the money comes from — GMV, platform cut, refunds, top photographers and events.",
   },
   {
-    number: "13",
+    number: "14",
     href: ROUTES.ADMIN_SECURITY,
     label: "Security",
     body: "Your own sign-in: set up two-step verification for this admin account.",
