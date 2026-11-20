@@ -63,17 +63,18 @@ export function CollapsibleReviewSlab({
             {title}
           </Kicker>
           {caption && (
-            <Kicker as="p" tone="soft" className="hidden md:block truncate">
+            <Kicker as="p" tone="soft" className="hidden md:block break-words min-w-0">
               {caption}
             </Kicker>
           )}
         </div>
-        <div className="ml-auto flex items-baseline gap-3 md:gap-4 shrink-0">
-          {trailing && (
+        <div className="ml-auto flex items-baseline gap-3 md:gap-4 min-w-0">
+          {/* A string trailer is a count or status (capitals); a node renders as given, e.g. a handle read as typed. */}
+          {typeof trailing === "string" ? (
             <Kicker as="div" tone="soft" className="tnum">
               {trailing}
             </Kicker>
-          )}
+          ) : trailing}
           <span aria-hidden className={TOGGLE_CLS}>
             {open ? "Hide ↑" : "Show ↓"}
           </span>

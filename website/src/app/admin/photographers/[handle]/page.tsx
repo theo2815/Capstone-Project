@@ -342,7 +342,7 @@ function PublicUrlSlab({ handle }: { handle: string }) {
       number="03"
       title="Public URL"
       caption="Where runners find this photographer"
-      trailing={handle ? `@${handle}` : undefined}
+      trailing={handle ? <span className="font-mono text-[13px] text-slate-soft break-all min-w-0">@{handle}</span> : undefined}
     >
       <PublicUrlSection handle={handle} />
     </CollapsibleReviewSlab>
