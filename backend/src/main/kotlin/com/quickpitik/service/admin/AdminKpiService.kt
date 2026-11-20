@@ -6,6 +6,7 @@ import com.quickpitik.dto.admin.AdminTrendPointDto
 import com.quickpitik.entity.EventReviewStatus
 import com.quickpitik.entity.PayoutCycleStatus
 import com.quickpitik.entity.PayoutReportStatus
+import com.quickpitik.entity.Role
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.repository.AdminDecisionLogRepository
@@ -60,7 +61,8 @@ class AdminKpiService(
         val from = monday.atStartOfDay(PH_ZONE).toOffsetDateTime()
         val to = monday.plusWeeks(1).atStartOfDay(PH_ZONE).toOffsetDateTime()
 
-        val pendingVerifications = photographerSettingsRepository.countByVerificationStatus(VerificationStatus.PENDING)
+        // AX-46: the Pending tab's own query, so the badge equals its total (suspended photographers left out).
+        val pendingVerifications = listTotal { userRepository.searchForAdmin(Role.PHOTOGRAPHER, "", "pending", it) }
         val approvedPhotographers = photographerSettingsRepository.countByVerificationStatus(VerificationStatus.APPROVED)
         val suspended = countSuspendedUsers()
         val liveEvents = countLiveEventsToday(now)

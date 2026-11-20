@@ -51,6 +51,26 @@ class AdminUsersListIntegrationTest : PostgresIntegrationTest() {
         assertEquals(9, service.list(null, null, tag, PaginationParams.of(0, 50)).total)
     }
 
+    // AX-46: suspended wins over every other status, so a suspended photographer sits in one tab only.
+    @Test
+    fun `a suspended photographer is only in the suspended tab`() {
+        val tag = UUID.randomUUID().toString().take(8)
+        val held = listOf(
+            photographer(tag, VerificationStatus.PENDING, suspended = true),
+            photographer(tag, status = null, suspended = true),
+            photographer(tag, VerificationStatus.REJECTED, suspended = true),
+        )
+
+        fun ids(status: String) = service.list("PHOTOGRAPHER", status, tag, PaginationParams.of(0, 50)).let {
+            assertEquals(it.items.size.toLong(), it.total)
+            it.items.map { row -> row.userId }.toSet()
+        }
+        assertEquals(held.map { it.id }.toSet(), ids("suspended"))
+        assertEquals(emptySet(), ids("pending"))
+        assertEquals(emptySet(), ids("incomplete"))
+        assertEquals(emptySet(), ids("rejected"))
+    }
+
     @Test
     fun `search finds a photographer by handle and by brand name`() {
         val tag = UUID.randomUUID().toString().take(8)

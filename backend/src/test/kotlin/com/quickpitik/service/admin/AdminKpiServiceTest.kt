@@ -1,6 +1,7 @@
 package com.quickpitik.service.admin
 
 import com.quickpitik.entity.PayoutCycleStatus
+import com.quickpitik.entity.Role
 import com.quickpitik.entity.SellerDetailsStatus
 import com.quickpitik.repository.*
 import com.quickpitik.service.removal.PhotoRemovalQueryService
@@ -27,7 +28,8 @@ class AdminKpiServiceTest {
     private val removals = Mockito.mock(PhotoRemovalQueryService::class.java)
     private val disputeService = Mockito.mock(AdminDisputeService::class.java)
     private val photos = Mockito.mock(PhotoRepository::class.java)
-    private val service = AdminKpiService(settings, Mockito.mock(UserRepository::class.java), cycles, disputes, flags,
+    private val users = Mockito.mock(UserRepository::class.java)
+    private val service = AdminKpiService(settings, users, cycles, disputes, flags,
         Mockito.mock(EventRepository::class.java), Mockito.mock(AdminDecisionLogRepository::class.java),
         Mockito.mock(JdbcTemplate::class.java), disputeService, sellerDetails, reports, cases, appeals, removals, photos)
 
@@ -52,8 +54,16 @@ class AdminKpiServiceTest {
         Mockito.`when`(appeals.pageAppeals(anyArg(), anyArg())).thenAnswer { total(if (it.getArgument<String>(0) == "OPEN") 10 else 999) }
         Mockito.`when`(cases.countNeedingPerson()).thenReturn(11)
         Mockito.`when`(removals.countNeedingAction()).thenReturn(12)
+        // AX-46: the Pending tab's own query, so a suspended pending photographer is not counted.
+        Mockito.`when`(users.searchForAdmin(anyArg(), anyArg(), anyArg(), anyArg())).thenAnswer {
+            total(if (it.getArgument<Role?>(0) == Role.PHOTOGRAPHER && it.getArgument<String>(1) == "" &&
+                it.getArgument<String>(2) == "pending") 13 else 999)
+        }
+        Mockito.`when`(settings.countByVerificationStatus(anyArg())).thenReturn(999)
 
         val kpis = service.kpis()
+
+        assertEquals(13L, kpis.pendingVerifications)
 
         assertEquals(listOf(5L, 12L, 6L, 7L, 8L, 10L, 11L, 4L), listOf(kpis.pendingSellerDetails, kpis.removalsNeedingAction,
             kpis.openPayoutReports, kpis.relevanceHidden, kpis.relevanceCantTell, kpis.relevanceAppealsOpen,
