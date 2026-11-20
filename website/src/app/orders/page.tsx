@@ -689,14 +689,14 @@ function PhotoStrip({
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={thumb}
-                alt={id.replace(/^mock-/, "")}
+                alt="" // the button's label already says "Preview photo i of N"
                 className={`size-full object-cover ${PROTECTED_IMG_CLASS}`}
                 loading="lazy"
                 {...PROTECTED_IMG_PROPS}
               />
             ) : (
               <Kicker tnum className="px-2 truncate">
-                {id.replace(/^mock-/, "")}
+                Photo {i + 1}
               </Kicker>
             )}
           </button>

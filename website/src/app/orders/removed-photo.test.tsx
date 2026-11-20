@@ -104,6 +104,18 @@ it("offers no save control on the receipt page when every photo was removed", as
   expect(screen.queryByRole("link", { name: /Download/ })).not.toBeInTheDocument();
 });
 
+// Runner audit P3-5: the strip exposed raw photo ids (as alt text, and as the
+// visible label when a thumbnail was missing).
+it("never shows or announces a raw photo id in the receipt's photo strip", async () => {
+  const noThumb = { ...keptPhoto, id: "a1b2c3d4-0000-4000-8000-000000000000", thumbnailUrl: null } as unknown as OrderPhotoDetail;
+  await openOrders({ ...mixedDetail, photoIds: ["kept-photo", noThumb.id], photos: [keptPhoto, noThumb] });
+  const first = await screen.findByRole("button", { name: "Preview photo 1 of 2" });
+  expect(first.querySelector("img")).toHaveAttribute("alt", "");
+  const second = screen.getByRole("button", { name: "Preview photo 2 of 2" });
+  expect(second).toHaveTextContent("Photo 2");
+  expect(second).not.toHaveTextContent(/a1b2c3d4/);
+});
+
 it("treats order photos from older payloads as available", async () => {
   const legacy: Partial<OrderPhotoDetail> = { ...keptPhoto };
   delete legacy.availability; delete legacy.unavailableReason;
