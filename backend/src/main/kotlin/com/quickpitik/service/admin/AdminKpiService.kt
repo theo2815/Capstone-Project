@@ -110,7 +110,7 @@ class AdminKpiService(
         val from = today.minusDays((days - 1).toLong()).atStartOfDay(PH_ZONE).toOffsetDateTime()
         val to = today.plusDays(1).atStartOfDay(PH_ZONE).toOffsetDateTime()
 
-        val decisionByDay = adminDecisionLogRepository.decisionCountsByDayBetween(from, to)
+        val decisionByDay = adminDecisionLogRepository.decisionCountsByDayBetween(from, to, PH_ZONE.id)
             .associate { extractDate(it[0]) to (it[1] as Number).toLong() }
         val disputeByDay = disputesOpenedByDay(from, to)
         val payoutByDay = payoutsApprovedByDay(from, to)
@@ -149,12 +149,13 @@ class AdminKpiService(
     private fun disputesOpenedByDay(from: OffsetDateTime, to: OffsetDateTime): Map<LocalDate, Long> {
         val rows = jdbcTemplate.queryForList(
             """
-            SELECT opened_at::date AS day, COUNT(*) AS cnt
+            SELECT (opened_at AT TIME ZONE ?)::date AS day, COUNT(*) AS cnt
             FROM disputes
             WHERE opened_at >= ? AND opened_at < ?
             GROUP BY day
             ORDER BY day
             """.trimIndent(),
+            PH_ZONE.id,
             Timestamp.from(from.toInstant()),
             Timestamp.from(to.toInstant()),
         )
@@ -167,7 +168,7 @@ class AdminKpiService(
     private fun payoutsApprovedByDay(from: OffsetDateTime, to: OffsetDateTime): Map<LocalDate, Long> {
         val rows = jdbcTemplate.queryForList(
             """
-            SELECT decided_at::date AS day, COUNT(*) AS cnt
+            SELECT (decided_at AT TIME ZONE ?)::date AS day, COUNT(*) AS cnt
             FROM admin_decision_log
             WHERE decided_at >= ? AND decided_at < ?
               AND target_payout_id IS NOT NULL
@@ -175,6 +176,7 @@ class AdminKpiService(
             GROUP BY day
             ORDER BY day
             """.trimIndent(),
+            PH_ZONE.id,
             Timestamp.from(from.toInstant()),
             Timestamp.from(to.toInstant()),
         )

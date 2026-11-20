@@ -84,4 +84,27 @@ class AdminKpiServiceTest {
 
         assertEquals(listOf(0L, 0L, 5L), trend.map { it.uploads })
     }
+
+    // AX-47: the decisions, disputes and payouts series are cut in Manila as well.
+    @Test
+    fun `trend passes the Manila zone to the decisions, disputes and payouts queries`() {
+        val today = LocalDate.now(PH_ZONE)
+        // Rows come back only when the query got the Manila zone, so a missing zone shows as 0.
+        val decisionLog = Mockito.mock(AdminDecisionLogRepository::class.java)
+        Mockito.`when`(decisionLog.decisionCountsByDayBetween(anyArg(), anyArg(), anyArg())).thenAnswer {
+            if (it.getArgument<String>(2) == PH_ZONE.id) listOf(arrayOf<Any>(Date.valueOf(today), 4L)) else emptyList()
+        }
+        val jdbc = Mockito.mock(JdbcTemplate::class.java) { inv ->
+            if (inv.method.name == "queryForList" && PH_ZONE.id in inv.arguments.drop(1)) {
+                val cnt = if ((inv.arguments[0] as String).contains("FROM disputes")) 2L else 3L
+                listOf(mapOf("day" to Date.valueOf(today), "cnt" to cnt))
+            } else Mockito.RETURNS_DEFAULTS.answer(inv)
+        }
+        val service = AdminKpiService(settings, users, cycles, disputes, flags, Mockito.mock(EventRepository::class.java),
+            decisionLog, jdbc, disputeService, sellerDetails, reports, cases, appeals, removals, photos)
+
+        val last = service.trend(2).last()
+
+        assertEquals(listOf(4L, 2L, 3L), listOf(last.decisions, last.disputes, last.payouts))
+    }
 }

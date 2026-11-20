@@ -1,13 +1,23 @@
 package com.quickpitik.support
 
+import com.quickpitik.entity.AdminDecisionLog
+import com.quickpitik.entity.Dispute
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
+import com.quickpitik.entity.Order
+import com.quickpitik.entity.OrderStatus
+import com.quickpitik.entity.PayoutCycle
 import com.quickpitik.entity.Photo
 import com.quickpitik.entity.Role
 import com.quickpitik.entity.User
+import com.quickpitik.repository.AdminDecisionLogRepository
+import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.repository.OrderRepository
+import com.quickpitik.repository.PayoutCycleRepository
 import com.quickpitik.repository.PhotoRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.AdminKpiService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
@@ -70,5 +80,43 @@ class PhotoUploadTrendIntegrationTest : PostgresIntegrationTest() {
         }
 
         assertEquals(mapOf("2001-02-03" to 3L, "2001-02-04" to 1L), byDay)
+    }
+
+    @Autowired private lateinit var orders: OrderRepository
+    @Autowired private lateinit var disputes: DisputeRepository
+    @Autowired private lateinit var cycles: PayoutCycleRepository
+    @Autowired private lateinit var decisions: AdminDecisionLogRepository
+    @Autowired private lateinit var kpis: AdminKpiService
+
+    // AX-47: the decisions, disputes and payouts series cut days in Manila too.
+    @Test
+    fun `decisions, disputes and payout decisions at 01-00 Manila count on their Manila day`() {
+        // trend() ends today, so seed far back; compare before and after so rows of other classes cancel out.
+        val day = LocalDate.now(manila).minusDays(300)
+        val oneAm = day.atTime(1, 0).atZone(manila).toOffsetDateTime() // still the day before in UTC
+        fun series() = TransactionTemplate(transactions).execute {
+            jdbc.execute("SET LOCAL TIME ZONE 'UTC'")
+            kpis.trend(365).filter { it.date == day.toString() || it.date == day.minusDays(1).toString() }
+                .associate { it.date to listOf(it.decisions, it.disputes, it.payouts) }
+        }!!
+        val before = series()
+
+        val t = UUID.randomUUID()
+        val admin = users.save(User(email = "ax47-admin-$t@test.local", passwordHash = "unused", name = "AX-47 Admin", role = Role.ADMIN))
+        val photographer = users.save(User(email = "ax47-ph-$t@test.local", passwordHash = "unused", name = "AX-47", role = Role.PHOTOGRAPHER))
+        val event = events.save(Event(slug = "ax47-$t", name = "AX-47", date = day, location = "Cebu", status = EventStatus.ACTIVE))
+        val photo = photos.saveAndFlush(Photo(eventId = event.id, photographerId = photographer.id, s3Key = "ax47/$t.jpg", pricePhp = BigDecimal("100.00")))
+        val order = orders.saveAndFlush(Order(eventId = event.id, recipientEmail = "ax47-$t@test.local", paymentMethodWire = "qrph",
+            status = OrderStatus.FULFILLED, totalPhp = BigDecimal("100.00")))
+        disputes.saveAndFlush(Dispute(orderId = order.id, photoId = photo.id, reasonWire = "other", openedAt = oneAm))
+        val cycle = cycles.saveAndFlush(PayoutCycle(id = "AX47-$t", photographerId = photographer.id, weekOf = day))
+        decisions.saveAndFlush(AdminDecisionLog(adminId = admin.id, decision = "denied", decidedAt = oneAm))
+        decisions.saveAndFlush(AdminDecisionLog(adminId = admin.id, targetPayoutId = cycle.id, decision = "approved", decidedAt = oneAm))
+
+        val after = series()
+        fun delta(d: LocalDate) = after.getValue(d.toString()).zip(before.getValue(d.toString())) { a, b -> a - b }
+        // decisions, disputes, payouts: the payout approval is also an admin decision.
+        assertEquals(listOf(2L, 1L, 1L), delta(day))
+        assertEquals(listOf(0L, 0L, 0L), delta(day.minusDays(1)))
     }
 }
