@@ -35,7 +35,7 @@ it("the admin's shared parts use the warning-text token, not raw amber", () => {
 const src = path.join(__dirname, "..");
 const sources = readdirSync(src, { recursive: true, encoding: "utf8" })
   .map((f) => f.replace(/\\/g, "/"))
-  .filter((f) => /\.[jt]sx?$/.test(f) && !/\.test\.[jt]sx?$/.test(f));
+  .filter((f) => /\.[cm]?[jt]sx?$/.test(f) && !/\.test\.[cm]?[jt]sx?$/.test(f));
 const read = (f: string) => readFileSync(path.join(src, f), "utf8");
 
 it("warning text uses the warning-text token, not the 3:1 text-warning", () => {
@@ -44,6 +44,6 @@ it("warning text uses the warning-text token, not the 3:1 text-warning", () => {
 });
 
 it("no text- class is built at runtime, where the warning test above cannot see it", () => {
-  const built = sources.filter((f) => /\btext-(\$\{|["'`]\s*\+)/.test(read(f)));
+  const built = sources.filter((f) => /\btext-(\$\{|["'`]\s*(\+|\.concat\())/.test(read(f)));
   expect(built).toEqual([]);
 });
