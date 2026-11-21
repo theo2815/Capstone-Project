@@ -35,6 +35,7 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.math.BigDecimal
 import java.time.LocalDate
+import java.time.OffsetDateTime
 import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -400,13 +401,41 @@ class AdminEventServiceReviewTest {
     @Test
     fun `queue rows carry their submission time and a resent row its resend time`() {
         val first = submitted()
-        val resent = submitted().apply { resubmittedAt = java.time.OffsetDateTime.parse("2026-11-20T03:00:00Z") }
+        val resent = submitted().apply { resubmittedAt = first.createdAt.plusHours(1) } // after first, so AX-70 keeps the order
         queueOf(first, resent)
 
         val rows = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items
 
         assertEquals(listOf(first.createdAt, resent.createdAt), rows.map { it.createdAt })
         assertEquals(listOf(null, resent.resubmittedAt), rows.map { it.resubmittedAt })
+    }
+
+    // AX-70: the queue lists each request by the time its age line counts from, the longest wait first.
+    @Test
+    fun `the queue sorts each request by the time its age line counts from`() {
+        val now = OffsetDateTime.now()
+        val change = EventReviewStatus.CHANGE_PENDING
+        fun queued(name: String, createdDaysAgo: Long, review: EventReviewStatus = EventReviewStatus.PENDING) =
+            event(EventStatus.DRAFT, review, now.minusDays(createdDaysAgo)).apply { this.name = name }
+        fun asked(at: Any?) = mapOf("requestedAt" to at)
+        queueOf( // the repository's order: first submission first
+            queued("change asked 12 hours ago, resent long ago", 40, change).apply {
+                resubmittedAt = now.minusDays(20); pendingChange = asked(now.minusHours(12).toString())
+            },
+            queued("change asked 2 days ago", 30, change).apply { pendingChange = asked(now.minusDays(2).toString()) },
+            queued("resent 1 day ago", 10).apply { resubmittedAt = now.minusDays(1) },
+            queued("change with no request time", 5, change).apply { pendingChange = mapOf("kind" to "race_edit") },
+            queued("change with a bad request time", 4, change).apply { pendingChange = asked("soon") },
+            queued("sent 3 days ago", 3),
+        )
+
+        val rows = service.list(stateFilter = null, review = "queue", params = PaginationParams.of(0, 20)).items
+
+        assertEquals(
+            listOf("change with no request time", "change with a bad request time", "sent 3 days ago",
+                "change asked 2 days ago", "resent 1 day ago", "change asked 12 hours ago, resent long ago"),
+            rows.map { it.name },
+        )
     }
 
     @Test
@@ -988,8 +1017,9 @@ class AdminEventServiceReviewTest {
     private fun submitted(): Event = event(EventStatus.DRAFT, EventReviewStatus.PENDING)
     private fun live(): Event = event(EventStatus.ACTIVE, EventReviewStatus.APPROVED)
 
-    private fun event(status: EventStatus, review: EventReviewStatus): Event {
+    private fun event(status: EventStatus, review: EventReviewStatus, createdAt: OffsetDateTime = OffsetDateTime.now()): Event {
         val event = Event(
+            createdAt = createdAt,
             slug = "fun-run-${UUID.randomUUID().toString().take(6)}",
             name = "Fun Run",
             date = LocalDate.of(2026, 10, 10),

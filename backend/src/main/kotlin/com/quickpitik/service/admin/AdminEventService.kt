@@ -54,8 +54,10 @@ import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import java.time.format.DateTimeParseException
 import java.util.UUID
 
 @Service
@@ -92,11 +94,12 @@ class AdminEventService(
     ): PaginatedResponse<AdminListEventDto> {
         if (review.equals("queue", ignoreCase = true)) {
             // Photographer-owned events awaiting a decision (V46): initial
-            // submissions + pricing-change requests, oldest first. Small by
-            // nature, so paginated in memory like the state filter below.
+            // submissions + pricing-change requests, the longest wait first (AX-70:
+            // by waitingSince; the stable sort keeps createdAt order for ties). Small
+            // by nature, so paginated in memory like the state filter below.
             val rows = eventRepository.findByReviewStatusInAndDeletedAtIsNullOrderByCreatedAtAsc(
                 listOf(EventReviewStatus.PENDING, EventReviewStatus.CHANGE_PENDING),
-            )
+            ).sortedBy(::waitingSince)
             val page = rows.drop(params.offset).take(params.limit)
             val owners = resolveOwners(page)
             // AA-R7: why a race waits, the race it may repeat, and the race an Other event looks like.
@@ -436,6 +439,17 @@ class AdminEventService(
         val names = userRepository.findAllById(ids).associate { it.id to it.name }
         return ids.associateWith { PhotographerRef(handle = handles[it], name = names[it]) }
     }
+
+    // The time a queue row's age line counts from on the website: a change request from its
+    // request time (pending_change.requestedAt, else createdAt), any other row from its last send.
+    private fun waitingSince(event: Event): Instant =
+        if (event.reviewStatus == EventReviewStatus.CHANGE_PENDING) {
+            (event.pendingChange?.get("requestedAt") as? String)
+                ?.let { try { OffsetDateTime.parse(it) } catch (e: DateTimeParseException) { null } }
+                ?: event.createdAt
+        } else {
+            event.resubmittedAt ?: event.createdAt
+        }.toInstant()
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     fun create(
