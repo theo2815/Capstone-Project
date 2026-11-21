@@ -35,7 +35,7 @@ export function AdminStatTile({
       <p
         className={cn(
           // Two lines reserved so every tile's value starts at the same height.
-          "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] min-h-[2.8em] pr-6",
+          "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] min-h-[2lh] pr-6",
           isMuted ? "text-slate-soft" : "text-slate-soft",
         )}
       >
