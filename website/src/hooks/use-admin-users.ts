@@ -157,10 +157,16 @@ export function useAdminUserActions() {
       qc.setQueryData<AdminUserRow[]>(adminUserKeys.list(owner), (rows) =>
         rows?.map((existing) => existing.userId === id ? row : existing));
       // AX-65: the paged lists too, so a row's Suspend turns to Unsuspend before the refetch lands.
-      qc.setQueriesData<InfiniteData<PaginatedResponse<AdminUserRow & { id: string }>>>(
-        { queryKey: adminUserKeys.owner(owner), predicate: (query) => query.queryKey[3] === "photographers" || query.queryKey[3] === "runners" },
-        (data) => data && { ...data, pages: data.pages.map((page) => ({ ...page,
-          items: page.items.map((existing) => existing.userId === id ? { ...row, id } : existing) })) });
+      // AX-69: a photographer tab the row no longer matches drops it; the refetch adds it to its new tab.
+      const status = row.suspendedAt ? "suspended" : row.verificationStatus;
+      for (const [key, data] of qc.getQueriesData<InfiniteData<PaginatedResponse<AdminUserRow & { id: string }>>>(
+        { queryKey: adminUserKeys.owner(owner), predicate: (query) => query.queryKey[3] === "photographers" || query.queryKey[3] === "runners" })) {
+        if (!data?.pages.some((page) => page.items.some((existing) => existing.userId === id))) continue;
+        const leaves = key[3] === "photographers" && key[4] !== status;
+        qc.setQueryData(key, { ...data, pages: data.pages.map((page) => leaves
+          ? { ...page, total: page.total - 1, items: page.items.filter((existing) => existing.userId !== id) }
+          : { ...page, items: page.items.map((existing) => existing.userId === id ? { ...row, id } : existing) }) });
+      }
       qc.setQueryData<AdminUserDetail | null>(adminUserKeys.detail(owner, id), (detail) =>
         detail ? { ...row, decisionLog: detail.decisionLog,
           // A list row never carries the withdrawal (RV-L7); only an explicit null from the server clears it.
