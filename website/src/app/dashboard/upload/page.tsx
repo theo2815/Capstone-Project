@@ -9,7 +9,8 @@ import {
   matchEventDate,
   type EventDateKey,
 } from "@/components/dashboard/event-filter-bar";
-import { EventTile } from "@/components/events/event-tile";
+import { uploadCta } from "@/lib/event-catalog";
+import { DashboardEventRow } from "@/components/dashboard/dashboard-event-row";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { LoadError, loadFailed } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -184,18 +185,24 @@ function UploadSection({
       caption={caption}
       trailing={`${items.length} ${noun}`}
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-        {visibleSlice.map((event, i) => (
-          <EventTile
-            key={event.id}
-            mode="upload"
-            event={event}
-            index={i}
-            canUpload={canUpload}
-            owned={owned}
-          />
-        ))}
-      </div>
+      {/* Same compact rows as /dashboard/events: the 4:3 cover tiles fit about one race per phone screen. */}
+      <ul className="border border-line rounded-2xl bg-surface divide-y divide-line overflow-hidden">
+        {visibleSlice.map((event) => {
+          const { cta, muted } = uploadCta(event, canUpload, owned);
+          return (
+            <li key={event.id}>
+              <DashboardEventRow
+                event={event}
+                photoCount={event.photoCount}
+                href={canUpload ? `${ROUTES.UPLOAD}/${event.id}` : ROUTES.DASHBOARD_SETTINGS}
+                cta={cta}
+                ctaMuted={muted}
+                ariaLabel={canUpload ? `Upload photos to ${event.name}` : `Finish settings to upload to ${event.name}`}
+              />
+            </li>
+          );
+        })}
+      </ul>
       <LoadMoreButton
         shown={visibleSlice.length}
         total={items.length}
@@ -230,8 +237,8 @@ function PickerEmpty() {
 
 function PickerSkeleton() {
   return (
-    <section aria-busy="true" className="pt-10 md:pt-20 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-      {[0, 1, 2].map((i) => <Skeleton key={i} className="h-64 w-full rounded-2xl" />)}
+    <section aria-busy="true" className="pt-10 md:pt-20 space-y-2">
+      {[0, 1, 2].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
     </section>
   );
 }

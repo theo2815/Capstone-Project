@@ -82,12 +82,13 @@ function CardCaption({
   arrowFresh?: boolean;
 }) {
   return (
-    <p className="font-sans text-sm text-slate mt-2 inline-flex items-center gap-1.5">
-      <span className="truncate">{children}</span>
+    // Wraps instead of truncating: on phones the two-up cards cut captions mid-word.
+    <p className="font-sans text-sm text-slate mt-2 [overflow-wrap:anywhere]">
+      {children}{" "}
       <span
         aria-hidden="true"
         className={
-          "transition-transform group-hover:translate-x-0.5 shrink-0 " +
+          "inline-block transition-transform group-hover:translate-x-0.5 " +
           (arrowFresh ? "text-fresh" : "text-ink")
         }
       >
@@ -121,12 +122,14 @@ function ProfileCard() {
   if (!user) return null;
 
   const bandHex = BRAND_COLOR_HEX[brandColor];
+  // No brand colour: leave the band empty; a grey sliver read as a loading glitch.
   const bandStyle =
     bandHex === "transparent"
-      ? { backgroundColor: "var(--bone-deep)" }
+      ? { backgroundColor: "transparent" }
       : { backgroundColor: bandHex };
   const displayName = brandName.trim() || user.name;
-  const handleLabel = handle.trim() ? `quickpitik.com/${handle}` : "set your public URL";
+  // <wbr>: on a phone card the URL breaks after the slash, not mid-handle.
+  const handleLabel = handle.trim() ? <>quickpitik.com/<wbr />{handle}</> : "set your public URL";
 
   return (
     <CardShell href={ROUTES.PROFILE}>

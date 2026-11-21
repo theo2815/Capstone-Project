@@ -4,17 +4,13 @@ import Link from "next/link";
 import type { EventState, ListEvent } from "@/types/event";
 import { SaveButton } from "@/components/events/save-button";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
-import { ROUTES } from "@/lib/constants";
-import { canOwnerUploadToEvent, canUploadToEvent } from "@/lib/event-catalog";
 
-// Reused by /events (browse), /dashboard/upload (upload), and
-// /dashboard/events (manage). Discriminated union mirrors <PhotoPreviewCard>.
-// Browse keeps the runner-facing SaveButton + photo-count footer; upload
-// drops the SaveButton, routes to the upload form gated on verification, and
-// trades photo count for participant count; manage shows photographer-side
-// stats (photos uploaded · sold) and routes to the focused share page.
+// The runner-facing event card: /events and the photographer profiles.
+// The dashboard's own lists use DashboardEventRow (the Events page, and the
+// upload picker with uploadCta), so the tile has one mode left.
 
-type EventTileBrowseProps = {
+export type EventTileProps = {
+  /** Kept so existing `mode="browse"` call sites stay valid. */
   mode?: "browse";
   event: ListEvent;
   index?: number;
@@ -29,38 +25,9 @@ type EventTileBrowseProps = {
   saveDisabled?: boolean;
 };
 
-type EventTileUploadProps = {
-  mode: "upload";
-  event: ListEvent;
-  index?: number;
-  canUpload: boolean;
-  /** Photographer-owned event (V46): the owner uploads from before the event
-   *  through one month after — the 4-day race-day grace doesn't apply; the
-   *  1-month owner window does. */
-  owned?: boolean;
-};
-
-type EventTileManageProps = {
-  mode: "manage";
-  event: ListEvent;
-  index?: number;
-  photoCount: number;
-  salesCount: number;
-  /** Review / visibility chip for an owned event ("Pending review",
-   *  "Unlisted · Free"). Admin events carry none. */
-  note?: string;
-};
-
-export type EventTileProps =
-  | EventTileBrowseProps
-  | EventTileUploadProps
-  | EventTileManageProps;
-
 export function EventTile(props: EventTileProps) {
   const { event } = props;
   const index = props.index ?? 0;
-  const mode = props.mode ?? "browse";
-  const isBrowse = mode === "browse";
   const isUpcoming = event.state === "upcoming";
 
   const dateLabel = formatShortDate(event.date);
@@ -88,26 +55,21 @@ export function EventTile(props: EventTileProps) {
           // No cover yet: the QuickPitik logo instead of a faint name and "Banner · soon".
           <LogoPlaceholder tone="dark" size="lg" className="absolute inset-0" />
         )}
-        <StatusChip
-          state={event.state}
-          photoCount={isBrowse ? event.photoCount : undefined}
+        <StatusChip state={event.state} photoCount={event.photoCount} />
+        <SaveButton
+          eventId={event.id}
+          event={{
+            id: event.id,
+            slug: event.slug,
+            name: event.name,
+            date: event.date,
+            state: event.state,
+            bannerUrl: event.bannerUrl ?? null,
+            location: event.location,
+          }}
+          variant="card"
+          disabled={props.saveDisabled}
         />
-        {isBrowse && (
-          <SaveButton
-            eventId={event.id}
-            event={{
-              id: event.id,
-              slug: event.slug,
-              name: event.name,
-              date: event.date,
-              state: event.state,
-              bannerUrl: event.bannerUrl ?? null,
-              location: event.location,
-            }}
-            variant="card"
-            disabled={(props as EventTileBrowseProps).saveDisabled}
-          />
-        )}
       </div>
       <div className="p-6 md:p-7">
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate mb-3">
@@ -119,68 +81,15 @@ export function EventTile(props: EventTileProps) {
         <p className="mt-3 font-sans text-sm md:text-base text-ink-soft">
           {event.location}
         </p>
-        {isBrowse && <BrowseMeta event={event} />}
-        {/* Some photographer in this race charges above the race price (AA-R14).
-            Browse folds this into BrowseMeta's "From ₱X". */}
-        {!isBrowse && event.priceVaries && event.pricePerPhoto != null && (
-          <span className="mt-3 inline-flex items-center rounded-full border border-line bg-bone-deep px-2.5 py-1 font-mono uppercase tracking-[0.14em] text-[13px] text-slate whitespace-nowrap tnum">
-            From ₱{event.pricePerPhoto}
-          </span>
-        )}
-        {mode === "browse" && <BrowseFooter isUpcoming={isUpcoming} />}
-        {mode === "upload" && (
-          <UploadFooter
-            event={event}
-            canUpload={(props as EventTileUploadProps).canUpload}
-            owned={props.mode === "upload" ? props.owned : undefined}
-          />
-        )}
-        {props.mode === "manage" && <ManageFooter note={props.note} />}
+        <BrowseMeta event={event} />
+        <BrowseFooter isUpcoming={isUpcoming} />
       </div>
     </>
   );
 
-  if (isBrowse) {
-    const hrefOverride = (props as EventTileBrowseProps).hrefOverride;
-    return (
-      <Link
-        href={hrefOverride ?? `/events/${event.slug}`}
-        aria-label={`Open ${event.name}`}
-        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
-        style={animationStyle}
-      >
-        {body}
-      </Link>
-    );
-  }
-
-  if (mode === "upload") {
-    // every state is clickable. If verification is incomplete, route to
-    // settings instead and reflect that in the CTA + aria label.
-    const { canUpload } = props as EventTileUploadProps;
-    const target = canUpload
-      ? `${ROUTES.UPLOAD}/${event.id}`
-      : ROUTES.DASHBOARD_SETTINGS;
-    const aria = canUpload
-      ? `Upload photos to ${event.name}`
-      : `Finish settings to upload to ${event.name}`;
-
-    return (
-      <Link
-        href={target}
-        aria-label={aria}
-        className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
-        style={animationStyle}
-      >
-        {body}
-      </Link>
-    );
-  }
-
-  // manage mode — links to the focused share page at /dashboard/events/[id].
   return (
     <Link
-      href={`${ROUTES.DASHBOARD_EVENTS}/${event.id}`}
+      href={props.hrefOverride ?? `/events/${event.slug}`}
       aria-label={`Open ${event.name}`}
       className="group block rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] overflow-hidden transition-all duration-300 hover:border-fresh/50 hover:-translate-y-1 hover:shadow-[var(--shadow-lift)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
       style={animationStyle}
@@ -218,70 +127,6 @@ function BrowseFooter({ isUpcoming }: { isUpcoming: boolean }) {
     <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
       <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
         {isUpcoming ? "Get notified →" : "Open →"}
-      </span>
-    </div>
-  );
-}
-
-function UploadFooter({
-  event,
-  canUpload,
-  owned = false,
-}: {
-  event: ListEvent;
-  canUpload: boolean;
-  owned?: boolean;
-}) {
-  // Verification-incomplete is the most actionable issue, so it wins over
-  // the date-based hints. Once verified, the date drives copy:
-  //   owned         → upload → until one month after the event, then closed
-  //   upcoming      → opens on race day
-  //   live (grace)  → upload →
-  //   open / past   → window closed (4-day grace expired)
-  const canUploadNow = owned
-    ? canOwnerUploadToEvent(event.date)
-    : canUploadToEvent(event.date);
-  let cta: string;
-  let muted = false;
-  if (!canUpload) {
-    cta = "Finish settings →";
-  } else if (owned) {
-    // The owner uploads from before the event through one month after; the
-    // "upcoming" gate never applies to them.
-    cta = canUploadNow ? "Upload →" : "Upload window closed";
-    muted = !canUploadNow;
-  } else if (event.state === "upcoming") {
-    cta = "Opens on race day →";
-  } else if (canUploadNow) {
-    cta = "Upload →";
-  } else {
-    cta = "Upload window closed";
-    muted = true;
-  }
-
-  return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-end">
-      <span
-        className={
-          muted
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate"
-            : "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors"
-        }
-      >
-        {cta}
-      </span>
-    </div>
-  );
-}
-
-function ManageFooter({ note }: { note?: string }) {
-  return (
-    <div className="mt-6 pt-4 border-t border-line flex items-center justify-between gap-4">
-      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate truncate">
-        {note}
-      </span>
-      <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink group-hover:text-fresh transition-colors">
-        Open →
       </span>
     </div>
   );

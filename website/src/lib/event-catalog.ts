@@ -83,3 +83,24 @@ export function canOwnerUploadToEvent(
   // has not passed the close date yet.
   return daysSinceEvent(ownerUploadCloseDate(eventDate), now) <= 0;
 }
+
+// The upload picker's call to action for one event, from the photographer's
+// verification and the event's upload window. Verification-incomplete wins
+// over the date-based hints; once verified, the date drives the copy:
+//   owned         → "Upload →" until one month after the event, then closed
+//   upcoming      → opens on race day
+//   live (grace)  → "Upload →"
+//   open / past   → window closed (4-day grace expired)
+export function uploadCta(
+  event: { date: string; state: EventState },
+  canUpload: boolean,
+  owned = false,
+): { cta: string; muted: boolean } {
+  if (!canUpload) return { cta: "Finish settings →", muted: false };
+  // The owner uploads from before the event through one month after; the
+  // "upcoming" gate never applies to them.
+  if (owned) return canOwnerUploadToEvent(event.date) ? { cta: "Upload →", muted: false } : { cta: "Upload window closed", muted: true };
+  if (event.state === "upcoming") return { cta: "Opens on race day →", muted: false };
+  if (canUploadToEvent(event.date)) return { cta: "Upload →", muted: false };
+  return { cta: "Upload window closed", muted: true };
+}

@@ -381,10 +381,11 @@ function EventMetadataVisibility({ event }: { event: PhotographerEventDetail }) 
           </label>
           <p id="event-metadata-help" className="mt-3 font-sans text-sm text-slate">Only your photos in this event. You can always view your own metadata.</p>
           <p id="event-metadata-boundary" className="mt-2 font-sans text-sm text-slate">This controls the metadata popup. Original downloads keep their embedded metadata.</p>
-          <div className="mt-5 flex flex-wrap gap-2">
+          {/* Only once the choice differs from the saved one: two faded buttons sat here permanently. */}
+          {(saving || draft !== visibility.data.metadataPublic) && <div className="mt-5 flex flex-wrap gap-2">
             <button type="button" onClick={() => void save()} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_PRIMARY, BTN_SIZE.sm)}>Save metadata visibility</button>
             <button type="button" onClick={() => { setDraft(visibility.data.metadataPublic); setDirty(false); }} disabled={saving || draft === visibility.data.metadataPublic} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Cancel metadata change</button>
-          </div>
+          </div>}
         </>
       )}
     </section>
@@ -1134,7 +1135,7 @@ function PhotoLibrary({
   if (section === "purchased") {
     return <section>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
-        <div role="tablist" aria-label="Photo library" className="flex flex-wrap gap-2">
+        <div role="tablist" aria-label="Photo library" className="flex gap-1.5 sm:gap-2 overflow-x-auto [scrollbar-width:none] max-w-full">
           <TabPill active={false} onClick={() => switchSection("active")}>Active</TabPill>
           <TabPill active={false} onClick={() => switchSection("deleted")}>Deleted</TabPill>
           <TabPill active onClick={() => switchSection("purchased")}>Purchased</TabPill>
@@ -1163,7 +1164,7 @@ function PhotoLibrary({
   return (
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4 mb-6">
-        <div role="tablist" aria-label="Photo library" className="flex flex-wrap gap-2">
+        <div role="tablist" aria-label="Photo library" className="flex gap-1.5 sm:gap-2 overflow-x-auto [scrollbar-width:none] max-w-full">
           <TabPill
             active={section === "active"}
             onClick={() => switchSection("active")}
@@ -1381,7 +1382,7 @@ function TabPill({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-4 py-2 min-h-[44px] transition-colors",
+        "shrink-0 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full px-3 sm:px-4 py-2 min-h-[44px] transition-colors",
         active
           ? "bg-ink text-surface border border-ink"
           : "bg-bone text-slate border border-line hover:text-ink hover:border-ink",

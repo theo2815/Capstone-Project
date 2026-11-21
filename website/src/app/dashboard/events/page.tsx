@@ -112,11 +112,7 @@ export default function DashboardEventsPage() {
 
   return (
     <>
-      <div className="flex flex-wrap justify-end gap-2 pt-10 md:pt-20">
-        {/* Mobile has no bottom tab for removal requests; this and the inbox link reach them. */}
-        <Link href={ROUTES.DASHBOARD_PHOTO_REMOVAL_REQUESTS} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
-          Removal requests
-        </Link>
+      <div className="flex flex-wrap gap-2 pt-6 md:pt-8">
         {/* A coupon needs an event to apply to. */}
         {covered.length > 0 && (
           <button
@@ -128,6 +124,10 @@ export default function DashboardEventsPage() {
           </button>
         )}
         <CreateEventLink />
+        {/* Mobile has no bottom tab for removal requests; this and the inbox link reach them. */}
+        <Link href={ROUTES.DASHBOARD_PHOTO_REMOVAL_REQUESTS} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+          Removal requests
+        </Link>
       </div>
 
       {covered.length === 0 ? (

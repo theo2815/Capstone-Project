@@ -98,7 +98,8 @@ function LifetimeSlab() {
         <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
           12-week trend
         </p>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1.5">
+        {/* A sentence, not a kicker: in mono caps it wrapped to two lines on phones. */}
+        <p className="font-sans text-sm text-slate-soft mt-1.5">
           {e.weeklySeries.some((p) => p.amount > 0)
             ? "Hover or tap a bar for week details"
             : "Your first sale will show up here"}

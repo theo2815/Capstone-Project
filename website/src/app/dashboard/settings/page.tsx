@@ -1070,6 +1070,18 @@ function validateSocialUrl(
   return null;
 }
 
+// Every slab is read-only until Edit settings; without this the greyed-out
+// upload buttons and fields looked broken.
+function ReadOnlyHint() {
+  const { editing } = useEditMode();
+  if (editing) return null;
+  return (
+    <p className="mt-4 font-sans text-sm text-slate">
+      Press <span className="text-ink">Edit settings</span> to change anything on this page.
+    </p>
+  );
+}
+
 export default function SettingsPage() {
   const sessionVersion = useAuthStore((s) => s.sessionVersion);
   // Verification sync lives in DashboardShell — single mount across every
@@ -1082,6 +1094,7 @@ export default function SettingsPage() {
       <div className="[&_section[id]]:scroll-mt-36">
       <PendingEditWatcher />
       <VerificationStatusPanel />
+      <ReadOnlyHint />
       <SettingsJumpNav />
       <PublicProfileSlab />
       <WatermarkSlab />

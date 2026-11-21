@@ -1,5 +1,6 @@
 "use client";
 
+import { BalanceFigures } from "@/components/dashboard/balance-figures";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
@@ -130,6 +131,7 @@ function BillingGlance() {
         <AvailableGlance
           unpaidBalance={balance.unpaidBalance}
           clearing={balance.clearing}
+          reserved={balance.reserved}
           minimum={balance.minimum}
           onHold={!!balance.payoutHoldReason}
         />
@@ -190,11 +192,13 @@ function OpenRequestGlance({
 function AvailableGlance({
   unpaidBalance,
   clearing,
+  reserved,
   minimum,
   onHold,
 }: {
   unpaidBalance: number;
   clearing: number;
+  reserved: number;
   minimum: number;
   onHold: boolean;
 }) {
@@ -217,30 +221,16 @@ function AvailableGlance({
 
   return (
     <>
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
-        Available to request
-      </p>
-      <p
-        className={cn(
-          "font-display text-5xl md:text-6xl font-extrabold tracking-tight tnum mt-3 leading-none",
-          eligible && !onHold ? "text-fresh" : "text-slate",
-        )}
-      >
-        {formatPrice(unpaidBalance)}
-      </p>
-      <p className="font-sans text-sm text-ink-soft mt-4 max-w-md">
+      <BalanceFigures available={unpaidBalance} clearing={clearing} reserved={reserved} ready={eligible && !onHold} />
+      <p className="font-sans text-sm text-ink-soft mt-6 max-w-md">
         {onHold ? (
           <>Payouts on hold — open billing for details.</>
         ) : eligible ? (
-          <>
-            Ready to request — open billing to confirm and submit.
-          </>
+          <>Ready to request — open billing to confirm and submit.</>
         ) : (
           <>
-            Reach{" "}
-            <span className="font-mono tnum">{formatPrice(minimum)}</span>{" "}
-            in unpaid earnings to request a payout.
-            {clearing > 0 && <> {formatPrice(clearing)} is still clearing.</>}
+            Reach <span className="tnum">{formatPrice(minimum)}</span> in
+            unpaid earnings to request a payout.
           </>
         )}
       </p>

@@ -31,7 +31,7 @@ interface DashboardRoute {
   readonly nestedPrefix?: string;
 }
 
-const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
+export const DASHBOARD_ROUTES: ReadonlyArray<DashboardRoute> = [
   { href: ROUTES.DASHBOARD, label: "Overview" },
   {
     href: ROUTES.DASHBOARD_UPLOAD,
@@ -92,20 +92,21 @@ export function DashboardRail() {
   if (!user) return null;
 
   const memberSince = formatMemberSince(user.createdAt);
-  // The rail header (avatar + "Dashboard.") rides along on mobile only at the
-  // Overview; sub-pages navigate via <DashboardBottomNav>, so it's desktop-only
-  // there. Profile / Account / Sign out live in the header avatar menu now.
-  const isOverview = pathname === ROUTES.DASHBOARD;
+  // The rail is desktop-only; phones navigate via <DashboardBottomNav>.
+  // Profile / Account / Sign out live in the header avatar menu.
 
   return (
     <>
-    {/* Phone sub-pages hide the rail (and its h1), so give them a screen-reader
-        h1; the rail's links stay out of the tab order there. */}
-    {!isOverview && <h1 className="sr-only md:hidden">Dashboard</h1>}
+    {/* Phones hide the rail (and its h1), so give them a screen-reader h1;
+        the rail's links stay out of the tab order there. */}
+    <h1 className="sr-only md:hidden">Dashboard</h1>
     <aside
       className={cn(
         "md:sticky md:top-20 md:self-start pt-6 md:pt-10 pb-6 md:pb-8 md:max-h-[calc(100vh-5rem)] md:overflow-y-auto border-b md:border-0 border-line",
-        isOverview ? "" : "hidden md:block",
+        // Phones: hidden on every page, the Overview too. Shown there it stacked
+        // "Dashboard." and the legal links above the welcome heading; the
+        // shell puts the legal links at the foot of the page on phones instead.
+        "hidden md:block",
       )}
     >
       <div className="flex items-start gap-5 md:block">
