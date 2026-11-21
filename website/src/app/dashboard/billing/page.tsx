@@ -335,7 +335,7 @@ function RequestPayoutHero({
 
       {cooldownActive && (
         <div className="mt-6 rounded-xl border border-warning/40 bg-warning/5 p-4 max-w-lg">
-          <Kicker as="p" className="text-warning">
+          <Kicker as="p" className="text-warning-text">
             Payouts paused
           </Kicker>
           <p className="font-sans text-sm text-ink-soft mt-2">
@@ -409,7 +409,7 @@ function PayoutHoldNotice({ className }: { className?: string }) {
         className,
       )}
     >
-      <Kicker as="p" className="text-warning">
+      <Kicker as="p" className="text-warning-text">
         Payouts on hold
       </Kicker>
       <p className="font-sans text-sm text-ink-soft mt-2">
