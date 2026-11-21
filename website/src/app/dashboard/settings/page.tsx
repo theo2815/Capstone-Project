@@ -1062,7 +1062,9 @@ function validateSocialUrl(
     if (platform === "website") {
       return "URL must start with http:// or https://.";
     }
-    return `This doesn't look like a ${SOCIAL_PLATFORM_LABEL[platform]} URL.`;
+    // By sound: "an Instagram", "an X" (said "ex"); "a" for the rest.
+    const article = platform === "instagram" || platform === "x" ? "an" : "a";
+    return `This doesn't look like ${article} ${SOCIAL_PLATFORM_LABEL[platform]} URL.`;
   }
   if (ctx.duplicateUrls.has(normalizeSocialUrl(trimmed))) {
     return "This URL is already added.";
