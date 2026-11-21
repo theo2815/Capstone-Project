@@ -131,7 +131,7 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
         <div className="lg:col-span-full lg:grid lg:grid-cols-subgrid lg:items-baseline">
           <div className="min-w-0">
             <div className="flex items-baseline gap-3 flex-wrap">
-              <p className="font-display text-base text-ink break-words group-hover:text-fresh transition-colors">
+              <p className="min-w-0 font-display text-base text-ink break-words group-hover:text-fresh transition-colors">
                 {row.name}
               </p>
               {row.implied && (
@@ -187,7 +187,7 @@ function DataCell({
       </Kicker>
       <p
         className={cn(
-          "font-mono tnum",
+          "font-mono tnum lg:whitespace-nowrap",
           mono
             ? "uppercase tracking-[0.15em] text-[14px] min-[400px]:text-[15px] md:text-[13px]"
             : emphasis

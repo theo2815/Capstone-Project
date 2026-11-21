@@ -6,6 +6,7 @@ import { fetchAdminSalesTrend, fetchAdminTopPhotographers, type AdminTopPhotogra
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
 import { AdminSalesEventTable } from "@/components/admin/admin-sales-event-table";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
+import { formatLongDate } from "@/lib/format";
 
 vi.mock("next/link", () => ({ default: ({ children, href, className }: { children: React.ReactNode; href: string; className?: string }) => <a href={href} className={className}>{children}</a> }));
 
@@ -124,6 +125,22 @@ it("the by-event headings and every row share one set of columns", () => {
   for (const gmv of [screen.getByText("₱3,000.00"), screen.getByText("₱12,345,678.90")]) {
     expect(subgrids).toContain(gmv.parentElement!.parentElement);
   }
+});
+
+it("from 1024 up, a refund and a date in Sales by event stay on one line", () => {
+  state.live = [{ ...serverRow, refundsIssued: 120 }];
+  render(<AdminSalesEventTable />);
+  // jsdom has no layout: the browser check measures one line at 1024 and 1280.
+  for (const value of [screen.getByText("−₱120.00"), screen.getByText(formatLongDate(serverRow.date, true))]) {
+    expect(value).toHaveClass("lg:whitespace-nowrap");
+  }
+});
+
+it("an event name can shrink to its column, so a long word breaks there instead of running into the date", () => {
+  state.live = [serverRow];
+  render(<AdminSalesEventTable />);
+  // The name is a flex item: without min-w-0 it cannot get narrower than its longest word (browser check: 72 px column).
+  expect(screen.getByText(serverRow.name)).toHaveClass("min-w-0", "break-words");
 });
 
 it("a browser-derived top event keeps its Implied badge", () => {
