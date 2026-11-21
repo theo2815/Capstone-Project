@@ -60,6 +60,16 @@ it("suspends the runner whose row opened the shared Suspend modal", async () => 
   await waitFor(() => expect(adminApi.suspendUser).toHaveBeenCalledWith("runner-7", "Compliance review requested"));
 });
 
+it("offers the runner suspend reasons, not the photographer ones (AX-72)", async () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([runner]));
+  mount();
+  const row = (await screen.findByText("Ana Runner")).closest("li")!;
+  await userEvent.click(within(row).getByRole("button", { name: /Suspend/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Suspend account" });
+  expect(within(dialog).getByLabelText("Using someone else's selfie or account")).toBeInTheDocument();
+  expect(within(dialog).queryByLabelText("Watermark or branding violates policy")).toBeNull();
+});
+
 it("turns the row to Unsuspend at once after a suspend, before the list refetch lands", async () => {
   vi.mocked(adminApi.fetchAdminUsersPage)
     .mockResolvedValueOnce(page([runner]))

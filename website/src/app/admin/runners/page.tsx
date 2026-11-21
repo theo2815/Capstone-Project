@@ -6,7 +6,7 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
-import { AdminSuspendModal } from "@/components/admin/admin-suspend-modal";
+import { AdminSuspendModal, RUNNER_SUSPEND_REASONS } from "@/components/admin/admin-suspend-modal";
 import { AdminMessageModal } from "@/components/admin/admin-message-modal";
 import { useAdminRunnersPage, useAdminUserActions } from "@/hooks/use-admin-users";
 import { useSearchFocusShortcut } from "@/hooks/use-admin-keyboard";
@@ -178,6 +178,7 @@ export default function AdminRunnersPage() {
           onClose={close}
           onSubmit={handleSuspend}
           photographerName={suspendRow.name}
+          reasons={RUNNER_SUSPEND_REASONS}
           intro={`${suspendRow.name} will be signed out and unable to sign in until you unsuspend. They get a message with the reason, and the reason is logged.`}
         />
       )}

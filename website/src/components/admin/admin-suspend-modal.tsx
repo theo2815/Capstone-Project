@@ -17,7 +17,19 @@ interface AdminSuspendModalProps {
   photographerName: string;
   /** What suspending does to this account; defaults to the photographer wording. */
   intro?: string;
+  /** The reasons to offer; defaults to the photographer list. The `other` code makes the note required. */
+  reasons?: ReadonlyArray<{ value: string; label: string }>;
 }
+
+// Runner reasons, Theo's wording (2026-11-21). Only the label is sent; the codes are radio values.
+export const RUNNER_SUSPEND_REASONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "false_reports", label: "Abusive or false reports against photographers" },
+  { value: "false_claims", label: "Repeated false refund or dispute claims" },
+  { value: "payment_fraud", label: "Suspected payment fraud or chargebacks" },
+  { value: "identity_misuse", label: "Using someone else's selfie or account" },
+  { value: "compliance_review", label: "Compliance review requested" },
+  { value: "other", label: "Other (see note)" },
+];
 
 const SUSPEND_REASONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "watermark_violation", label: "Watermark or branding violates policy" },
@@ -39,6 +51,7 @@ export function AdminSuspendModal({
   onSubmit,
   photographerName,
   intro,
+  reasons = SUSPEND_REASONS,
 }: AdminSuspendModalProps) {
   // AX-28: no reason starts picked, so a quick Enter never records one the admin did not choose.
   const [selectedReason, setSelectedReason] = useState("");
@@ -56,7 +69,7 @@ export function AdminSuspendModal({
     if (submitting) return;
     if (noteMissing) { setAttempted(true); return; }
     const label =
-      SUSPEND_REASONS.find((r) => r.value === selectedReason)?.label ??
+      reasons.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
     const composed =
       note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
@@ -81,7 +94,7 @@ export function AdminSuspendModal({
       <AdminFormSection label="Reason">
         <AdminRadioGroup
           name="suspend-reason"
-          options={SUSPEND_REASONS}
+          options={reasons}
           value={selectedReason}
           onChange={setSelectedReason}
         />
