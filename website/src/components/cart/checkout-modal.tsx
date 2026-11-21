@@ -957,7 +957,7 @@ function QrPaymentStep({
         <p
           className={cn(
             "mt-3 font-mono uppercase tracking-[0.14em] text-[13px] tnum",
-            expiringSoon ? "text-warning" : "text-slate-soft",
+            expiringSoon ? "text-warning-text" : "text-slate-soft",
           )}
         >
           {remainingMs > 0
