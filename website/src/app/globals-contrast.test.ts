@@ -31,13 +31,21 @@ it("the admin's shared parts use the warning-text token, not raw amber", () => {
   expect(raw).toEqual([]);
 });
 
+// Reads source text only: a class joined another way (["text", tone].join("-")) or a colour in an inline style needs a rendered-page check.
+const src = path.join(__dirname, "..");
+const sources = readdirSync(src, { recursive: true, encoding: "utf8" })
+  .map((f) => f.replace(/\\/g, "/"))
+  .filter((f) => /\.[jt]sx?$/.test(f) && !/\.test\.[jt]sx?$/.test(f));
+const read = (f: string) => readFileSync(path.join(src, f), "utf8");
+
 it("warning text uses the warning-text token, not the 3:1 text-warning", () => {
-  const src = path.join(__dirname, "..");
   // shortcut: billing and settings are exempt while PR #231 holds them; AX-52 removes this exemption once #231 merges or closes
   const exempt = ["app/dashboard/billing/page.tsx", "app/dashboard/settings/page.tsx"];
-  const raw = readdirSync(src, { recursive: true, encoding: "utf8" })
-    .map((f) => f.replace(/\\/g, "/"))
-    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) && !exempt.includes(f))
-    .filter((f) => /text-warning(?!-text)/.test(readFileSync(path.join(src, f), "utf8")));
+  const raw = sources.filter((f) => !exempt.includes(f) && /text-warning(?!-text)/.test(read(f)));
   expect(raw).toEqual([]);
+});
+
+it("no text- class is built at runtime, where the warning test above cannot see it", () => {
+  const built = sources.filter((f) => /\btext-(\$\{|["'`]\s*\+)/.test(read(f)));
+  expect(built).toEqual([]);
 });
