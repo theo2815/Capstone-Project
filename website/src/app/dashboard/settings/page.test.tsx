@@ -718,6 +718,17 @@ it.each(["success", "failure"])("does not apply a stale Settings batch or toast 
   expect(mocks.toast).not.toHaveBeenCalled();
 });
 
+// AX-76: the article follows how the platform name is said ("an Instagram", "an X", "a Facebook").
+it.each([
+  ["instagram", "https://facebook.com/studio", "This doesn't look like an Instagram URL."],
+  ["x", "https://example.test/studio", "This doesn't look like an X URL."],
+  ["facebook", "https://example.test/studio", "This doesn't look like a Facebook URL."],
+] as const)("a %s link to another site names the platform with the right article", (platform, url, message) => {
+  render(<SettingsPage />); fireEvent.click(screen.getByRole("button", { name: /Edit settings/ }));
+  act(() => usePhotographerSettingsStore.setState({ socials: [{ id: "link", platform, url }] }));
+  expect(screen.getByText(message)).toBeInTheDocument();
+});
+
 it("ignores an old verification withdrawal after account switching", async () => {
   usePhotographerSettingsStore.setState({ verificationStatus: "pending" });
   let finish!: (value: { status: "incomplete" }) => void;
