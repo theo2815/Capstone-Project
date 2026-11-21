@@ -20,6 +20,8 @@ export function useOrdersList(): {
   orders: OrderSummary[];
   isLoading: boolean;
   error: unknown;
+  isRetrying: boolean;
+  retry: () => void;
 } {
   const session = usePrivateQuerySession();
   const query = useQuery<OrderSummary[]>({
@@ -33,6 +35,8 @@ export function useOrdersList(): {
     orders: query.data ?? EMPTY_ORDERS,
     isLoading: query.isPending && session.enabled,
     error: query.error,
+    isRetrying: query.isFetching,
+    retry: () => void query.refetch(),
   };
 }
 

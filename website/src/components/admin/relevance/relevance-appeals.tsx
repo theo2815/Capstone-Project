@@ -19,10 +19,9 @@ import {
   verdictLabel,
   type RelevanceAppealRow,
 } from "@/lib/admin-relevance";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { RelevanceCaseBody, RelevanceCaseSamples } from "./relevance-case-drawer";
 
-const labelCls = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft";
 const who = (a: RelevanceAppealRow) => (a.photographerHandle ? `@${a.photographerHandle}` : (a.photographerName ?? "—"));
 
 // RV-3.5: the Appeals tab. Open appeals first, then the decided ones; `?row=` names the open appeal's id.
@@ -77,9 +76,9 @@ function AppealRow({ appeal, onOpen }: { appeal: RelevanceAppealRow; onOpen: () 
         <AdminStatusPill label={verdictLabel(appeal.verdict)} tone="slate" />
       </span>
       <span className="mt-3 block font-display text-base md:text-lg font-bold text-ink">{appeal.eventName ?? "—"}</span>
-      <span className={`${labelCls} mt-1 block tnum`}>
-        {who(appeal)} · {APPEAL_TEXT.filed} {formatLongDate(appeal.createdAt)}
-        {appeal.decidedAt && ` · ${APPEAL_TEXT.decided} ${formatLongDate(appeal.decidedAt)}`}
+      <span className="mt-1 block font-sans text-sm text-slate-soft tnum">
+        {who(appeal)} · {APPEAL_TEXT.filed} {sentenceCaseDate(formatLongDate(appeal.createdAt))}
+        {appeal.decidedAt && ` · ${APPEAL_TEXT.decided} ${sentenceCaseDate(formatLongDate(appeal.decidedAt))}`}
       </span>
     </button>
   );
@@ -140,7 +139,7 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
       kicker={`Appeal · ${appeal.appealId}`}
       title={appeal.eventName ?? "Appeal"}
       rightHeader={<AdminStatusPill label={status} tone={isOpen ? "amber" : "slate"} />}
-      subtitle={<p className={`${labelCls} tnum`}>{who(appeal)} · {APPEAL_TEXT.filed} {formatLongDate(appeal.createdAt)}</p>}
+      subtitle={<p className="font-sans text-sm text-slate-soft tnum break-words">{who(appeal)} · {APPEAL_TEXT.filed} {sentenceCaseDate(formatLongDate(appeal.createdAt))}</p>}
       actions={isOpen && (
         <>
           <button type="button" disabled={locked} onClick={() => setConfirming("WON")} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>{APPEAL_TEXT.won}</button>
@@ -172,7 +171,7 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
           </section>
           {!isOpen && (
             <section className="space-y-2">
-              <Kicker as="p" tone="soft" tnum>{status} · {formatLongDate(appeal.decidedAt)}</Kicker>
+              <p className="font-sans text-sm text-slate-soft tnum">{status} · {sentenceCaseDate(formatLongDate(appeal.decidedAt))}</p>
               {appeal.decisionNote && (
                 <p className="font-sans text-sm text-ink-soft whitespace-pre-line break-words">
                   {APPEAL_TEXT.decisionNote}: {appeal.decisionNote}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminStatTile } from "@/components/admin/admin-stat-tile";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
@@ -56,7 +56,7 @@ export default function AdminSalesPage() {
           </div>
         ) : !kpis ? (
           <div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8"
+            className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8"
             aria-busy="true"
           >
             {Array.from({ length: 4 }, (_, i) => (
@@ -64,7 +64,7 @@ export default function AdminSalesPage() {
             ))}
           </div>
         ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8">
           <AdminStatTile
             kicker="Gross merch volume"
             value={formatPrice(kpis.gmv)}
@@ -161,7 +161,7 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
   // No sales this week means no rate (a refund can be for an older sale).
   const rate = week && week.gmv > 0 ? (week.refundsIssued / week.gmv) * 100 : null;
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 lg:gap-10 items-start">
       <ul className="border-y border-line divide-y divide-line">
         <PulseRow
           label="Refunds issued"
@@ -182,7 +182,7 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
 
       <Link
         href={ROUTES.ADMIN_DISPUTES}
-        className="inline-flex items-center gap-2 self-start font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
+        className={`inline-flex items-center gap-2 self-start font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink hover:text-fresh transition-colors`}
       >
         Open disputes queue →
       </Link>

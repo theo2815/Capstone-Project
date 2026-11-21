@@ -179,10 +179,35 @@ it("on a phone the actions scroll with the drawer instead of a capped footer", a
   }
 });
 
+it("on a phone the action buttons sit in a row stuck to the bottom of the drawer, and each opens its modal", async () => {
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+  try {
+    const user = userEvent.setup();
+    const drawer = await openDrawerFor(dispute);
+    const row = within(drawer).getByRole("group", { name: "Dispute actions" });
+    expect(row).toHaveClass("sticky", "bottom-0");
+    // The buttons move: the card at the top keeps no copy of them.
+    expect(within(within(drawer).getByRole("complementary", { name: "Admin actions" })).queryAllByRole("button")).toHaveLength(0);
+    // The row comes after the evidence, so it can stay in view to the end of the scroll.
+    const claim = within(drawer).getByText(dispute.note);
+    expect(claim.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const [button, modal] of [["Approve refund…", `Resolve ${dispute.id}`], ["Deny…", `Deny ${dispute.id}`], ["Escalate…", `Escalate ${dispute.id}`]]) {
+      await user.click(within(row).getByRole("button", { name: button }));
+      expect(await screen.findByRole("dialog", { name: modal })).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: modal })).toBeNull());
+    }
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 it("on a wider screen the actions stay in the drawer footer", async () => {
   const drawer = await openDrawerFor(dispute);
   const footer = drawer.querySelector("footer")!;
   expect(within(footer).getByRole("complementary", { name: "Admin actions" })).toBeInTheDocument();
+  expect(within(footer).getByRole("button", { name: "Approve refund…" })).toBeInTheDocument();
+  expect(within(drawer).queryByRole("group", { name: "Dispute actions" })).toBeNull();
 });
 
 it("search sends q and starts at the first page", async () => {
@@ -279,4 +304,17 @@ it("the drawer labels the order total as the order total", async () => {
   expect(within(drawer).getByText("Order total")).toBeInTheDocument();
   expect(drawer).toHaveTextContent(/Order total.*330/);
   expect(within(drawer).queryByText("Total")).not.toBeInTheDocument();
+});
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+const notUpperCased = (els: HTMLElement[]) => { expect(els.length).toBeGreaterThan(0); for (const el of els) expect(el.closest(".uppercase")).toBeNull(); };
+it("the drawer's subtitle, ids and dates are not upper-cased", async () => {
+  fixtures.search = `row=${dispute.id}`;
+  renderQueue();
+  const drawer = await screen.findByRole("dialog");
+  notUpperCased(within(drawer).getAllByText(/Reported Sep 10 · 2026/));
+  notUpperCased(within(drawer).getAllByText("order-1"));
+  notUpperCased(within(drawer).getAllByText(/^Sep 0?9 · 2026$/));
+  // A title holds two handles, so it must wrap at 375.
+  expect(within(drawer).getAllByRole("heading", { level: 2 })[0]).toHaveClass("break-words");
 });

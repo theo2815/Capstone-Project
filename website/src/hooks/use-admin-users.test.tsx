@@ -160,6 +160,28 @@ it("clearing an old session prevents late list/detail/settings reads from repopu
   await act(async () => request.resolve({ ...detail, items: [adminUser], total: 1 }));
   expect(client.getQueryCache().getAll()).toHaveLength(0);
 });
+it("takes a photographer out of a tab they no longer match and swaps the row where it still matches, before the refetch", async () => {
+  // No observer is mounted, so the refetch never lands: the patch alone is under test.
+  const tab = (status: string) => [...adminUserKeys.owner(admin.id), "photographers", status, ""];
+  const runnersKey = [...adminUserKeys.owner(admin.id), "runners", ""];
+  const seed = (key: unknown[], items: object[]) => client.setQueryData(key, { pages: [{ items, total: items.length, offset: 0, limit: 50 }], pageParams: [0] });
+  const read = (key: unknown[]) => client.getQueryData<{ pages: { total: number; items: { id: string; suspendedAt: string | null; suspensionReason: string | null }[] }[] }>(key)?.pages[0];
+  const other = { ...adminUser, userId: "photographer-2", id: "photographer-2" };
+  const runner = { ...adminUser, userId: "runner-1", id: "runner-1", role: "RUNNER" };
+  seed(tab("pending"), [{ ...adminUser, id: adminUser.userId }, other]);
+  // A Suspended tab still cached from an earlier suspension of the same photographer.
+  seed(tab("suspended"), [{ ...adminUser, id: adminUser.userId, suspendedAt: "2026-10-01T00:00:00Z", suspensionReason: "Earlier" }]);
+  seed(runnersKey, [runner]);
+  const suspendedAt = "2026-11-21T00:00:00Z";
+  vi.spyOn(api, "post").mockImplementation(async (path) => path.includes("runner-1")
+    ? { ...runner, suspendedAt, suspensionReason: "Spam" } : { ...adminUser, suspendedAt, suspensionReason: "Please fix the watermark" });
+  const { result } = renderHook(useAdminUserActions, { wrapper });
+  await act(async () => { expect(await result.current.suspend(adminUser.userId, "Please fix the watermark")).toBe(true); });
+  expect(read(tab("pending"))).toMatchObject({ total: 1, items: [{ id: "photographer-2" }] });
+  expect(read(tab("suspended"))).toMatchObject({ total: 1, items: [{ id: adminUser.userId, suspendedAt, suspensionReason: "Please fix the watermark" }] });
+  await act(async () => { expect(await result.current.suspend("runner-1", "Spam")).toBe(true); });
+  expect(read(runnersKey)).toMatchObject({ total: 1, items: [{ id: "runner-1", suspendedAt }] });
+});
 it("cancels an older directory read before installing a confirmed mutation", async () => {
   const old = deferred<unknown>();
   const read = client.fetchQuery({ queryKey: listKey, queryFn: () => old.promise }).catch(() => undefined);

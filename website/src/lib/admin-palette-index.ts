@@ -3,6 +3,7 @@ import { ADMIN_ROUTES } from "@/components/admin/admin-rail";
 import { ADMIN_QUEUES, queuePath } from "@/lib/admin-queues";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import { type AdminUserRow } from "@/lib/admin-user-registry";
+import { photographerHref, photographerStatus } from "@/lib/admin-photographer-view";
 import {
   DISPUTE_REASON_LABEL,
   type Dispute,
@@ -195,7 +196,7 @@ function buildDisputeEntries(disputes: ReadonlyArray<Dispute>): PaletteEntry[] {
 
 function buildFlagEntries(flags: ReadonlyArray<Flag>): PaletteEntry[] {
   return flags.map((f) => {
-    const reasonLabel = flagReasonLabel(f.reason);
+    const reasonLabel = flagReasonLabel(f);
     const statusLabel = capitalize(f.status);
     const reporter = f.reportedBy === "system" ? "System" : `@${f.reportedBy}`;
     const subtitle = `${statusLabel} · ${reasonLabel} · ${reporter}`;
@@ -252,20 +253,9 @@ function buildPhotographerEntries(
   const photographers = userPool.filter((u) => u.role === "PHOTOGRAPHER");
   return photographers.map((u) => {
     const subjectLabel = u.brandName ?? u.name;
-    const isSuspended = u.suspendedAt !== null;
-    const status = isSuspended
-      ? "Suspended"
-      : u.verificationStatus === "approved"
-        ? "Approved"
-        : u.verificationStatus === "pending"
-          ? "Pending"
-          : "Incomplete";
+    const status = photographerStatus(u).label;
     const subtitle = `${status} · @${u.handle ?? "no-handle"} · ${u.city}`;
-    // Photographers without a handle have no detail page; fall back to the
-    // directory and let click semantics handle the no-op there.
-    const route = u.handle
-      ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${u.handle}`
-      : ROUTES.ADMIN_PHOTOGRAPHERS;
+    const route = photographerHref(u);
     return {
       id: `phg:${u.userId}`,
       kind: "photographer" as const,

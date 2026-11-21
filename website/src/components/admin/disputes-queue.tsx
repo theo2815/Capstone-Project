@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -30,7 +30,7 @@ import {
 } from "@/lib/admin-disputes";
 import type { AdminDisputeView } from "@/lib/api-admin";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
 
 // The server's views (no status filter in the UI on purpose; the server keeps `status=`).
@@ -48,8 +48,9 @@ const SEARCH_DEBOUNCE_MS = 300;
 // The server's page size, for the Load more count.
 const PAGE_INCREMENT = 50;
 
-// Phones (below md) get the actions inside the drawer's scroll, not a footer that takes half the screen (DSP7).
-// shortcut: crossing 768 px while a dispute modal is open remounts the aside and closes it; fine for rotate and resize.
+// Phones (below md) get the actions inside the drawer's scroll, not a footer that takes half the screen (DSP7);
+// their buttons stay in view in a row stuck to the bottom of that scroll.
+// shortcut: crossing 768 px remounts the aside and the drawer body, closing an open dispute modal or photo preview; fine for rotate and resize.
 const MD_UP = "(min-width: 768px)";
 const subscribeMdUp = (onChange: () => void) => {
   const mq = window.matchMedia?.(MD_UP);
@@ -161,13 +162,15 @@ export function DisputesQueue() {
     ? `No disputes match “${q}”.`
     : VIEWS.find((v) => v.value === view)?.empty;
 
-  const actionsAside = openRow && (
+  // On phones the aside wraps the drawer body, so its buttons can stay stuck to the bottom of the scroll.
+  const actionsAside = (body?: ReactNode) => openRow && (
     <AdminDisputeActionAside
       key={openRow.id}
       dispute={openRow}
       runnerHandle={openRow.runnerHandle}
       onDialogOpenChange={setAsideDialogOpen}
-      className=""
+      className={body ? "mb-10" : ""}
+      body={body}
     />
   );
 
@@ -258,12 +261,10 @@ export function DisputesQueue() {
           subtitle={<DisputeSubtitle dispute={openRow} />}
           actions={
             // Full width (the footer row is right-aligned) and its own scroll, so "Mark refunded" stays reachable on short screens; p-1 keeps focus outlines from being cut off.
-            mdUp ? <div className="w-full max-h-[50vh] overflow-y-auto p-1">{actionsAside}</div> : undefined
+            mdUp ? <div className="w-full max-h-[50vh] overflow-y-auto p-1">{actionsAside()}</div> : undefined
           }
         >
-          {/* On phones the actions come first, so the main action is in view when the drawer opens. */}
-          {!mdUp && <div className="mb-10">{actionsAside}</div>}
-          <DisputeDetailBody dispute={openRow} />
+          {mdUp ? <DisputeDetailBody dispute={openRow} /> : actionsAside(<DisputeDetailBody dispute={openRow} />)}
         </AdminDetailDrawer>
       )}
 
@@ -274,12 +275,12 @@ export function DisputesQueue() {
 function DisputeSubtitle({ dispute }: { dispute: Dispute }) {
   const eventName = dispute.eventName ?? "Event archived";
   return (
-    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+    <p className="font-sans text-sm text-slate-soft tnum break-words">
       {eventName}
       <span className="text-slate-soft"> · </span>
       Order total {formatPrice(dispute.orderSnapshot.total)}
       <span className="text-slate-soft"> · </span>
-      Reported {formatLongDate(dispute.reportedAt)}
+      Reported {sentenceCaseDate(formatLongDate(dispute.reportedAt))}
     </p>
   );
 }
@@ -320,9 +321,9 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         <Kicker as="p" tone="soft" className="mb-3">
           Claim
         </Kicker>
-        <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+        <Kicker as="p" tone="soft">
           Reason: {DISPUTE_REASON_LABEL[dispute.reason]}
-        </p>
+        </Kicker>
         <p className="font-sans text-sm md:text-base text-ink-soft mt-3 whitespace-pre-line">
           {dispute.note}
         </p>
@@ -366,7 +367,7 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
           <FieldRow label="Method" value={paymentLabel} mono={false} />
           <FieldRow
             label="Paid at"
-            value={formatLongDate(dispute.orderSnapshot.paidAt)}
+            value={sentenceCaseDate(formatLongDate(dispute.orderSnapshot.paidAt))}
             mono
           />
         </dl>
@@ -380,18 +381,18 @@ function DisputeDetailBody({ dispute }: { dispute: Dispute }) {
         </Kicker>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Runner
-            </p>
-            <p className="font-display text-lg text-ink mt-2">
+            </Kicker>
+            <p className="font-display text-lg text-ink mt-2 break-words">
               @{dispute.runnerHandle}
             </p>
           </div>
           <div className="rounded-2xl border border-line bg-bone-deep p-4">
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+            <Kicker as="p" tone="soft">
               Photographer
-            </p>
-            <p className="font-display text-lg text-ink mt-2">
+            </Kicker>
+            <p className="font-display text-lg text-ink mt-2 break-words">
               @{dispute.photographerHandle}
             </p>
           </div>
@@ -461,7 +462,7 @@ function DecisionFacts({ dispute: d }: { dispute: Dispute }) {
                 ? "No download record"
                 : d.downloadCount === 0
                   ? "No downloads yet"
-                  : `${d.downloadCount}${d.lastDownloadedAt ? ` · last ${formatLongDate(d.lastDownloadedAt)}` : ""}`
+                  : `${d.downloadCount}${d.lastDownloadedAt ? ` · last ${sentenceCaseDate(formatLongDate(d.lastDownloadedAt))}` : ""}`
             }
             help="Counts download starts; retries and share attempts count again. Gallery and receipt previews are not counted."
             mono={d.downloadCount !== null && d.downloadCount > 0}
@@ -530,13 +531,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
-        className={`mt-1 ${
+        className={`mt-1 break-words ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? "font-mono text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink tnum"
         }`}
       >
@@ -559,13 +560,13 @@ function ResolutionNote({
   if (!resolution) return null;
   return (
     <div className="rounded-xl border border-line bg-bone-deep p-4 mb-4">
-      <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="p" tone="soft">
         Closed before live decision logging started
-      </p>
+      </Kicker>
       <p className="font-sans text-sm text-ink-soft mt-2">
         {DISPUTE_RESOLUTION_LABEL[resolution]}
         {refundAmount !== null && ` · ${formatPrice(refundAmount)} refunded`}
-        {resolvedAt && ` · ${formatLongDate(resolvedAt)}`}
+        {resolvedAt && ` · ${sentenceCaseDate(formatLongDate(resolvedAt))}`}
       </p>
     </div>
   );

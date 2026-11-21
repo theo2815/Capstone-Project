@@ -61,14 +61,14 @@ export function AdminDisputeCard({
                 @{dispute.photographerHandle}
               </button>
             </h3>
-            <p id={idLineId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
+            <p id={idLineId} className="font-mono text-[13px] text-slate tnum">
               {dispute.id}
             </p>
           </div>
           <p className="font-sans text-sm text-slate mt-2 truncate">
             {DISPUTE_REASON_LABEL[dispute.reason]}
           </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
+          <p className="font-mono text-[13px] text-slate-soft mt-1 tnum">
             Order {dispute.orderId}
             <span className="text-slate-soft"> · </span>
             {formatAge(dispute.reportedAt)}
@@ -79,7 +79,7 @@ export function AdminDisputeCard({
             label={DISPUTE_STATUS_LABEL[dispute.status]}
             tone={disputeStatusTone(dispute.status)}
           />
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum">
+          <p className="font-mono text-[13px] text-ink tnum">
             {amountText}
             <span className="text-slate-soft"> · {paymentLabel}</span>
           </p>

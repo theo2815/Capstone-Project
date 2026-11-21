@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import type { PaginatedResponse } from "@/types/api";
 import {
   fetchAdminUsers, fetchAdminUsersPage, fetchAdminUserDetail, fetchAdminPhotographerSettings, fetchAdminUserRecord,
   approveUser, rejectUser, suspendUser, unsuspendUser, resetUserVerification,
@@ -43,6 +44,21 @@ export function useAdminPhotographersPage(status: AdminUserStatusFilter, q: stri
     queryKey: [...adminUserKeys.owner(user?.id ?? null), "photographers", status, q],
     fetchPage: async (offset, limit, signal) => {
       const page = await fetchAdminUsersPage({ role: "PHOTOGRAPHER", status, q: q || undefined, offset, limit }, signal);
+      return { ...page, items: page.items.map((row) => ({ ...row, id: row.userId })) };
+    },
+    limit: 50,
+    enabled: user?.role === "ADMIN",
+    staleTime: 30_000,
+  });
+}
+
+// AX-41: same owner prefix as the photographers list, so suspend and unsuspend refresh it.
+export function useAdminRunnersPage(q: string) {
+  const user = useAuthStore((s) => s.user);
+  return useInfiniteList<AdminUserRow & { id: string }>({
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), "runners", q],
+    fetchPage: async (offset, limit, signal) => {
+      const page = await fetchAdminUsersPage({ role: "RUNNER", q: q || undefined, offset, limit }, signal);
       return { ...page, items: page.items.map((row) => ({ ...row, id: row.userId })) };
     },
     limit: 50,
@@ -140,6 +156,17 @@ export function useAdminUserActions() {
       if (!isCurrent()) return false;
       qc.setQueryData<AdminUserRow[]>(adminUserKeys.list(owner), (rows) =>
         rows?.map((existing) => existing.userId === id ? row : existing));
+      // AX-65: the paged lists too, so a row's Suspend turns to Unsuspend before the refetch lands.
+      // AX-69: a photographer tab the row no longer matches drops it; the refetch adds it to its new tab.
+      const status = row.suspendedAt ? "suspended" : row.verificationStatus;
+      for (const [key, data] of qc.getQueriesData<InfiniteData<PaginatedResponse<AdminUserRow & { id: string }>>>(
+        { queryKey: adminUserKeys.owner(owner), predicate: (query) => query.queryKey[3] === "photographers" || query.queryKey[3] === "runners" })) {
+        if (!data?.pages.some((page) => page.items.some((existing) => existing.userId === id))) continue;
+        const leaves = key[3] === "photographers" && key[4] !== status;
+        qc.setQueryData(key, { ...data, pages: data.pages.map((page) => leaves
+          ? { ...page, total: page.total - 1, items: page.items.filter((existing) => existing.userId !== id) }
+          : { ...page, items: page.items.map((existing) => existing.userId === id ? { ...row, id } : existing) }) });
+      }
       qc.setQueryData<AdminUserDetail | null>(adminUserKeys.detail(owner, id), (detail) =>
         detail ? { ...row, decisionLog: detail.decisionLog,
           // A list row never carries the withdrawal (RV-L7); only an explicit null from the server clears it.

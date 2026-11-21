@@ -101,8 +101,10 @@ interface EventRepository : JpaRepository<Event, UUID> {
 
     // Admin event list — includes DRAFT (admin sees the full pipeline). `state` is
     // the derived state the FE sends ('' = all), `today` is Manila's date.
+    // Upcoming lists the soonest race first (AX-45); every other state, newest first.
     @Query(
-        "SELECT e FROM Event e WHERE $ADMIN_EVENT_FILTER ORDER BY e.date DESC, e.id ASC",
+        "SELECT e FROM Event e WHERE $ADMIN_EVENT_FILTER " +
+            "ORDER BY CASE WHEN :state = 'upcoming' THEN e.date END ASC, e.date DESC, e.id ASC",
         countQuery = "SELECT COUNT(e) FROM Event e WHERE $ADMIN_EVENT_FILTER",
     )
     fun pageForAdmin(
@@ -217,8 +219,8 @@ const val RACE_CREATION_LOCK_KEY = 78301L
 private const val ADMIN_EVENT_FILTER = """
     e.deletedAt IS NULL
     AND (:search = '' OR
-         LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) OR
-         LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')))
+         LOWER(e.name) LIKE LOWER(CONCAT('%', :search, '%')) ESCAPE '\' OR
+         LOWER(e.location) LIKE LOWER(CONCAT('%', :search, '%')) ESCAPE '\')
     AND e.date >= :dateFrom
     AND e.date <= :dateTo
     AND (:state = ''

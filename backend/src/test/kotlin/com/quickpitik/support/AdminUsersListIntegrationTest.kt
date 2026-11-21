@@ -7,6 +7,7 @@ import com.quickpitik.entity.User
 import com.quickpitik.entity.VerificationStatus
 import com.quickpitik.repository.PhotographerSettingsRepository
 import com.quickpitik.repository.UserRepository
+import com.quickpitik.service.admin.AdminKpiService
 import com.quickpitik.service.admin.AdminUserService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -20,6 +21,7 @@ class AdminUsersListIntegrationTest : PostgresIntegrationTest() {
     @Autowired private lateinit var service: AdminUserService
     @Autowired private lateinit var users: UserRepository
     @Autowired private lateinit var settings: PhotographerSettingsRepository
+    @Autowired private lateinit var kpis: AdminKpiService
 
     @Test
     fun `a status tab pages the filtered set and counts only that status`() {
@@ -51,6 +53,39 @@ class AdminUsersListIntegrationTest : PostgresIntegrationTest() {
         assertEquals(9, service.list(null, null, tag, PaginationParams.of(0, 50)).total)
     }
 
+    // AX-46: suspended wins over every other status, so a suspended photographer sits in one tab only.
+    @Test
+    fun `a suspended photographer is only in the suspended tab`() {
+        val tag = UUID.randomUUID().toString().take(8)
+        val held = listOf(
+            photographer(tag, VerificationStatus.PENDING, suspended = true),
+            photographer(tag, status = null, suspended = true),
+            photographer(tag, VerificationStatus.REJECTED, suspended = true),
+        )
+
+        fun ids(status: String) = service.list("PHOTOGRAPHER", status, tag, PaginationParams.of(0, 50)).let {
+            assertEquals(it.items.size.toLong(), it.total)
+            it.items.map { row -> row.userId }.toSet()
+        }
+        assertEquals(held.map { it.id }.toSet(), ids("suspended"))
+        assertEquals(emptySet(), ids("pending"))
+        assertEquals(emptySet(), ids("incomplete"))
+        assertEquals(emptySet(), ids("rejected"))
+    }
+
+    // AX-58: the Approved count leaves out a suspended approved photographer, as the Approved tab does.
+    @Test
+    fun `the Approved count equals the Approved tab's total`() {
+        val before = kpis.kpis().approvedPhotographers
+        val tag = UUID.randomUUID().toString().take(8)
+        photographer(tag, VerificationStatus.APPROVED)
+        photographer(tag, VerificationStatus.APPROVED, suspended = true)
+
+        val approved = kpis.kpis().approvedPhotographers
+        assertEquals(1, approved - before)
+        assertEquals(service.list("PHOTOGRAPHER", "approved", null, PaginationParams.of(0, 1)).total, approved)
+    }
+
     @Test
     fun `search finds a photographer by handle and by brand name`() {
         val tag = UUID.randomUUID().toString().take(8)
@@ -58,6 +93,19 @@ class AdminUsersListIntegrationTest : PostgresIntegrationTest() {
 
         assertEquals(listOf(photographer.id), service.list(null, null, "H$tag", PaginationParams.of(0, 50)).items.map { it.userId })
         assertEquals(listOf(photographer.id), service.list(null, null, "brand $tag", PaginationParams.of(0, 50)).items.map { it.userId })
+    }
+
+    // AX-44: % and _ in the search match only themselves.
+    @Test
+    fun `a percent or underscore in the search is plain text`() {
+        val tag = UUID.randomUUID().toString().take(8)
+        val offer = photographer("$tag 10% off", VerificationStatus.APPROVED)
+        photographer("$tag 100", VerificationStatus.APPROVED)
+
+        fun found(q: String) = service.list(null, null, q, PaginationParams.of(0, 50)).items.map { it.userId }.toSet()
+        assertEquals(setOf(offer.id), found("$tag 10%"))
+        assertEquals(emptySet(), found("$tag 10_"))
+        assertEquals(2, found(tag).size)
     }
 
     private fun photographer(

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { useAdminUserDetail } from "@/hooks/use-admin-users";
 import { useAdminDecisions } from "@/hooks/use-admin-decisions";
 import type { RecentAdminDecision } from "@/lib/api-admin";
@@ -65,9 +66,9 @@ export function AdminDecisionsTimeline({
             <p className="font-display text-base text-ink truncate">
               {row.title}
             </p>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1 tnum">
+            <Kicker as="p" tone="soft" className="mt-1 tnum">
               {row.when} · {row.automatic ? "automatic" : `by ${row.adminName ?? "unknown admin"}`}
-            </p>
+            </Kicker>
             {row.reason && (
               <p className="font-sans text-sm text-slate mt-1">
                 {row.reason}
@@ -75,7 +76,7 @@ export function AdminDecisionsTimeline({
             )}
           </div>
           <span
-            className={`font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 mt-1 ${decisionTone(row.decision)}`}
+            className={`font-mono uppercase ${KICKER_SIZE_CLASS.sm} shrink-0 mt-1 ${decisionTone(row.decision)}`}
           >
             {decisionLabel(row.decision)}
           </span>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -37,6 +38,7 @@ import {
 import {
   completenessItems,
   computeCompleteness,
+  photographerHref,
   snapshotFromSettings,
   useEffectivePhotographerSettings,
 } from "@/lib/admin-photographer-view";
@@ -383,23 +385,22 @@ export function VerificationsQueue() {
                 >
                   <div className="min-w-0">
                     <p className="font-display text-base text-ink truncate">
-                      {/* Same target as the directory card: the detail page needs a handle. */}
                       <Link
-                        href={row.handle ? `${ROUTES.ADMIN_PHOTOGRAPHERS}/${row.handle}` : ROUTES.ADMIN_PHOTOGRAPHERS}
+                        href={photographerHref(row)}
                         className="underline decoration-line underline-offset-4 hover:decoration-ink"
                       >
                         {row.brandName ?? row.name}
                       </Link>
                     </p>
-                    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-1">
+                    <p className="font-sans text-sm text-slate-soft mt-1">
                       {row.handle ? `@${row.handle}` : "No handle yet"}
                       <span className="text-slate-soft"> · </span>
                       <CompletenessFraction snapshot={row.settingsSnapshot} />
                     </p>
                   </div>
-                  <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft shrink-0">
+                  <Kicker as="span" tone="soft" className="shrink-0">
                     Self-serve
-                  </span>
+                  </Kicker>
                 </li>
               ))}
             </ul>
@@ -447,12 +448,12 @@ export function VerificationsQueue() {
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
           rightHeader={
-            <span className="inline-flex items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] rounded-full border border-line text-slate px-3 py-0.5">
+            <span className={`inline-flex items-center font-mono uppercase ${KICKER_SIZE_CLASS.sm} rounded-full border border-line text-slate px-3 py-0.5`}>
               Pending
             </span>
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+            <p className="font-sans text-sm text-slate tnum break-words">
               {openRow.handle ? `@${openRow.handle}` : "No handle yet"}
               {(openRow.region || openRow.city) && (
                 <>
@@ -462,7 +463,7 @@ export function VerificationsQueue() {
               )}
               <span className="text-slate-soft"> · </span>
               <span className="tnum">
-                Joined {formatMemberSince(openRow.createdAt)}
+                Joined {sentenceCaseDate(formatMemberSince(openRow.createdAt))}
               </span>
             </p>
           }
@@ -650,10 +651,10 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
           avatarOverride={avatarUrl ? { dataUrl: avatarUrl } : null}
         />
         <div className="min-w-0">
-          <p className="font-display text-lg md:text-xl text-ink truncate">
+          <p className="font-display text-lg md:text-xl text-ink break-words">
             {row.brandName ?? row.name}
           </p>
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft truncate">
+          <p className="font-mono text-[13px] text-slate-soft break-all">
             {row.email}
           </p>
         </div>
@@ -732,10 +733,10 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow
             label="Joined"
-            value={formatMemberSince(row.createdAt)}
+            value={sentenceCaseDate(formatMemberSince(row.createdAt))}
             mono
           />
-          <FieldRow label="Status" value="Pending review" mono />
+          <FieldRow label="Status" value="Pending review" mono={false} />
         </dl>
       </CollapsibleReviewSection>
     </div>
@@ -753,13 +754,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
-        className={`mt-1 ${
+        className={`mt-1 break-words ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? "font-mono text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >

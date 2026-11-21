@@ -299,7 +299,7 @@ function AboutSlab({
       <dl className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8 max-w-2xl">
         <DefRow label="Region" value={regionLine} />
         <DefRow label="City" value={city} />
-        <DefRow label="Joined" value={formatLongDate(memberSince, true)} />
+        <DefRow label="Joined" value={sentenceCaseDate(formatLongDate(memberSince, true))} />
         <DefRow label="Email" value={email} mono />
         {brandColor && brandColor !== "none" && (
           <DefRow label="Brand accent" value={BRAND_COLOR_LABEL[brandColor]} />
@@ -320,9 +320,9 @@ function DefRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
         title={value}
         className={`mt-1 text-sm text-ink break-all ${mono ? "font-mono" : "font-sans"}`}
@@ -342,7 +342,7 @@ function PublicUrlSlab({ handle }: { handle: string }) {
       number="03"
       title="Public URL"
       caption="Where runners find this photographer"
-      trailing={handle ? `@${handle}` : undefined}
+      trailing={handle ? <span className="font-mono text-[13px] text-slate-soft break-all min-w-0">@{handle}</span> : undefined}
     >
       <PublicUrlSection handle={handle} />
     </CollapsibleReviewSlab>

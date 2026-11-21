@@ -120,7 +120,7 @@ function RefundTimelineRow({ dispute }: { dispute: RunnerDispute }) {
         {dispute.resolutionNote &&
           (dispute.status === "resolved" || dispute.status === "denied") && (
             <p className="font-sans text-sm text-ink mt-2 border-l-2 border-line pl-3">
-              <span className="font-mono uppercase tracking-[0.14em] text-[10px] text-slate block mb-1">
+              <span className="font-mono uppercase tracking-[0.14em] text-[12px] text-slate block mb-1">
                 Admin note
               </span>
               {dispute.resolutionNote}

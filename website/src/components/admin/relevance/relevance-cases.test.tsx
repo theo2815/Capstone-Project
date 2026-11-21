@@ -234,3 +234,10 @@ it("the Inbox opens on the cases a person must decide", async () => {
   expect(screen.getByRole("button", { name: "Can't tell" })).toHaveAttribute("aria-pressed", "true");
   await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining("tab=cant_tell"), expect.anything()));
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("a case row's values are not upper-cased", async () => {
+  mount();
+  const card = await screen.findByRole("button", { name: /^(?!Enlarge).*Cebu City Marathon 2003/ });
+  expect(within(card).getByText(/420 photos · 81% junk · Feb 14 · 2003/).closest(".uppercase")).toBeNull();
+});

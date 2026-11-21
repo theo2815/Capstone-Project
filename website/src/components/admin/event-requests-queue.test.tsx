@@ -126,6 +126,37 @@ it("a request time in the future or unreadable shows no age", () => {
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   expect(screen.queryByText(/Waiting/)).not.toBeInTheDocument();
 });
+it("a new request created three days ago says how long it has waited", () => {
+  const createdAt = new Date(Date.now() - 3 * 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Waiting 3 days/)).toBeInTheDocument();
+});
+it("a race sent again counts from its resend, not its first submission", () => {
+  const createdAt = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  const resubmittedAt = new Date(Date.now() - 2 * 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt, resubmittedAt }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Waiting 2 days/)).toBeInTheDocument();
+});
+it("a race never sent again (resend time null) counts from its submission", () => {
+  const createdAt = new Date(Date.now() - 3 * 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt, resubmittedAt: null }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Waiting 3 days/)).toBeInTheDocument();
+});
+it("a new request without a submission time (older backend) shows no age", () => {
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "pending", pendingChange: null, createdAt: undefined }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.queryByText(/Waiting/)).not.toBeInTheDocument();
+});
+it("a change request counts from its request time, not the event's submission time", () => {
+  const requestedAt = new Date(Date.now() - 86_400_000 - 60_000).toISOString();
+  client.setQueryData(key, [{ ...adminEvent, reviewStatus: "change_pending", createdAt: "2026-01-01T00:00:00Z",
+    resubmittedAt: "2026-02-01T00:00:00Z", pendingChange: { pricingMode: "free", pricePerPhoto: "0", watermarkPolicy: "platform", requestedAt } }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/Waiting 1 day\b/)).toBeInTheDocument();
+});
 it("approving a race edit names the changed fields", async () => {
   client.setQueryData(key, [{ ...adminEvent, eventType: "ROAD_RACE", reviewStatus: "change_pending",
     pendingChange: { kind: "race_edit", fields: { title: "Cebu City Marathon", date: "2026-09-11" }, coverS3Key: "events/x/cover.jpg", requestedBy: "u", requestedAt: "2026-09-09T00:00:00Z" } }]);
@@ -244,4 +275,16 @@ it("join confirm closes when the request is gone", async () => {
   act(() => { client.setQueryData(key, []); });
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(post).not.toHaveBeenCalled();
+});
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("a request card's values are not upper-cased", () => {
+  client.setQueryData(key, [{ ...adminEvent, status: "DRAFT", reviewStatus: "pending", createdByHandle: "anashoots" }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/· @anashoots/).closest(".uppercase")).toBeNull();
+  expect(screen.getByText(/^Sep 10 · 2026 · /)).toBeInTheDocument();
+  cleanup();
+  client.setQueryData(key, [race]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText(/· Sep 10 · 2026 · SRP, Cebu City · strong match/)).toBeInTheDocument();
 });

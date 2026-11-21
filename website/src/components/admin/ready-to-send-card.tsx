@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { useToast } from "@/hooks/use-toast";
 import { type AdminPayoutCycle, payoutMethodLabel } from "@/lib/admin-payouts";
 import { formatPayoutNumber } from "@/lib/payout-format";
@@ -71,7 +71,7 @@ export function ReadyToSendCard({ cycle }: { cycle: AdminPayoutCycle }) {
               href={methodEntry.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2"
+              className={`font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-surface bg-fresh hover:bg-fresh-deep transition-colors rounded-full px-5 py-2 inline-flex items-center gap-2`}
             >
               {methodEntry.label}
               <span aria-hidden="true">↗</span>
@@ -110,7 +110,7 @@ function CopyButton({ value }: { value: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink border border-ink hover:bg-ink hover:text-surface transition-colors rounded-full px-5 py-2"
+      className={`font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink border border-ink hover:bg-ink hover:text-surface transition-colors rounded-full px-5 py-2`}
     >
       {copied ? "Copied!" : "Copy number"}
     </button>

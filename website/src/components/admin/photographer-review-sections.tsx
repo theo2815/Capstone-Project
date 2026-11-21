@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Kicker } from "@/components/ui/kicker";
+import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { completenessItems, type EffectivePhotographerSettings } from "@/lib/admin-photographer-view";
 import type { PhotographerSettingsSnapshot } from "@/lib/admin-user-registry";
 import { formatPayoutNumber } from "@/lib/payout-format";
@@ -13,7 +13,7 @@ import {
 // The photographer review sections, shared by the verification drawer and the
 // photographer page. Each caller keeps its own wrapper (drawer section or page slab).
 
-const MONO_LABEL = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
+const MONO_LABEL = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 
 export function CoverSection({ effective }: { effective: EffectivePhotographerSettings | null }) {
   const cover = effective?.cover ?? null;

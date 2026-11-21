@@ -43,7 +43,8 @@ export function AdminStatTile({
       </p>
       <p
         className={cn(
-          "font-display text-3xl md:text-4xl font-medium tracking-tight mt-4 tnum",
+          // Wraps only a value too long for its tile (big money on Sales); short counts never do.
+          "font-display text-3xl md:text-4xl font-medium tracking-tight mt-4 tnum [overflow-wrap:anywhere]",
           isMuted ? "text-slate" : "text-ink",
         )}
       >

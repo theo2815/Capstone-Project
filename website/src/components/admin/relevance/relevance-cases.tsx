@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
@@ -22,13 +23,13 @@ import {
   type RelevanceCaseRow,
   type RelevanceTab,
 } from "@/lib/admin-relevance";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { RelevanceCaseBody, RelevanceCaseSubtitle } from "./relevance-case-drawer";
 import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-actions";
 import { RelevanceAppeals } from "./relevance-appeals";
 
 const PAGE_INCREMENT = 50;
-const kicker = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
+const kicker = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 
 // The cases and their actions. The tab (`?tab=`) and the open case (`?row=`) live in the URL, so a link opens the same view.
 // defaultTab: the Inbox opens on "Can't tell", the cases its badge counts; the full page opens on "Hidden".
@@ -171,13 +172,13 @@ function CaseRow({ row, onOpen }: { row: RelevanceCaseRow; onOpen: () => void })
         {isWouldHave(row) && <AdminStatusPill label="Would have hidden" tone="amber" />}
       </span>
       <span className="mt-3 block font-display text-base md:text-lg font-bold text-ink">{row.eventName}</span>
-      <span className={`${kicker} mt-1 block text-slate-soft tnum`}>
+      <span className="mt-1 block font-sans text-sm text-slate-soft tnum">
         {row.photographerHandle ? `@${row.photographerHandle}` : row.photographerName}
         {" · "}
         {row.batchPhotos} photos
         {row.junkPercent !== null && ` · ${row.junkPercent}% junk`}
         {" · "}
-        {formatLongDate(row.decidedAt)}
+        {sentenceCaseDate(formatLongDate(row.decidedAt))}
       </span>
     </button>
   );

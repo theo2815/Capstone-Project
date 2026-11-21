@@ -242,3 +242,19 @@ it("the Won confirm says a won appeal ends a copied case's payout hold", async (
   const confirm = await screen.findByRole("dialog", { name: "Appeal won" });
   expect(confirm.textContent).toContain("A Copied case's payout hold ends; payouts resume once the photographer has no other hold.");
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("an appeal row's values are not upper-cased", async () => {
+  fixtures.search = "tab=appeals";
+  mount();
+  const open = await screen.findByRole("region", { name: "Open" });
+  expect((await within(open).findByText(/Feb 16 · 2003/)).closest(".uppercase")).toBeNull();
+});
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+it("the appeal drawer's subtitle is not upper-cased", async () => {
+  mount();
+  const open = await drawer();
+  const subtitle = within(open).getByText(/Filed Feb 16 · 2003/);
+  expect(subtitle.closest(".uppercase")).toBeNull();
+});

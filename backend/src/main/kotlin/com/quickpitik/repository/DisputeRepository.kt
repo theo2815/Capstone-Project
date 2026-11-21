@@ -89,7 +89,8 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
 
     // Admin queue list and search. `q` is '' for no search, never null (a null bind inside
     // LOWER(CONCAT(...)) is typed bytea by Postgres). Names, e-mails, the handle and the event
-    // name match as case-insensitive "contains"; ids and PayMongo ids match exactly.
+    // name match as case-insensitive "contains" on `qLike` (q through escapeLike); ids and
+    // PayMongo ids match `q` exactly, since a pay_ id holds an underscore.
     // EXISTS keeps one row per dispute however many payments or joins match.
     @Query(
         """
@@ -105,6 +106,7 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
     fun pageForAdmin(
         @Param("statusWires") statusWires: Collection<String>,
         @Param("q") q: String,
+        @Param("qLike") qLike: String,
         pageable: Pageable,
     ): Page<Dispute>
 
@@ -126,7 +128,7 @@ interface RunnerDisputeCount {
     val n: Long
 }
 
-private const val CONTAINS_Q ="LIKE LOWER(CONCAT('%', :q, '%'))"
+private const val CONTAINS_Q = "LIKE LOWER(CONCAT('%', :qLike, '%')) ESCAPE '\\'"
 
 // The `q` predicates of pageForAdmin, shared by its row and count queries.
 private const val ADMIN_SEARCH = """

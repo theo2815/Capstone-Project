@@ -26,11 +26,11 @@ interface RunnerInboxModalProps {
 const KIND_TONE: Record<RunnerMessageKind, string> = {
   dispute_resolved: "text-fresh",
   dispute_denied: "text-error",
-  dispute_escalated: "text-warning",
+  dispute_escalated: "text-warning-text",
   admin_message: "text-ink",
   account_suspended: "text-error",
   account_unsuspended: "text-fresh",
-  photo_removed: "text-warning",
+  photo_removed: "text-warning-text",
   photo_removal_update: "text-ink",
 };
 

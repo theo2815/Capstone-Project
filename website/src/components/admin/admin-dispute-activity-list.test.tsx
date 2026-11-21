@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it } from "vitest";
-import { formatSalesDate } from "@/lib/format";
+import { formatSalesDate, sentenceCaseDate } from "@/lib/format";
 import { AdminDisputeActivityList } from "./admin-dispute-activity-list";
 
 afterEach(cleanup);
@@ -54,5 +54,11 @@ it("shows 20 entries, then a Show all button for the rest", async () => {
 
 it("dates come from the shared formatter, in Manila time", () => {
   render(<AdminDisputeActivityList activity={[{ id: "a1", decidedAt: "2026-10-28T02:00:00Z", decision: "escalated", resolution: null, refundAmount: null, reason: null }]} />);
-  expect(screen.getByRole("listitem")).toHaveTextContent(formatSalesDate("2026-10-28T02:00:00Z"));
+  expect(screen.getByRole("listitem")).toHaveTextContent(sentenceCaseDate(formatSalesDate("2026-10-28T02:00:00Z")));
+});
+
+// AX-63: the activity time reads as typed, not in CSS capitals.
+it("reads the activity time as typed, not in capitals", () => {
+  render(<AdminDisputeActivityList activity={[{ id: "a1", decidedAt: "2026-10-28T02:00:00Z", decision: "escalated", resolution: null, refundAmount: null, reason: null }]} />);
+  expect(screen.getByText("Oct 28, 2026, 10:00 am").closest(".uppercase")).toBeNull();
 });

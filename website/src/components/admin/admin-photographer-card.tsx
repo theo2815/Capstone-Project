@@ -2,7 +2,7 @@ import Link from "next/link";
 import { AvatarDisc } from "@/components/account/avatar-disc";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { computeCompleteness, photographerHref, photographerStatus } from "@/lib/admin-photographer-view";
-import { formatMemberSince } from "@/lib/format";
+import { formatMemberSince, sentenceCaseDate } from "@/lib/format";
 import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { cn } from "@/lib/utils";
 
@@ -42,20 +42,20 @@ export function AdminPhotographerCard({
                 {row.brandName ?? row.name}
               </h3>
               {row.handle && (
-                <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate">
+                <p className="font-mono text-[13px] text-slate">
                   @{row.handle}
                 </p>
               )}
             </div>
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-2 truncate">
+            <p className="font-sans text-sm text-slate-soft mt-2 truncate">
               <span title={place}>{place}</span>
               <span className="text-slate-soft"> · </span>
-              <span className="tnum">since {formatMemberSince(row.createdAt)}</span>
+              <span className="tnum">since {sentenceCaseDate(formatMemberSince(row.createdAt))}</span>
             </p>
           </div>
           <div className="flex flex-col items-end gap-2 shrink-0 ml-auto md:ml-0">
             <AdminStatusPill label={status.label} tone={status.tone} />
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+            <p className="font-mono text-[13px] text-slate-soft tnum">
               {completeness.filled}/{completeness.total} fields
             </p>
           </div>

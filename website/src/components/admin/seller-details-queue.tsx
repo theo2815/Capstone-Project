@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { useEffect, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
@@ -24,11 +25,11 @@ import { ApiError } from "@/lib/api";
 import { SELLER_ID_TYPES, type AdminSellerDetails, type AdminSellerFilter, type RepeatMatch } from "@/lib/api-seller-details";
 import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { cn } from "@/lib/utils";
 
-const KICKER = "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px]";
+const KICKER = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 // Keyed by reviewState; `status` keeps the old values for old builds.
 const STATUS_LABEL: Record<string, string> = { manual_review: "Needs review", auto_approved: "Auto-approved", approved: "Approved", rejected: "Rejected" };
 const REASON_LABEL: Record<string, string> = {
@@ -108,8 +109,8 @@ export function SellerDetailsQueue() {
                   className="w-full flex items-center justify-between gap-4 border-b border-line pb-3 text-left hover:bg-bone-deep/50">
                   <span className="min-w-0">
                     <span className="block font-display text-base text-ink truncate">{row.legalName}</span>
-                    <span className={cn(KICKER, "block text-slate-soft mt-1")}>
-                      {idLabel(row.idType)} · <span className="tnum">{formatLongDate(row.submittedAt, true)}</span>
+                    <span className="block font-sans text-sm text-slate-soft mt-1">
+                      {idLabel(row.idType)} · <span className="tnum">{sentenceCaseDate(formatLongDate(row.submittedAt, true))}</span>
                     </span>
                   </span>
                   <StatusPill reviewState={row.reviewState} className="shrink-0" />
@@ -179,7 +180,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
     <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending || !!zoom}
       kicker="Seller details" title={data?.legalName ?? "Seller details"}
       rightHeader={data && <StatusPill reviewState={data.reviewState} />}
-      subtitle={data && <p className={cn(KICKER, "text-slate")}>{data.email}</p>}
+      subtitle={data && <p className="font-mono text-[13px] text-slate break-all">{data.email}</p>}
       actions={data && (
         <>
           {canReject && (
@@ -235,13 +236,13 @@ function Details({ data, payoutNames }: { data: AdminSellerDetails; payoutNames:
     ["Address", data.address],
     ["Phone", data.phone],
     ["Payout account names", payoutNames === null ? "Loading…" : typeof payoutNames === "string" ? payoutNames : payoutNames.join(", ") || "No payout accounts"],
-    ["Submitted", formatLongDate(data.submittedAt)],
+    ["Submitted", sentenceCaseDate(formatLongDate(data.submittedAt))],
     ["Live check score", score(data.livenessConfidence)],
     ["Face match score", score(data.faceSimilarity)],
     ["Reasons", data.reasonCodes.length > 0
       ? data.reasonCodes.map((code) => REASON_LABEL[code] ?? code).join("; ")
       : data.autoCheckedAt ? "None" : "Sent before automatic checks"],
-    ["Live-selfie consent", data.biometricConsentAt ? formatLongDate(data.biometricConsentAt) : "Not given"],
+    ["Live-selfie consent", data.biometricConsentAt ? sentenceCaseDate(formatLongDate(data.biometricConsentAt)) : "Not given"],
     ["ID number on file", data.hasIdNumber ? "Yes" : "No"],
   ];
   if (data.failedAutoChecks) rows.push(["Failed automatic tries", String(data.failedAutoChecks)]);

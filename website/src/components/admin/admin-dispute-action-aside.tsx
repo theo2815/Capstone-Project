@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
 import { DISPUTE_REASON_LABEL, type Dispute, type DisputeResolution } from "@/lib/admin-disputes";
@@ -25,6 +25,8 @@ interface AdminDisputeActionAsideProps {
   onDialogOpenChange?: (open: boolean) => void;
   // Replaces the page-column layout (sticky on lg); the card look stays.
   className?: string;
+  // Phones: the drawer body goes here, and the buttons move to a row stuck to the bottom of the drawer's scroll after it.
+  body?: ReactNode;
 }
 
 interface PendingResolve {
@@ -48,6 +50,7 @@ export function AdminDisputeActionAside({
   runnerHandle,
   onDialogOpenChange,
   className = "lg:sticky lg:top-24 mt-12 lg:mt-0",
+  body,
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
   const { resolve, denyWithCode, escalate, isPending, pendingAction } = useDisputeActions();
@@ -132,7 +135,42 @@ export function AdminDisputeActionAside({
     showToast({ kind: "info", message: `Escalated · ${dispute.id}` });
   }
 
+  const approveDeny = isOpen && (
+    <>
+      <button
+        type="button"
+        onClick={() => setResolveOpen(true)}
+        disabled={submitting}
+        className={primaryFreshBtn}
+      >
+        Approve refund…
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setDenyCode(null);
+          setDenyOpen(true);
+        }}
+        disabled={submitting}
+        className={dangerBtn}
+      >
+        Deny…
+      </button>
+    </>
+  );
+  const escalateBtn = isOpen && !isEscalated && (
+    <button
+      type="button"
+      onClick={() => setEscalateOpen(true)}
+      disabled={submitting}
+      className={tertiaryBtn}
+    >
+      Escalate…
+    </button>
+  );
+
   return (
+    <>
     <aside
       aria-label="Admin actions"
       className={`${className} rounded-2xl border border-line bg-bone p-5 md:p-6`}
@@ -142,45 +180,14 @@ export function AdminDisputeActionAside({
       </Kicker>
       {submitting && <p role="status">{pendingAction(dispute.id)}</p>}
       <div className="mt-5 space-y-3">
-        {isOpen && (
-          <>
-            <button
-              type="button"
-              onClick={() => setResolveOpen(true)}
-              disabled={submitting}
-              className={primaryFreshBtn}
-            >
-              Approve refund…
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDenyCode(null);
-                setDenyOpen(true);
-              }}
-              disabled={submitting}
-              className={dangerBtn}
-            >
-              Deny…
-            </button>
-          </>
-        )}
+        {!body && approveDeny}
         {isOpen && dispute.refundable === false && dispute.refundBlockedMessage && (
           <p className="font-sans text-sm text-slate-soft">{dispute.refundBlockedMessage}</p>
         )}
         {isOpen && dispute.refundable === true && (
           <p className="font-sans text-sm text-slate-soft">A full refund can be approved now.</p>
         )}
-        {isOpen && !isEscalated && (
-          <button
-            type="button"
-            onClick={() => setEscalateOpen(true)}
-            disabled={submitting}
-            className={tertiaryBtn}
-          >
-            Escalate…
-          </button>
-        )}
+        {!body && escalateBtn}
         {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={setPanelDialogOpen} />}
         {!isOpen && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
@@ -240,6 +247,21 @@ export function AdminDisputeActionAside({
         body="Push this dispute to the next review tier when you can't decide yet. You can still approve or deny it afterwards."
       />
     </aside>
+    {body}
+    {/* -mx-6/px-6 cover the drawer's side padding so the scrolling evidence does not show beside the row.
+        Tighter padding keeps the three labels on one line from 360 px; narrower screens wrap to a second line.
+        The bottom padding clears a phone's home bar (the layout sets viewport-fit=cover). */}
+    {body && isOpen && (
+      <div
+        role="group"
+        aria-label="Dispute actions"
+        className="sticky bottom-0 -mx-6 mt-10 flex flex-wrap gap-1.5 border-t border-line bg-bone px-6 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] [&>button]:w-auto [&>button]:flex-auto [&>button]:px-2"
+      >
+        {approveDeny}
+        {escalateBtn}
+      </div>
+    )}
+    </>
   );
 }
 

@@ -6,7 +6,6 @@ import { useInfiniteList } from "@/hooks/use-infinite-list";
 import {
   decideRelevanceAppeal,
   endRelevanceHold,
-  fetchRelevanceAlerts,
   fetchRelevanceAppeals,
   fetchRelevanceCase,
   fetchRelevanceCases,
@@ -14,14 +13,12 @@ import {
   hideRelevanceBatch,
   holdRelevancePayouts,
   keepRelevanceCaseHidden,
-  markRelevanceAlertSeen,
   markRelevanceAppealEvidenceOpened,
   markRelevanceCaseLooksFine,
   restoreRelevanceCase,
   restoreRelevancePhoto,
 } from "@/lib/api-admin";
 import type {
-  RelevanceAlert,
   RelevanceAppealRow,
   RelevanceAppealStatus,
   RelevanceCaseAction,
@@ -48,34 +45,6 @@ export function useRelevanceCases(tab: RelevanceTab, repeat = false) {
     // RV-3.5: the Appeals tab lists appeals, not cases.
     enabled: session.enabled && tab !== "appeals",
   });
-}
-
-// RV-1.11b: the unseen alerts, shared by the inbox chip (its count) and the inbox list.
-export function useUnseenRelevanceAlerts() {
-  const session = usePrivateQuerySession("ADMIN");
-  return useInfiniteList<RelevanceAlert & { id: string }>({
-    queryKey: ["admin", "relevance", "alerts", "unseen", ...session.key],
-    fetchPage: async (offset, limit, signal) => {
-      const page = await fetchRelevanceAlerts({ unseen: true, offset, limit }, signal);
-      return { ...page, items: page.items.map((a) => ({ ...a, id: a.alertId })) };
-    },
-    limit: PAGE_LIMIT,
-    staleTime: STALE_MS,
-    enabled: session.enabled,
-  });
-}
-
-/** Marks one alert seen; the list changes only after the server confirms and the alerts are read again. */
-export function useMarkRelevanceAlertSeen() {
-  const qc = useQueryClient();
-  const mutation = useMutation({
-    mutationFn: (alertId: string) => markRelevanceAlertSeen(alertId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "relevance"] }),
-  });
-  return {
-    markSeen: mutation.mutateAsync,
-    isPending: (alertId: string) => mutation.isPending && mutation.variables === alertId,
-  };
 }
 
 // RV-2.6: a batch's holds, restored ones included (they stay listed, greyed).

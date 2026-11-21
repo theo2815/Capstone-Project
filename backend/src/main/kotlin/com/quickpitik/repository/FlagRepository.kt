@@ -25,6 +25,7 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
     fun pageForAdmin(
         @Param("statusWire") statusWire: String?,
         @Param("query") query: String?,
+        @Param("reasonCodes") reasonCodes: Collection<String>,
         pageable: Pageable,
     ): Page<Flag>
 
@@ -33,7 +34,10 @@ interface FlagRepository : JpaRepository<Flag, UUID> {
         "SELECT new com.quickpitik.repository.StatusCountRow(f.statusWire, COUNT(f)) FROM Flag f " +
             "WHERE ($ADMIN_FLAG_SEARCH) GROUP BY f.statusWire",
     )
-    fun countByStatusForAdmin(@Param("query") query: String): List<StatusCountRow>
+    fun countByStatusForAdmin(
+        @Param("query") query: String,
+        @Param("reasonCodes") reasonCodes: Collection<String>,
+    ): List<StatusCountRow>
 
     @Query("SELECT f.targetId FROM Flag f WHERE f.id = :id AND f.targetKindWire = 'photo'")
     fun findPhotoId(@Param("id") id: UUID): UUID?
@@ -196,18 +200,26 @@ interface HiddenPhotoCount {
     val hidden: Long
 }
 
-private const val FLAG_CONTAINS = "LIKE LOWER(CONCAT('%', :query, '%'))"
+private const val FLAG_CONTAINS = "LIKE LOWER(CONCAT('%', :query, '%')) ESCAPE '\\'"
 
-// The admin flag search (AX-10): reason, note, the exact flag id, the reporter's name or
-// handle, and the photographer's handle. The photographer is found as
+// The admin flag search (AX-10, AX-48): reason code or label (:reasonCodes, the codes whose
+// label the search names), note, the exact flag id, the reporter's name, email or handle,
+// and the photographer's name or handle. The photographer is found as
 // AdminFlagService.hydrateMany finds it: the photo's owner, the event's creator (or
 // submitter), or the flagged user.
+// shortcut: the name and handle branches may scan users per flag, fine for thousands of flags, upgrade to id lookups if admin flag search slows
 private const val ADMIN_FLAG_SEARCH = """
     :query = ''
     OR LOWER(f.reason) $FLAG_CONTAINS
+    OR f.reason IN :reasonCodes
     OR LOWER(f.note) $FLAG_CONTAINS
     OR CAST(f.id AS String) = LOWER(:query)
-    OR EXISTS (SELECT 1 FROM User u WHERE u.id = f.reporterId AND LOWER(u.name) $FLAG_CONTAINS)
+    OR EXISTS (SELECT 1 FROM User u WHERE u.id = f.reporterId AND (LOWER(u.name) $FLAG_CONTAINS OR LOWER(u.email) $FLAG_CONTAINS))
+    OR EXISTS (SELECT 1 FROM User u WHERE LOWER(u.name) $FLAG_CONTAINS AND (
+        (f.targetKindWire = 'user' AND u.id = f.targetId)
+        OR (f.targetKindWire = 'photo' AND EXISTS (SELECT 1 FROM Photo p WHERE p.id = f.targetId AND p.photographerId = u.id))
+        OR (f.targetKindWire = 'event' AND EXISTS (SELECT 1 FROM Event e WHERE e.id = f.targetId
+            AND COALESCE(e.createdBy, e.submittedBy) = u.id))))
     OR EXISTS (SELECT 1 FROM PhotographerSettings s WHERE LOWER(s.handle) $FLAG_CONTAINS AND (
         s.userId = f.reporterId
         OR (f.targetKindWire = 'user' AND s.userId = f.targetId)

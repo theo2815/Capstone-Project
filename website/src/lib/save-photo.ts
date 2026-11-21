@@ -54,6 +54,17 @@ export async function savePhoto(url: string): Promise<SaveResult> {
   return "downloaded";
 }
 
+// Free-event download (gallery tile or preview). Same as savePhoto, plus a
+// message on the plain-download path, which otherwise gives no sign it started;
+// the share sheet and the in-app hint are their own feedback.
+export async function saveFreePhoto(url: string): Promise<SaveResult> {
+  const result = await savePhoto(url);
+  if (result === "downloaded") {
+    useToastStore.getState().showToast({ kind: "success", message: "Downloading your free photo…" });
+  }
+  return result;
+}
+
 // Fetches one photo and hands it to the OS share sheet. Returns true when the
 // sheet handled it (a user-cancelled sheet counts — that's a choice, not a
 // failure), false when file sharing isn't available so the caller can fall back.

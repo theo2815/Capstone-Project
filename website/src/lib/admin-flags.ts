@@ -6,30 +6,6 @@
 import { ApiError } from "@/lib/api";
 
 export type FlagStatus = "open" | "resolved" | "hidden" | "dismissed" | "escalated";
-export type FlagReason =
-  | "wrong_runner"
-  | "low_quality"
-  | "inappropriate"
-  | "watermark_bypass"
-  | "duplicate"
-  | "other"
-  // Written by the backend's SystemFlagService (SystemFlagReason, lowercase).
-  | "profile_image_flagged"
-  | "profile_image_unchecked"
-  | "payout_name_changed"
-  | "repeat_account_match"
-  | "race_check_miss"
-  | "race_edit_held"
-  | "possible_duplicate"
-  | "same_bib_duplicate"
-  | "no_proof_hidden"
-  | "no_proof_unindexed"
-  | "report_threshold_hidden"
-  | "user_report"
-  | "runner_removal_held"
-  // PE-2: a photographer's batch of uploads that may not belong to the event.
-  | "batch_relevance_low";
-
 /** What a flag points at (flags.target_kind). Only photo flags can be hidden. */
 export type FlagTargetKind = "photo" | "user" | "event";
 
@@ -47,8 +23,10 @@ export interface Flag {
   eventName: string | null;
   photographerHandle: string;
   reportedBy: string; // handle or "system"
-  /** Free text on the wire (flags.reason VARCHAR(40)); usually a FlagReason. */
+  /** Free text on the wire (flags.reason VARCHAR(40)). */
   reason: string;
+  /** AX-59: the reason's label from the backend; absent from an older backend, null for an unknown code. */
+  reasonLabel?: string | null;
   note: string;
   status: FlagStatus;
   reportedAt: string;
@@ -62,31 +40,8 @@ export interface Flag {
   payoutHoldAt: string | null;
 }
 
-export const FLAG_REASON_LABEL: Record<FlagReason, string> = {
-  wrong_runner: "Wrong runner / face mismatch",
-  low_quality: "Quality below threshold",
-  inappropriate: "Inappropriate or NSFW",
-  watermark_bypass: "Watermark removed or bypassed",
-  duplicate: "Duplicate of another listing",
-  other: "Other (see note)",
-  profile_image_flagged: "Profile image failed the automatic check",
-  profile_image_unchecked: "Profile image could not be checked",
-  payout_name_changed: "Payout name changed",
-  repeat_account_match: "Details match another account",
-  race_check_miss: "Race failed an automatic check",
-  race_edit_held: "Race edit waiting for review",
-  possible_duplicate: "Possible duplicate of another race",
-  same_bib_duplicate: "Possible duplicate: same bibs as another race",
-  no_proof_hidden: "Race hidden: no proof it took place",
-  no_proof_unindexed: "Race has no indexed photos yet",
-  report_threshold_hidden: "Race hidden after several reports",
-  user_report: "Reported by a user",
-  runner_removal_held: "Runner deletion held",
-  batch_relevance_low: "Uploads may not belong to the event",
-};
-
-export function flagReasonLabel(reason: string): string {
-  return (FLAG_REASON_LABEL as Record<string, string>)[reason] ?? reason;
+export function flagReasonLabel(flag: Pick<Flag, "reason" | "reasonLabel">): string {
+  return flag.reasonLabel || flag.reason;
 }
 
 export function flagEventName(flag: Flag): string {

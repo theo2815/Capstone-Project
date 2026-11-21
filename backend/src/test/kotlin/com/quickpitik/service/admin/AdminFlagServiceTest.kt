@@ -878,7 +878,7 @@ class AdminFlagServiceTest {
 
     @Test
     fun `counts give every flag status with zeros, use the list's search, and respect the flags switch`() {
-        Mockito.`when`(flagRepository.countByStatusForAdmin("x".repeat(100))).thenReturn(listOf(
+        Mockito.`when`(flagRepository.countByStatusForAdmin("x".repeat(100), emptyList())).thenReturn(listOf(
             com.quickpitik.repository.StatusCountRow("open", 4),
             com.quickpitik.repository.StatusCountRow("escalated", 1),
         ))
@@ -886,5 +886,72 @@ class AdminFlagServiceTest {
         assertEquals(mapOf("open" to 4L, "resolved" to 0L, "hidden" to 0L, "dismissed" to 0L, "escalated" to 1L), counts)
         val off = assertFailsWith<ApiException> { service(flagsEnabled = false).counts(null) }
         assertEquals(ErrorCodes.FLAGS_DISABLED, off.code)
+    }
+
+    // AX-44: % and _ in the search are plain characters, in the list and in the tab counts.
+    @Test
+    fun `the list and the counts pass the search with LIKE wildcards escaped`() {
+        Mockito.`when`(flagRepository.pageForAdmin(
+            Mockito.isNull(),
+            Mockito.eq("nsfw\\_50\\%") ?: "",
+            Mockito.eq(emptyList<String>()) ?: emptyList(),
+            Mockito.any(org.springframework.data.domain.Pageable::class.java) ?: org.springframework.data.domain.Pageable.unpaged(),
+        )).thenReturn(org.springframework.data.domain.PageImpl(emptyList()))
+        Mockito.`when`(flagRepository.countByStatusForAdmin("nsfw\\_50\\%", emptyList())).thenReturn(listOf(
+            com.quickpitik.repository.StatusCountRow("open", 2),
+        ))
+
+        assertEquals(0, service().list(null, "nsfw_50%", PaginationParams.of(0, 10)).total)
+        assertEquals(2L, service().counts("nsfw_50%").counts["open"])
+    }
+
+    // AX-48: a search names reason codes by their label, or by the code read with spaces.
+    @Test
+    fun `reason codes match a search by their label or by the code with spaces`() {
+        assertEquals(listOf("inappropriate"), flagReasonCodesMatching("NSFW"))
+        assertEquals(listOf("low_quality"), flagReasonCodesMatching(" low quality "))
+        assertEquals(emptyList(), flagReasonCodesMatching("zebra"))
+        assertEquals(emptyList(), flagReasonCodesMatching(""))
+    }
+
+    @Test
+    fun `the list and the counts pass the reason codes the search names`() {
+        Mockito.`when`(flagRepository.pageForAdmin(
+            Mockito.isNull(),
+            Mockito.eq("NSFW") ?: "",
+            Mockito.eq(listOf("inappropriate")) ?: emptyList(),
+            Mockito.any(org.springframework.data.domain.Pageable::class.java) ?: org.springframework.data.domain.Pageable.unpaged(),
+        )).thenReturn(org.springframework.data.domain.PageImpl(emptyList()))
+        Mockito.`when`(flagRepository.countByStatusForAdmin("NSFW", listOf("inappropriate"))).thenReturn(listOf(
+            com.quickpitik.repository.StatusCountRow("hidden", 3),
+        ))
+
+        assertEquals(0, service().list(null, "NSFW", PaginationParams.of(0, 10)).total)
+        assertEquals(3L, service().counts("NSFW").counts["hidden"])
+    }
+
+    // AX-59: the backend is the one home of the reason labels.
+    @Test
+    fun `a reason code gets its label word for word and an unknown code gets none`() {
+        assertEquals("Inappropriate or NSFW", flagReasonLabel("inappropriate"))
+        assertEquals("Uploads may not belong to the event", flagReasonLabel("batch_relevance_low"))
+        assertNull(flagReasonLabel("zebra"))
+        SystemFlagReason.entries.forEach { assertNotNull(flagReasonLabel(it.wire), it.wire) }
+    }
+
+    @Test
+    fun `the list rows carry their reason label`() {
+        val known = Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = UUID.randomUUID(), reason = "possible_duplicate")
+        val unknown = Flag(targetKindWire = FlagTargetKind.USER.wire, targetId = UUID.randomUUID(), reason = "zebra")
+        Mockito.`when`(flagRepository.pageForAdmin(
+            Mockito.isNull(),
+            Mockito.eq("") ?: "",
+            Mockito.eq(emptyList<String>()) ?: emptyList(),
+            Mockito.any(org.springframework.data.domain.Pageable::class.java) ?: org.springframework.data.domain.Pageable.unpaged(),
+        )).thenReturn(org.springframework.data.domain.PageImpl(listOf(known, unknown)))
+
+        val items = service().list(null, null, PaginationParams.of(0, 10)).items
+
+        assertEquals(listOf("Possible duplicate of another race", null), items.map { it.reasonLabel })
     }
 }

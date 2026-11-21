@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiError } from "@/lib/api";
@@ -117,4 +117,21 @@ it("shows a styled Retry when the photographer cannot load", async () => {
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(/Couldn.t load this photographer/);
   expect(screen.getByRole("button", { name: "Retry" })).toHaveAttribute("type", "button");
+});
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+it("About reads the joined date as typed, not in capitals", async () => {
+  params.handle = adminUser.handle!;
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: /About/ }));
+  expect(await screen.findByText(/^Sep 10 · 2026$/)).toBeInTheDocument();
+});
+
+// AX-63: the Public URL header shows the handle as typed, and slab captions are never cut off.
+it("Public URL header shows the handle as typed, with its caption whole", async () => {
+  params.handle = adminUser.handle!;
+  mount();
+  const header = await screen.findByRole("button", { name: /Public URL/ });
+  expect(within(header).getByText("@test-studio").closest(".uppercase")).toBeNull();
+  expect(within(header).getByText("Where runners find this photographer")).not.toHaveClass("truncate");
 });

@@ -67,7 +67,8 @@ const ADMIN_LIST_LIMIT = 200;
 //   PATCH  /api/v1/admin/payouts/reports/{id}/acknowledge { reply } → PayoutReport
 //   PATCH  /api/v1/admin/payouts/reports/{id}/resolve     { resolutionNote } → PayoutReport
 //
-//   GET    /api/v1/admin/events?state=&offset=&limit=      → PaginatedResponse<ListEvent>
+//   GET    /api/v1/admin/events?state=&q=&dateFrom=&dateTo=&offset=&limit= → PaginatedResponse<ListEvent>
+//   GET    /api/v1/admin/events/counts?q=&dateFrom=&dateTo=  → { counts: { <state>: n } }
 //   POST   /api/v1/admin/events                  { title, date, location, bannerUrl? } → ListEvent
 //   PATCH  /api/v1/admin/events/{id}             { title?, date?, location? } → ListEvent
 //   PATCH  /api/v1/admin/events/{id}/listing     { listed } → AdminEventRow
@@ -162,7 +163,8 @@ export type AdminUserStatusFilter =
   | "pending"
   | "approved"
   | "incomplete"
-  | "suspended";
+  | "suspended"
+  | "rejected";
 
 export interface AdminUserListArgs {
   role?: "PHOTOGRAPHER" | "RUNNER";
@@ -806,6 +808,10 @@ export interface AdminEventRow extends ListEvent {
   adminApproved?: boolean;
   /** Link to the new cover of a held race edit; admin only. */
   heldCoverUrl?: string | null;
+  /** When the event was submitted (AX-45); optional so an older backend still parses. */
+  createdAt?: string | null;
+  /** When a rejected event was last sent again for review (AX-60); null if never, absent on an older backend. */
+  resubmittedAt?: string | null;
 }
 
 /** AA-R5 held race edit: only the changed fields, never a price. */
@@ -833,6 +839,30 @@ export async function fetchAdminEvents(
     `/admin/events?${p.toString()}`,
   );
   return res.items;
+}
+
+// AX-21: the server filters by state, searches name and place (q) and dates (AX-9).
+interface AdminEventFilter { q?: string; dateFrom?: string; dateTo?: string }
+function eventFilterQs(args: AdminEventFilter & { state?: ListEvent["state"]; offset?: number; limit?: number }): string {
+  const p = new URLSearchParams();
+  for (const [name, value] of Object.entries(args)) if (value !== undefined && value !== "") p.set(name, String(value));
+  return p.toString();
+}
+
+export async function fetchAdminEventsPage(
+  args: AdminEventFilter & { state?: ListEvent["state"]; offset: number; limit: number },
+  signal?: AbortSignal,
+): Promise<PaginatedResponse<AdminEventRow>> {
+  return api.get<PaginatedResponse<AdminEventRow>>(`/admin/events?${eventFilterQs(args)}`, { signal });
+}
+
+/** Events per state for the same filter, as the tabs show them. */
+export async function fetchAdminEventCounts(
+  args: AdminEventFilter = {},
+  signal?: AbortSignal,
+): Promise<Record<ListEvent["state"], number>> {
+  const qs = eventFilterQs(args);
+  return (await api.get<{ counts: Record<ListEvent["state"], number> }>(`/admin/events/counts${qs ? `?${qs}` : ""}`, { signal })).counts;
 }
 
 // Photographer-owned event review (V46).
@@ -1171,23 +1201,6 @@ export function fetchRelevanceCase(
   signal?: AbortSignal,
 ): Promise<import("@/lib/admin-relevance").RelevanceCaseDetail> {
   return api.get(`/admin/relevance/cases/${encodeURIComponent(caseId)}`, { signal });
-}
-
-export function fetchRelevanceAlerts(
-  args: { unseen?: boolean; offset?: number; limit?: number } = {},
-  signal?: AbortSignal,
-): Promise<PaginatedResponse<import("@/lib/admin-relevance").RelevanceAlert>> {
-  const p = new URLSearchParams();
-  if (args.unseen) p.set("unseen", "true");
-  p.set("offset", String(args.offset ?? 0));
-  p.set("limit", String(args.limit ?? ADMIN_LIST_LIMIT));
-  return api.get(`/admin/relevance/alerts?${p.toString()}`, { signal });
-}
-
-export function markRelevanceAlertSeen(
-  alertId: string,
-): Promise<import("@/lib/admin-relevance").RelevanceAlert> {
-  return api.post(`/admin/relevance/alerts/${encodeURIComponent(alertId)}/seen`);
 }
 
 // ───────────────────────────────────────────── Photo Relevance actions (RV-2.6)

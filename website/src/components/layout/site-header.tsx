@@ -40,6 +40,13 @@ export function SiteHeader({
   // shows the "you are here" state.
   const isEventsActive =
     pathname === ROUTES.EVENTS || pathname.startsWith(ROUTES.EVENTS + "/");
+  // Signing in from an event page comes back to that event instead of the
+  // role home, so a runner doesn't have to find their race again.
+  const onEventPage = pathname.startsWith(ROUTES.EVENTS + "/");
+  const rightHref =
+    rightLink && rightLink.href === ROUTES.LOGIN && onEventPage
+      ? `${ROUTES.LOGIN}?redirect=${encodeURIComponent(pathname)}`
+      : rightLink?.href;
 
   return (
     // Height is pinned to --site-header-h rather than falling out of the
@@ -56,7 +63,8 @@ export function SiteHeader({
         >
           <BrandLogo className="md:h-11 md:w-44" priority />
         </Link>
-        <nav className="flex items-center gap-6 md:gap-8">
+        {/* Tighter below 400 px so "Sign in" (which no longer wraps) fits narrow phones. */}
+        <nav className="flex items-center gap-3 min-[400px]:gap-6 md:gap-8">
           {!hidePublicNav && (
             <Link
               href={ROUTES.EVENTS}
@@ -94,10 +102,10 @@ export function SiteHeader({
               <RunnerNotificationBell />
               <UserMenu user={user} />
             </>
-          ) : rightLink ? (
+          ) : rightLink && rightHref ? (
             <Link
-              href={rightLink.href}
-              className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors"
+              href={rightHref}
+              className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors whitespace-nowrap"
             >
               {rightLink.label}
             </Link>

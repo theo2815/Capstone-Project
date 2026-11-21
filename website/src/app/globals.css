@@ -240,7 +240,9 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  /* next/font's own variable: the @theme aliases (--font-sans etc.) are
+     inlined into utilities and don't exist at run time. */
+  font-family: var(--font-archivo), system-ui, sans-serif;
   font-size: 17px;      /* readable base — Finish Line retune 2026-08-26 (was 16) */
   line-height: 1.55;    /* comfortable body leading */
   letter-spacing: -0.006em;
@@ -248,7 +250,7 @@ body {
 
 /* ── Hero display: Anton, condensed uppercase race-banner impact ── */
 .font-hero {
-  font-family: var(--font-hero), var(--font-display), sans-serif;
+  font-family: var(--font-anton), var(--font-archivo), sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.005em;
   line-height: 0.92;
@@ -333,7 +335,7 @@ body {
    / 13px (≥768 desktop) / 0.14em / slate. Size up + tracking down = more legible
    and still width-safe at 375px (KICKER_SIZE_CLASS.sm moves in lockstep). */
 .kicker {
-  font-family: var(--font-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
   text-transform: uppercase;
   font-size: 14px;
   letter-spacing: 0.14em;

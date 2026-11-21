@@ -44,3 +44,11 @@ it("an open dispute without the item charge labels the order total", () => {
   const { container } = render(<AdminDisputeCard dispute={noCharge} onOpen={() => {}} />);
   expect(container).toHaveTextContent("Order total ₱300.00");
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("row values are not upper-cased", () => {
+  render(<AdminDisputeCard dispute={dispute} onOpen={() => {}} />);
+  for (const value of [dispute.id, /^Order order-1/, /^₱/]) {
+    expect(screen.getByText(value).closest(".uppercase")).toBeNull();
+  }
+});

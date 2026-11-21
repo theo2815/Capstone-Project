@@ -184,13 +184,13 @@ export function PayoutReportsSection() {
             />
           }
           subtitle={
-            <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum break-words">
+            <Kicker as="p" tone="soft" className="tnum break-words">
               {openReport.handle ? `@${openReport.handle}` : "—"}
               <span className="text-slate-soft"> · </span>
               {PAYOUT_REPORT_REASON_LABEL[openReport.reason]}
               <span className="text-slate-soft"> · </span>
               {formatLongDate(openReport.reportedAt)}
-            </p>
+            </Kicker>
           }
           actions={
             <ReportActions
@@ -264,9 +264,9 @@ function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
             {/* The space lets the handle wrap as a whole word after the name button. */}
             {report.handle && " "}
             {report.handle && (
-              <span className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft ml-1 break-words">
+              <Kicker as="span" tone="soft" className="ml-1 break-words">
                 @{report.handle}
-              </span>
+              </Kicker>
             )}
           </h3>
           <p className="font-sans text-sm text-ink-soft mt-1.5 break-words">

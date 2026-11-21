@@ -1,8 +1,10 @@
 package com.quickpitik.support
 
+import com.quickpitik.common.PaginationParams
 import com.quickpitik.entity.Event
 import com.quickpitik.entity.EventStatus
 import com.quickpitik.repository.EventRepository
+import com.quickpitik.service.admin.AdminEventService
 import com.quickpitik.service.events.EventDtoMapper
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -18,6 +20,9 @@ class AdminEventListQueryIntegrationTest : PostgresIntegrationTest() {
 
     @Autowired
     private lateinit var eventRepository: EventRepository
+
+    @Autowired
+    private lateinit var service: AdminEventService
 
     private val today = LocalDate.of(2026, 6, 15)
     private val from = LocalDate.of(1900, 1, 1)
@@ -61,6 +66,38 @@ class AdminEventListQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(emptySet(), ids(marker, today.plusDays(1), to))
     }
 
+    // AX-44: through the service, % and _ in the search match only themselves.
+    @Test
+    fun `a percent or underscore in the search is plain text`() {
+        val marker = "ax44-${UUID.randomUUID()}"
+        val offer = save(marker, EventStatus.ACTIVE, today, name = "$marker 10% off run")
+        save(marker, EventStatus.ACTIVE, today, name = "$marker 100 run")
+
+        fun found(q: String) = service.list(null, null, PaginationParams.of(0, 50), q).items.map { it.id }.toSet()
+        assertEquals(setOf(offer), found("$marker 10%"))
+        assertEquals(emptySet(), found("$marker 10_"))
+        assertEquals(2, found(marker).size)
+    }
+
+    // AX-45: Upcoming lists the soonest race first, on every page; other states stay newest first.
+    @Test
+    fun `upcoming is soonest first across pages and other states stay newest first`() {
+        val marker = "ax45-${UUID.randomUUID()}"
+        val in10 = save(marker, EventStatus.ACTIVE, today.plusDays(10))
+        val in3 = save(marker, EventStatus.ACTIVE, today.plusDays(3))
+        val in20 = save(marker, EventStatus.ACTIVE, today.plusDays(20))
+        val pastOld = save(marker, EventStatus.ARCHIVED, today.minusDays(30))
+        val pastNew = save(marker, EventStatus.ARCHIVED, today.minusDays(2))
+
+        fun page(state: String, n: Int) =
+            eventRepository.pageForAdmin(marker, from, to, state, today, PageRequest.of(n, 2)).content.map { it.id }
+        assertEquals(listOf(in3, in10), page("upcoming", 0))
+        assertEquals(listOf(in20), page("upcoming", 1))
+        assertEquals(listOf(pastNew, pastOld), page("past", 0))
+        assertEquals(listOf(in20, in10), page("", 0))
+        assertEquals(listOf(in3, pastNew), page("", 1))
+    }
+
     private fun ids(search: String, dateFrom: LocalDate, dateTo: LocalDate): Set<UUID> =
         eventRepository.pageForAdmin(search, dateFrom, dateTo, "", today, PageRequest.of(0, 50)).content.map { it.id }.toSet()
 
@@ -70,11 +107,12 @@ class AdminEventListQueryIntegrationTest : PostgresIntegrationTest() {
         date: LocalDate,
         location: String = "Cebu City",
         deletedAt: OffsetDateTime? = null,
+        name: String = "$marker race",
     ): UUID =
         eventRepository.save(
             Event(
                 slug = "$marker-${UUID.randomUUID()}",
-                name = "$marker race",
+                name = name,
                 date = date,
                 location = location,
                 status = status,

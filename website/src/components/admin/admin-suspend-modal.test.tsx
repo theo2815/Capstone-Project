@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AdminSuspendModal } from "./admin-suspend-modal";
+import { AdminSuspendModal, RUNNER_SUSPEND_REASONS } from "./admin-suspend-modal";
 
 // AX-28 (PD6, UA5): no reason is ever sent that the admin did not pick.
 function setup(onSubmit = vi.fn<(reason: string) => Promise<boolean>>(async () => true)) {
@@ -44,5 +44,42 @@ describe("AdminSuspendModal (AX-28)", () => {
     expect(screen.getByRole("radio", { name: "Suspected fraudulent uploads" })).toBeChecked();
     expect(screen.getByRole("textbox")).toHaveValue("Same card on 40 orders");
     expect(submit()).toBeEnabled();
+  });
+});
+
+describe("AdminSuspendModal reasons (AX-72)", () => {
+  afterEach(cleanup);
+
+  const PHOTOGRAPHER_LABELS = [
+    "Watermark or branding violates policy",
+    "Suspected fraudulent uploads",
+    "Chargeback pattern flagged by payments",
+    "Multiple unresolved runner complaints",
+    "Compliance review requested",
+    "Other (see note)",
+  ];
+  const radioLabels = () => screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent!.trim());
+
+  it("offers Theo's six runner reasons word for word, and sends the picked label", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn<(reason: string) => Promise<boolean>>(async () => true);
+    render(<AdminSuspendModal open onClose={() => {}} onSubmit={onSubmit} photographerName="Ana" reasons={RUNNER_SUSPEND_REASONS} />);
+    expect(radioLabels()).toEqual([
+      "Abusive or false reports against photographers",
+      "Repeated false refund or dispute claims",
+      "Suspected payment fraud or chargebacks",
+      "Using someone else's selfie or account",
+      "Compliance review requested",
+      "Other (see note)",
+    ]);
+    expect(screen.queryByText("Watermark or branding violates policy")).toBeNull();
+    await user.click(screen.getByRole("radio", { name: "Repeated false refund or dispute claims" }));
+    await user.click(screen.getByRole("button", { name: "Suspend" }));
+    expect(onSubmit).toHaveBeenCalledWith("Repeated false refund or dispute claims");
+  });
+
+  it("keeps the photographer reasons when no list is passed", () => {
+    setup();
+    expect(radioLabels()).toEqual(PHOTOGRAPHER_LABELS);
   });
 });

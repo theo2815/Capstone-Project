@@ -4,6 +4,8 @@ import { PROTECTED_IMG_CLASS, PROTECTED_IMG_PROPS } from "@/lib/protected-image"
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useInertBackground } from "@/hooks/use-inert-background";
 import { payableItems, useCartStore } from "@/store/cart-store";
 import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 import { useAuthStore } from "@/store/auth-store";
@@ -172,6 +174,8 @@ export function CartModal({
   // Move focus into the drawer once it renders, unless it is already inside
   // (R8 review I3: keyboard users were left on the page behind it).
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Portaled to <body> with the page behind made inert (runner audit P3-7).
+  useInertBackground(dialogRef, renderState === "open");
   useEffect(() => {
     const dialog = dialogRef.current;
     if (renderState === "open" && dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
@@ -215,7 +219,7 @@ export function CartModal({
   const previewItem =
     previewIndex !== null ? items[previewIndex] ?? null : null;
 
-  return (
+  return createPortal(
     <div
       ref={dialogRef}
       role="dialog"
@@ -385,7 +389,8 @@ export function CartModal({
           }}
         />
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

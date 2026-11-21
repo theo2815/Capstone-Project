@@ -218,6 +218,8 @@ it("cancels an older paged report read before applying resolve report", async ()
   await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
   await act(async () => { expect(await result.current.run()).toBe(true); });
   await act(async () => { oldRead.resolve(page([report])); });
+  // The cache settles first; the rendered list follows on React Query's next notify, which a loaded CI runner delays.
+  await waitFor(() => expect(result.current.list.isFetching).toBe(false));
   expect(result.current.list.items).toEqual([]);
 });
 

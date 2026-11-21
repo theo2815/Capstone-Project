@@ -98,13 +98,21 @@ describe("manual refund panel", () => {
   });
 
   it("shows the cancel date sentence only when both dates are set", () => {
-    const { unmount } = renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: "2026-11-27T00:00:00Z" });
-    const closes = formatLongDate("2026-11-20T00:00:00Z");
-    const cancels = formatLongDate("2026-11-27T00:00:00Z");
-    expect(screen.getByText(`PayMongo window closes ${closes}. QuickPitik cancels this refund on ${cancels} if it is not done.`)).toBeInTheDocument();
-    unmount();
-    renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: null });
-    expect(screen.queryByText(/PayMongo window closes/)).not.toBeInTheDocument();
+    // The panel compares the window date with the real clock, so pin "now"
+    // before the window closes; unpinned, this test broke once 2026-11-20 passed.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-19T00:00:00Z"));
+    try {
+      const { unmount } = renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: "2026-11-27T00:00:00Z" });
+      const closes = formatLongDate("2026-11-20T00:00:00Z");
+      const cancels = formatLongDate("2026-11-27T00:00:00Z");
+      expect(screen.getByText(`PayMongo window closes ${closes}. QuickPitik cancels this refund on ${cancels} if it is not done.`)).toBeInTheDocument();
+      unmount();
+      renderAside({ ...parked, refundWindowClosesAt: "2026-11-20T00:00:00Z", refundCancelsAt: null });
+      expect(screen.queryByText(/PayMongo window closes/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends the trimmed link, then toasts success", async () => {

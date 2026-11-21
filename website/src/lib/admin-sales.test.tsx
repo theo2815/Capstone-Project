@@ -2,11 +2,13 @@ import { render, renderHook, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import * as sales from "./admin-sales";
 import { useSalesByEvent } from "./admin-sales";
-import { fetchAdminSalesTrend, fetchAdminTopPhotographers } from "./api-admin";
+import { fetchAdminSalesTrend, fetchAdminTopPhotographers, type AdminTopPhotographer } from "./api-admin";
 import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboard";
+import { AdminSalesEventTable } from "@/components/admin/admin-sales-event-table";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
+import { formatLongDate } from "@/lib/format";
 
-vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+vi.mock("next/link", () => ({ default: ({ children, href, className }: { children: React.ReactNode; href: string; className?: string }) => <a href={href} className={className}>{children}</a> }));
 
 const apiGet = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({ api: { get: apiGet }, ApiError: class extends Error {} }));
@@ -17,7 +19,7 @@ const weeks = [
   { weekStart: "2026-11-09", gmv: 1000, platformRevenue: 200, refundsIssued: 0, salesCount: 8 },
   { weekStart: "2026-11-16", gmv: 2500, platformRevenue: 500, refundsIssued: 0, salesCount: 20 },
 ];
-const top = [{ userId: "u-ana", handle: "anashoots", displayName: "Ana Shoots", gmv: 4200, salesCount: 33 }];
+const top: AdminTopPhotographer[] = [{ userId: "u-ana", handle: "anashoots", displayName: "Ana Shoots", gmv: 4200, salesCount: 33 }];
 type Q<T> = { data?: T; isError: boolean; isFetching: boolean; refetch: () => void };
 const state: {
   live: (typeof serverRow)[] | null;
@@ -78,6 +80,67 @@ it("a failed top-photographers request says so instead of showing an empty board
   within(alert).getByRole("button", { name: "Retry" }).click();
   expect(state.top.refetch).toHaveBeenCalled();
   expect(screen.queryByText(/No photo sales/)).toBeNull();
+});
+
+it("a photographer with no handle links to their own page by user id", () => {
+  state.top = { ...state.top, data: [{ ...top[0], userId: "u-nora", handle: null, displayName: "Nora Lim" }] };
+  render(<AdminSalesLeaderboard />);
+  expect(screen.getByText("Nora Lim").closest("a")).toHaveAttribute("href", "/admin/photographers/u-nora");
+});
+
+it("long photographer and event names wrap instead of being cut", () => {
+  const long = "Mandaue Southern Visayas Endurance Photography Collective Co.";
+  state.top = { ...state.top, data: [{ ...top[0], displayName: long }] };
+  state.live = [{ ...serverRow, name: long }];
+  render(<AdminSalesLeaderboard />);
+  expect(screen.getAllByText(long)).toHaveLength(2);
+  for (const name of screen.getAllByText(long)) {
+    expect(name).not.toHaveClass("truncate");
+    expect(name).toHaveClass("break-words");
+  }
+});
+
+it("a long event name in Sales by event wraps instead of being cut", () => {
+  const long = "Mandaue Southern Visayas Endurance Marathon and Fun Run 2026";
+  state.live = [{ ...serverRow, name: long }];
+  render(<AdminSalesEventTable />);
+  const name = screen.getByText(long);
+  expect(name).not.toHaveClass("truncate");
+  expect(name).toHaveClass("break-words");
+});
+
+it("the by-event headings and every row share one set of columns", () => {
+  state.live = [serverRow, { ...serverRow, id: "ev-3", impliedGmv: 12345678.9 }];
+  const { container } = render(<AdminSalesEventTable />);
+  // One element sizes the columns; the headings and each row are subgrids of it, so a big figure widens its
+  // column for every row at once. jsdom has no layout: the browser check measures the alignment.
+  const templates = [...container.querySelectorAll("*")].filter((el) => el.getAttribute("class")?.includes("lg:grid-cols-["));
+  expect(templates).toHaveLength(1);
+  const subgrids = [...container.querySelectorAll(".lg\\:grid-cols-subgrid")];
+  for (const el of subgrids) {
+    expect(el).toHaveClass("lg:grid", "lg:col-span-full");
+    expect(el.parentElement === templates[0] || subgrids.includes(el.parentElement!)).toBe(true);
+  }
+  expect(subgrids).toContain(screen.getByText("Event").parentElement);
+  for (const gmv of [screen.getByText("₱3,000.00"), screen.getByText("₱12,345,678.90")]) {
+    expect(subgrids).toContain(gmv.parentElement!.parentElement);
+  }
+});
+
+it("from 1024 up, a refund and a date in Sales by event stay on one line", () => {
+  state.live = [{ ...serverRow, refundsIssued: 120 }];
+  render(<AdminSalesEventTable />);
+  // jsdom has no layout: the browser check measures one line at 1024 and 1280.
+  for (const value of [screen.getByText("−₱120.00"), screen.getByText(formatLongDate(serverRow.date, true))]) {
+    expect(value).toHaveClass("lg:whitespace-nowrap");
+  }
+});
+
+it("an event name can shrink to its column, so a long word breaks there instead of running into the date", () => {
+  state.live = [serverRow];
+  render(<AdminSalesEventTable />);
+  // The name is a flex item: without min-w-0 it cannot get narrower than its longest word (browser check: 72 px column).
+  expect(screen.getByText(serverRow.name)).toHaveClass("min-w-0", "break-words");
 });
 
 it("a browser-derived top event keeps its Implied badge", () => {

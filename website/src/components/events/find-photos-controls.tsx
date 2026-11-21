@@ -100,6 +100,9 @@ interface SelfieActionCardProps {
   captureUser: boolean;
   onFile: (file: File) => void;
   glyph: React.ReactNode;
+  /** Before the face-matching tick: render a plain button that only reports
+   *  the choice. No file input exists, so nothing can be picked or sent. */
+  onChoose?: () => void;
 }
 
 // One-shot file input wrapped in a Quiet Studio card. capture="user" hints
@@ -115,6 +118,7 @@ export function SelfieActionCard({
   captureUser,
   onFile,
   glyph,
+  onChoose,
 }: SelfieActionCardProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -122,16 +126,15 @@ export function SelfieActionCard({
     e.target.value = "";
     if (file) onFile(file);
   };
-  return (
-    <label
-      className={cn(
-        "group flex items-center gap-4 rounded-xl px-5 py-4 transition-colors",
-        isPrimary
-          ? "bg-fresh text-surface hover:bg-fresh-deep cursor-pointer"
-          : "border border-line bg-bone hover:bg-bone-deep text-ink cursor-pointer",
-        disabled && "opacity-50 cursor-not-allowed",
-      )}
-    >
+  const cardClass = cn(
+    "group flex items-center gap-4 rounded-xl px-5 py-4 transition-colors",
+    isPrimary
+      ? "bg-fresh text-surface hover:bg-fresh-deep cursor-pointer"
+      : "border border-line bg-bone hover:bg-bone-deep text-ink cursor-pointer",
+    disabled && "opacity-50 cursor-not-allowed",
+  );
+  const body = (
+    <>
       <span
         aria-hidden="true"
         className={cn(
@@ -159,6 +162,18 @@ export function SelfieActionCard({
       <span aria-hidden="true" className="font-mono text-base">
         →
       </span>
+    </>
+  );
+  if (onChoose) {
+    return (
+      <button type="button" onClick={onChoose} disabled={disabled} className={cn(cardClass, "w-full text-left")}>
+        {body}
+      </button>
+    );
+  }
+  return (
+    <label className={cardClass}>
+      {body}
       <input
         ref={inputRef}
         type="file"

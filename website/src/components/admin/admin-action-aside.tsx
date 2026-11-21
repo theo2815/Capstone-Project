@@ -188,9 +188,9 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
       {isSuspended && row.suspensionReason && (
         <div className="mt-6 pt-5 border-t border-line">
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+          <Kicker as="p" tone="soft">
             Suspension reason
-          </p>
+          </Kicker>
           <p className="font-sans text-sm text-ink-soft mt-2">
             {row.suspensionReason}
           </p>
@@ -274,9 +274,9 @@ function ConsentWithdrawal({ row, locked, busy, setBusy }: { row: AdminUserRow; 
 
   return (
     <section aria-labelledby={headingId} className="mt-6 pt-5 border-t border-line">
-      <p id={headingId} className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="p" tone="soft" id={headingId}>
         {T.title}
-      </p>
+      </Kicker>
       <p className="font-sans text-sm text-ink-soft mt-2">
         {withdrawn
           ? <>{T.withdrawnOn} <span className="tnum whitespace-nowrap">{formatLongDate(withdrawnAt)}</span>. {T.withdrawnAfter}</>

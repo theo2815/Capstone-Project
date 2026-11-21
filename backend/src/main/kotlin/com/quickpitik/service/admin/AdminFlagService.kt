@@ -4,6 +4,7 @@ import com.quickpitik.common.ErrorCodes
 import com.quickpitik.common.OffsetLimitPageable
 import com.quickpitik.common.PaginatedResponse
 import com.quickpitik.common.PaginationParams
+import com.quickpitik.common.escapeLike
 import com.quickpitik.config.AdminProperties
 import com.quickpitik.config.RelevanceProperties
 import com.quickpitik.config.StorageProperties
@@ -77,12 +78,11 @@ class AdminFlagService(
     ): PaginatedResponse<AdminFlagDto> {
         ensureEnabled()
         val statusWire = statusFilter?.takeIf { it.isNotBlank() }?.let { parseStatus(it).wire }
-        // ponytail: LIKE wildcards in q are left as-is (admin-only search); only the length is capped.
         // '' not null: PG 18 types a null bind inside LOWER(CONCAT(...)) as
         // bytea and the query 500s (seen in prod 2026-09-04). Same shape as
         // EventRepository/PayoutCycleRepository.
-        val q = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
-        val page = flagRepository.pageForAdmin(statusWire, q, OffsetLimitPageable(params))
+        val raw = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
+        val page = flagRepository.pageForAdmin(statusWire, escapeLike(raw), flagReasonCodesMatching(raw), OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         val items = hydrateMany(page.content)
         return PaginatedResponse.of(items, page.totalElements, params)
@@ -92,8 +92,9 @@ class AdminFlagService(
     @Transactional(readOnly = true)
     fun counts(query: String?): AdminStatusCountsDto {
         ensureEnabled()
-        val q = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
-        val found = flagRepository.countByStatusForAdmin(q).associate { it.status to it.total }
+        val raw = query?.takeIf { it.isNotBlank() }?.take(100) ?: ""
+        val found = flagRepository.countByStatusForAdmin(escapeLike(raw), flagReasonCodesMatching(raw))
+            .associate { it.status to it.total }
         return AdminStatusCountsDto(FlagStatus.entries.associate { it.wire to (found[it.wire] ?: 0L) })
     }
 
@@ -502,6 +503,7 @@ class AdminFlagService(
                 targetId = flag.targetId,
                 reporterId = flag.reporterId,
                 payoutHoldAt = flag.payoutHoldAt?.toString(),
+                reasonLabel = flagReasonLabel(flag.reason),
             )
         }
     }

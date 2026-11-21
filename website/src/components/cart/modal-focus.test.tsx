@@ -51,6 +51,26 @@ it.each([
   await waitFor(() => expect(opener).toHaveFocus());
 });
 
+// Runner audit P3-7: focus could still Tab out to the page behind an open panel.
+it.each([
+  ["cart", CartModal as Panel],
+  ["checkout", CheckoutModal as Panel],
+])("the %s panel sits on <body> and keeps the page behind it unreachable until it closes", async (_name, Panel) => {
+  useCartStore.getState().setItems([{ photoId: "p1", eventId: "e1", eventName: "Race", price: 125 } as never]);
+  const user = userEvent.setup();
+  render(<Harness Panel={Panel} />);
+  const opener = screen.getByRole("button", { name: "Open panel" });
+
+  await user.click(opener);
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.parentElement).toBe(document.body);
+  expect(dialog.closest("[inert]")).toBeNull();
+  expect(opener.closest("[inert]")).not.toBeNull();
+
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(opener.closest("[inert]")).toBeNull());
+});
+
 // The I3 path: the cart closes (and hands focus back to the tile) at the
 // moment the checkout opens, so focus must still end inside the checkout.
 it("continuing from the cart to checkout leaves focus inside the checkout", async () => {

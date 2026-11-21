@@ -23,6 +23,7 @@ const TABS: ReadonlyArray<{ key: AdminUserStatusFilter; label: string; empty: st
   { key: "pending", label: "Pending", empty: "Queue is clear." },
   { key: "approved", label: "Approved", empty: "No approved photographers yet." },
   { key: "incomplete", label: "Incomplete", empty: "No incomplete profiles." },
+  { key: "rejected", label: "Rejected", empty: "No rejected photographers. A profile rejected now goes back to Incomplete." },
   { key: "suspended", label: "Suspended", empty: "No active suspensions." },
 ];
 
@@ -81,11 +82,11 @@ export default function AdminPhotographersPage() {
             /
           </kbd>
         </div>
-        <p role="status" aria-live="polite" className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
+        <Kicker as="p" tone="soft" role="status" aria-live="polite" className="mt-3 tnum">
           {q.length > 0 && !list.isLoading && !failed
             ? `${list.total} match${list.total === 1 ? "" : "es"}`
             : ""}
-        </p>
+        </Kicker>
       </div>
 
       <AdminStatusTabs

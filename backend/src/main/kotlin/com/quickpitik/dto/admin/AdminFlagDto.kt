@@ -32,6 +32,8 @@ data class AdminFlagDto(
     val reporterId: UUID?,
     // PE-2.2: when an admin confirmed a payout hold on this relevance flag.
     val payoutHoldAt: String? = null,
+    // AX-59: the reason's admin label; null for a code the backend has no label for.
+    val reasonLabel: String? = null,
 )
 
 data class FlagActionRequest(

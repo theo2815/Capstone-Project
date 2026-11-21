@@ -93,7 +93,7 @@ interface UserRepository : JpaRepository<User, UUID> {
     // Admin user list: role, search (name, email, handle, brand) and status, all in
     // the query so a status tab pages correctly and its total counts only that status.
     // '' means "no filter". Status rules: runners and admins count as approved; a
-    // photographer with no settings row is incomplete; suspended wins over approved.
+    // photographer with no settings row is incomplete; suspended wins over every other status.
     @Query("SELECT u " + ADMIN_USER_FILTER + " ORDER BY u.createdAt DESC, u.id ASC",
         countQuery = "SELECT COUNT(u) " + ADMIN_USER_FILTER)
     fun searchForAdmin(
@@ -108,19 +108,19 @@ private const val ADMIN_USER_FILTER = """
     FROM User u LEFT JOIN PhotographerSettings s ON s.userId = u.id
     WHERE (:role IS NULL OR u.role = :role)
       AND (:search = '' OR
-           LOWER(u.name)  LIKE CONCAT('%', :search, '%') OR
-           LOWER(u.email) LIKE CONCAT('%', :search, '%') OR
-           LOWER(s.handle) LIKE CONCAT('%', :search, '%') OR
-           LOWER(s.brandName) LIKE CONCAT('%', :search, '%'))
+           LOWER(u.name)  LIKE CONCAT('%', :search, '%') ESCAPE '\' OR
+           LOWER(u.email) LIKE CONCAT('%', :search, '%') ESCAPE '\' OR
+           LOWER(s.handle) LIKE CONCAT('%', :search, '%') ESCAPE '\' OR
+           LOWER(s.brandName) LIKE CONCAT('%', :search, '%') ESCAPE '\')
       AND (:status = ''
            OR (:status = 'suspended' AND u.suspendedAt IS NOT NULL)
            OR (:status = 'approved' AND u.suspendedAt IS NULL
                AND (u.role <> com.quickpitik.entity.Role.PHOTOGRAPHER
                     OR s.verificationStatus = com.quickpitik.entity.VerificationStatus.APPROVED))
-           OR (:status = 'pending' AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
+           OR (:status = 'pending' AND u.suspendedAt IS NULL AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
                AND s.verificationStatus = com.quickpitik.entity.VerificationStatus.PENDING)
-           OR (:status = 'incomplete' AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
+           OR (:status = 'incomplete' AND u.suspendedAt IS NULL AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
                AND (s.userId IS NULL OR s.verificationStatus = com.quickpitik.entity.VerificationStatus.INCOMPLETE))
-           OR (:status = 'rejected' AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
+           OR (:status = 'rejected' AND u.suspendedAt IS NULL AND u.role = com.quickpitik.entity.Role.PHOTOGRAPHER
                AND s.verificationStatus = com.quickpitik.entity.VerificationStatus.REJECTED))
 """

@@ -298,3 +298,20 @@ it("does not open the record again when the window regains focus", async () => {
   expect(recordCalls()).toBe(1);
   focusManager.setFocused(undefined);
 });
+
+// AX-39 (UA7): row values read as typed; mono caps stay for labels only.
+it("a row's ID type and date are not upper-cased", async () => {
+  renderQueue();
+  const juan = await screen.findByRole("button", { name: /Juan Dela Cruz/ });
+  expect(within(juan).getByText(/^Nov 0\d · 2026$/).closest(".uppercase")).toBeNull();
+});
+
+// AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.
+const notUpperCased = (els: HTMLElement[]) => { expect(els.length).toBeGreaterThan(0); for (const el of els) expect(el.closest(".uppercase")).toBeNull(); };
+it("the drawer's email wraps in its own case, and its dates are not upper-cased", async () => {
+  const dialog = await openRecord();
+  const email = await within(dialog).findByText("u1@example.test");
+  expect(email.closest(".uppercase")).toBeNull();
+  expect(email).toHaveClass("break-all");
+  notUpperCased(within(dialog).getAllByText(/^Nov 0\d · 2026$/));
+});

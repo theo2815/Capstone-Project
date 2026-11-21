@@ -42,7 +42,7 @@ import {
 } from "@/lib/admin-flags";
 import { FlagRelevanceEvidence } from "@/components/admin/flag-relevance-evidence";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 
 const DONE_LABEL = {
   hide: "Hidden",
@@ -103,7 +103,7 @@ export function FlagsQueue() {
     return (openPage?.items ?? EMPTY_FLAGS)
       .filter((f) => needle.length === 0 ||
         f.id.toLowerCase().includes(needle) ||
-        flagReasonLabel(f.reason).toLowerCase().includes(needle) ||
+        flagReasonLabel(f).toLowerCase().includes(needle) ||
         f.photographerHandle.toLowerCase().includes(needle) ||
         f.reportedBy.toLowerCase().includes(needle) ||
         f.note.toLowerCase().includes(needle))
@@ -274,9 +274,9 @@ export function FlagsQueue() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
         {q.length > 0 && ready && (
-          <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft mt-3 tnum">
+          <Kicker as="p" tone="soft" className="mt-3 tnum">
             {matchCount} match{matchCount === 1 ? "" : "es"}
-          </p>
+          </Kicker>
         )}
         {missingId && (
           <div role="status" className="mt-6 space-y-3">
@@ -372,7 +372,7 @@ export function FlagsQueue() {
           onClose={() => setRowId("")}
           escDisabled={drawerEscDisabled}
           kicker={`Flag · ${openRow.id}`}
-          title={flagReasonLabel(openRow.reason)}
+          title={flagReasonLabel(openRow)}
           rightHeader={<FlagStatusPill status={openRow.status} />}
           subtitle={<FlagSubtitle flag={openRow} />}
           actions={
@@ -498,14 +498,14 @@ function FlagSlab({
 function FlagSubtitle({ flag }: { flag: Flag }) {
   const eventName = flagEventName(flag);
   return (
-    <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft tnum">
+    <p className="font-sans text-sm text-slate-soft tnum break-words">
       {flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`}
       <span className="text-slate-soft"> · </span>
       @{flag.photographerHandle}
       <span className="text-slate-soft"> · </span>
       {eventName}
       <span className="text-slate-soft"> · </span>
-      {formatLongDate(flag.reportedAt)}
+      {sentenceCaseDate(formatLongDate(flag.reportedAt))}
     </p>
   );
 }
@@ -673,13 +673,13 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
           <FieldRow label="Event" value={eventName} mono={false} />
           <FieldRow
             label="Reported at"
-            value={formatLongDate(flag.reportedAt)}
+            value={sentenceCaseDate(formatLongDate(flag.reportedAt))}
             mono
           />
           {flag.reviewedAt && (
             <FieldRow
               label="Reviewed at"
-              value={formatLongDate(flag.reviewedAt)}
+              value={sentenceCaseDate(formatLongDate(flag.reviewedAt))}
               mono
             />
           )}
@@ -690,7 +690,7 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
         <>
           {flag.payoutHoldAt && (
             <p className="font-sans text-sm font-medium text-ink tnum">
-              Payouts on hold since {formatLongDate(flag.payoutHoldAt)}
+              Payouts on hold since {sentenceCaseDate(formatLongDate(flag.payoutHoldAt))}
             </p>
           )}
           <FlagRelevanceEvidence flag={flag} />
@@ -724,13 +724,13 @@ function FieldRow({
 }) {
   return (
     <div>
-      <dt className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft">
+      <Kicker as="dt" tone="soft">
         {label}
-      </dt>
+      </Kicker>
       <dd
-        className={`mt-1 ${
+        className={`mt-1 break-words ${
           mono
-            ? "font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink tnum"
+            ? "font-mono text-[13px] text-ink tnum"
             : "font-sans text-sm text-ink"
         }`}
       >

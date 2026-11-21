@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useCartStore } from "@/store/cart-store";
 import { useUiStore } from "@/store/ui-store";
 import { cn } from "@/lib/utils";
-import { savePhoto } from "@/lib/save-photo";
+import { saveFreePhoto } from "@/lib/save-photo";
 import type { EventDetail } from "@/types/event";
 import { type MockPhoto } from "@/types/photo";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
@@ -47,6 +47,7 @@ import { fetchPhotoAlertStatus } from "@/lib/api-photo-alert";
 import { Footer } from "@/components/layout/footer";
 import { BibNotice } from "@/components/legal/face-notice";
 import { useBibConsent, useTickRead } from "@/store/face-consent-store";
+import { useOwnedPhotoIds } from "@/hooks/use-owned-photo-ids";
 
 type Mode = "cockpit" | "browse";
 
@@ -313,7 +314,8 @@ function CockpitMode({
                 {event.name}
               </Kicker>
               <Kicker as="p" tone="soft" tnum className="mb-5">
-                {(photoCount || event.photoCount).toLocaleString()} photos available · free to search
+                {(photoCount || event.photoCount).toLocaleString()} photos available ·{" "}
+                {event.pricingMode === "free" ? "free to download" : "free to search"}
               </Kicker>
               <h1 className="font-hero text-ink text-5xl md:text-6xl">
                 Find your
@@ -333,6 +335,8 @@ function CockpitMode({
                   eventSlug={event.slug}
                   onSwitchToBib={() => onPanelModeChange("bib")}
                   onSearchSuccess={onFaceSearchSuccess}
+                  onBrowseAll={onBrowseAll}
+                  browseCount={photoCount}
                 />
               )}
             </div>
@@ -681,6 +685,7 @@ function BrowseMode({
   const [searchOpen, setSearchOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [isPolicyOpen, setIsPolicyOpen] = useState(false);
+  const ownedPhotoIds = useOwnedPhotoIds();
 
   const isBibFilter = bibFilter.trim().length > 0;
   const isAnyFilter = isBibFilter || isFaceMode;
@@ -715,6 +720,7 @@ function BrowseMode({
   const previewPhoto =
     previewIndex !== null ? visible[previewIndex] ?? null : null;
 
+  const isFree = event.pricingMode === "free";
   const headerKicker = isBibFilter
     ? `${event.name} · BIB ${bibFilter}`
     : isFaceMode
@@ -784,12 +790,18 @@ function BrowseMode({
               </>
             )}
           </h2>
+          {/* A search with nothing to show: the result box below explains it,
+              so skip the "these are the photos…" line and the photo links. */}
+          {!(isAnyFilter && visible.length === 0) && (
+          <>
           <p className="mt-4 font-sans text-base md:text-lg text-ink-soft max-w-md">
             {isFaceMode
-              ? "These are the photos that match your saved selfie. Tap any to add to cart."
+              ? `These are the photos that match your saved selfie. Tap any to ${isFree ? "download" : "add to cart"}.`
               : isBibFilter
-                ? "These are the photos matching your bib. Tap any to add to cart."
-                : "Skim the wall, or open search anytime to find your bib."}
+                ? `These are the photos matching your bib. Tap any to ${isFree ? "download" : "add to cart"}.`
+                : isFree
+                  ? "Every photo here is free to download. Skim the wall, or open search anytime to find your bib."
+                  : "Skim the wall, or open search anytime to find your bib."}
           </p>
           <Kicker
             as="button"
@@ -807,6 +819,8 @@ function BrowseMode({
           >
             In these photos? Request deletion →
           </Link>
+          </>
+          )}
         </div>
       </header>
 
@@ -956,6 +970,7 @@ function BrowseMode({
                     photo={p}
                     index={i}
                     onOpen={() => setPreviewIndex(i)}
+                    owned={ownedPhotoIds.has(p.id)}
                   />
                 ))}
               </div>
@@ -1094,7 +1109,7 @@ function PhotoPreviewMount({
             ? `Free from @${event.photographerHandle}`
             : "Free from the photographer"
         }
-        onDownload={() => void savePhoto(downloadUrl)}
+        onDownload={() => void saveFreePhoto(downloadUrl)}
       />
     );
   }

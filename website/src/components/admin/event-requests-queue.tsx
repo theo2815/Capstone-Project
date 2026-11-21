@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
 import { isRaceEdit, type AdminEventRow, type RaceEditChange } from "@/lib/api-admin";
 import type { RaceCandidate } from "@/lib/api-photographer";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { getRegion } from "@/lib/ph-regions";
 import { describePricing, raceCheckReasonLine } from "@/lib/photographer-events";
 import { cn } from "@/lib/utils";
@@ -287,9 +287,10 @@ function ApproveSummary({ row }: { row: AdminEventRow }) {
   );
 }
 
-// ER3: only a change request carries its request time; a new submission's time is not sent.
+// ER3: a change request waits from its request time, a new submission from its last resend, else createdAt
+// (both absent on an older backend).
 function waitingLine(row: AdminEventRow) {
-  const at = row.pendingChange?.requestedAt;
+  const at = row.reviewStatus === "change_pending" ? row.pendingChange?.requestedAt : (row.resubmittedAt ?? row.createdAt);
   if (!at) return null;
   const days = Math.floor((Date.now() - new Date(at).getTime()) / 86_400_000);
   if (Number.isNaN(days) || days < 0) return null;
@@ -348,14 +349,14 @@ function RequestRow({
             <LogoPlaceholder size="md" label="No cover photo yet" className="h-full" />
           )}
         </div>
-        <Kicker as="p" tone="soft" tnum>
+        <p className="font-sans text-sm text-slate-soft tnum">
           {kind} · {owner}{waiting && <> · {waiting}</>}
-        </Kicker>
+        </p>
         <p className="font-display text-xl md:text-2xl font-medium tracking-tight text-ink mt-2 break-words">
           {row.name}
         </p>
         <p className="font-sans text-sm text-ink-soft mt-1 tnum">
-          {formatLongDate(row.date, true)} · {row.location}
+          {sentenceCaseDate(formatLongDate(row.date, true))} · {row.location}
         </p>
         {isChange && row.pendingChange && !isRaceEdit(row.pendingChange) && (
           <p className="font-sans text-sm text-ink mt-3 tnum">
@@ -500,7 +501,7 @@ function RaceRef({ label, race }: { label: string; race: RaceCandidate }) {
       ) : (
         <>{race.name} (waiting for review)</>
       )}{" "}
-      · {formatLongDate(race.date, true)} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
+      · {sentenceCaseDate(formatLongDate(race.date, true))} · {race.location} · {race.strength === "strong" ? "strong match" : "possible match"}
     </p>
   );
 }
