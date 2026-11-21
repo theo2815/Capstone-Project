@@ -235,22 +235,4 @@ interface TransactionRepository : JpaRepository<Transaction, UUID> {
         @Param("from") from: OffsetDateTime,
         @Param("to") to: OffsetDateTime,
     ): Long
-
-    // Daily counts of decisions in a window — used for the kpi-trend chart.
-    @Query(
-        value = """
-        SELECT paid_at::date AS day,
-               COUNT(*) FILTER (WHERE is_refund = false) AS sales,
-               COUNT(*) FILTER (WHERE is_refund = true) AS refunds
-        FROM transactions
-        WHERE paid_at >= :from AND paid_at < :to
-        GROUP BY day
-        ORDER BY day
-        """,
-        nativeQuery = true,
-    )
-    fun salesAndRefundCountsByDayBetween(
-        @Param("from") from: OffsetDateTime,
-        @Param("to") to: OffsetDateTime,
-    ): List<Array<Any>>
 }
