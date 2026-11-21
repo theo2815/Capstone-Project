@@ -941,7 +941,7 @@ function SlabStatusChip({ ready }: { ready: boolean }) {
         aria-hidden="true"
         className="size-1.5 rounded-full bg-warning shrink-0"
       />
-      <Kicker as="span" className="text-warning">
+      <Kicker as="span" className="text-warning-text">
         Required
       </Kicker>
     </div>
@@ -2601,7 +2601,7 @@ function SocialSlab() {
             as="p"
             tone="soft"
             tnum
-            className={cn(invalidCount > 0 && "text-warning")}
+            className={cn(invalidCount > 0 && "text-warning-text")}
           >
             {filledCount} of {socials.length} filled in
             {invalidCount > 0 && ` · ${invalidCount} need${invalidCount === 1 ? "s" : ""} attention`}

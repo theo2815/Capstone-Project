@@ -39,9 +39,7 @@ const sources = readdirSync(src, { recursive: true, encoding: "utf8" })
 const read = (f: string) => readFileSync(path.join(src, f), "utf8");
 
 it("warning text uses the warning-text token, not the 3:1 text-warning", () => {
-  // shortcut: billing and settings are exempt while PR #231 holds them; AX-52 removes this exemption once #231 merges or closes
-  const exempt = ["app/dashboard/billing/page.tsx", "app/dashboard/settings/page.tsx"];
-  const raw = sources.filter((f) => !exempt.includes(f) && /text-warning(?!-text)/.test(read(f)));
+  const raw = sources.filter((f) => /text-warning(?!-text)/.test(read(f)));
   expect(raw).toEqual([]);
 });
 
