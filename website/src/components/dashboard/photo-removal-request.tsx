@@ -187,7 +187,7 @@ export function PhotographerPhotoRemovalRequest({ requestId }: { requestId: stri
           {review.deadline ? <>Respond by <span className="tnum">{formatSalesDate(review.deadline)}</span>. </>
             : !review.overdue && "Your 72-hour response window starts when your notice is delivered."}
           {review.overdue && (
-            <span className="text-warning">
+            <span className="text-warning-text">
               Overdue{review.overdueAt && <> since <span className="tnum">{formatSalesDate(review.overdueAt)}</span></>}. QuickPitik can decide
               without your response — no response is never counted as agreement.
             </span>
@@ -266,7 +266,7 @@ export function PhotographerPhotoRemovalRequest({ requestId }: { requestId: stri
                 aria-invalid={reasonMissing} onChange={(e) => setReason(e.target.value)} />
             </div>
           )}
-          {itemIds.length > 100 && <p className="text-sm text-warning">Respond to at most <span className="tnum">100</span> photos at a time.</p>}
+          {itemIds.length > 100 && <p className="text-sm text-warning-text">Respond to at most <span className="tnum">100</span> photos at a time.</p>}
           <button type="button" disabled={!canSubmit} onClick={() => void submit()} className={cn(BTN_PRIMARY, BTN_SIZE.md)}>
             {busy ? "Sending…" : "Send response"}
           </button>

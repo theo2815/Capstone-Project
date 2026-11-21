@@ -17,7 +17,7 @@ interface CharCounterProps {
 // Color thresholds (locked in Slice 1A, inherited by every length-bounded
 // input that ships after):
 //   < 80%     → text-slate-soft (default)
-//   ≥ 80%    → text-warning (the amber/orange #D97706)
+//   ≥ 80%    → text-warning-text (--warning-text, #AC4F0A)
 //   ≥ 100%   → text-error (red #DC2626; user has hit cap, next keystroke
 //             blocked or surfaces an inline FieldError)
 //
@@ -35,7 +35,7 @@ export function CharCounter({
     ratio >= 1
       ? "text-error"
       : ratio >= 0.8
-        ? "text-warning"
+        ? "text-warning-text"
         : undefined;
 
   return (

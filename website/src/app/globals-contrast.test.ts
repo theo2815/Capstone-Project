@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, it } from "vitest";
 
@@ -28,5 +28,16 @@ it("warning text reaches 4.5:1 on surface, paper and paper-deep", () => {
 it("the admin's shared parts use the warning-text token, not raw amber", () => {
   const files = ["admin-status-pill.tsx", "admin-form-fields.tsx", "admin-payout-row.tsx", "admin-payout-bulk-bar.tsx"];
   const raw = files.filter((f) => /amber-\d/.test(readFileSync(path.join(__dirname, "../components/admin", f), "utf8")));
+  expect(raw).toEqual([]);
+});
+
+it("warning text uses the warning-text token, not the 3:1 text-warning", () => {
+  const src = path.join(__dirname, "..");
+  // shortcut: billing and settings are exempt while PR #231 holds them; AX-52 removes this exemption once #231 merges or closes
+  const exempt = ["app/dashboard/billing/page.tsx", "app/dashboard/settings/page.tsx"];
+  const raw = readdirSync(src, { recursive: true, encoding: "utf8" })
+    .map((f) => f.replace(/\\/g, "/"))
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f) && !exempt.includes(f))
+    .filter((f) => /text-warning(?!-text)/.test(readFileSync(path.join(src, f), "utf8")));
   expect(raw).toEqual([]);
 });
