@@ -40,6 +40,10 @@ const EMPTY_KPIS: AdminKpis = {
   pendingEventRequests: 0,
 };
 
+// Columns follow the room beside the admin rail, not the window: each step leaves a
+// tile 230px or more, so its longest label word ("VERIFICATIONS") ends left of its arrow.
+const TILE_GRID = "grid grid-cols-1 @lg:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 gap-6 md:gap-8";
+
 export default function AdminOverviewPage() {
   const kpisQuery = useAdminKpisQuery();
   const kpis = kpisQuery.data ?? EMPTY_KPIS;
@@ -51,6 +55,7 @@ export default function AdminOverviewPage() {
       <Header />
 
       <Slab id="metrics" number="01" title="Key metrics" caption="Live counts">
+        <div className="@container">
         {!kpisQuery.data && kpisQuery.isError ? (
           <div role="alert" className="space-y-3">
             <p className="font-sans text-sm text-error">
@@ -66,16 +71,13 @@ export default function AdminOverviewPage() {
             </button>
           </div>
         ) : !kpisQuery.data ? (
-          <div
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8"
-            aria-busy="true"
-          >
+          <div className={TILE_GRID} aria-busy="true">
             {Array.from({ length: ADMIN_FLAGS_ENABLED ? 8 : 7 }, (_, i) => (
               <Skeleton key={i} className="h-40 w-full rounded-2xl" />
             ))}
           </div>
         ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
+        <div className={TILE_GRID}>
           <AdminStatTile
             kicker="Pending verifications"
             value={kpis.pendingVerifications}
@@ -155,6 +157,7 @@ export default function AdminOverviewPage() {
           />
         </div>
         )}
+        </div>
       </Slab>
 
       <Slab

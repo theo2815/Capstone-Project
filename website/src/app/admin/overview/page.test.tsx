@@ -54,3 +54,25 @@ it("shows a retry instead of zero counts when the metrics fail to load", async (
   screen.getByRole("button", { name: "Retry" }).click();
   expect(kpis.refetch).toHaveBeenCalled();
 });
+
+// jsdom has no layout: the browser check proves the fit; this pins the rule that gives it.
+it("the tiles and their loading grid take their columns from the room beside the rail, not the window", () => {
+  useAuthStore.getState().setUser(admin);
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const page = () => <QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>;
+  const { container, rerender } = render(page());
+  const loading = container.querySelector('[aria-busy="true"]')!;
+  expect(loading.parentElement!.classList.contains("@container")).toBe(true);
+  expect(loading.className).not.toMatch(/(^|\s)[\w[\].-]+:grid-cols-/); // any window breakpoint; @lg: etc. pass
+  const loadingClass = loading.className;
+
+  kpis.value = { pendingVerifications: 2 };
+  rerender(page());
+  const label = screen.getByText("Pending verifications");
+  const grid = label.closest("a")!.parentElement!;
+  expect(grid.className).toBe(loadingClass);
+  expect(grid.parentElement!.classList.contains("@container")).toBe(true);
+  // Two whole lines of the label's own line height, so a one-line label's value starts level with a two-line one's.
+  expect(label.className).toContain("min-h-[2lh]");
+});
