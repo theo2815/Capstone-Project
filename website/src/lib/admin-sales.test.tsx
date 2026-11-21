@@ -7,7 +7,7 @@ import { AdminSalesLeaderboard } from "@/components/admin/admin-sales-leaderboar
 import { AdminSalesEventTable } from "@/components/admin/admin-sales-event-table";
 import { AdminSalesTrend } from "@/components/admin/admin-sales-trend";
 
-vi.mock("next/link", () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a> }));
+vi.mock("next/link", () => ({ default: ({ children, href, className }: { children: React.ReactNode; href: string; className?: string }) => <a href={href} className={className}>{children}</a> }));
 
 const apiGet = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({ api: { get: apiGet }, ApiError: class extends Error {} }));
@@ -106,6 +106,24 @@ it("a long event name in Sales by event wraps instead of being cut", () => {
   const name = screen.getByText(long);
   expect(name).not.toHaveClass("truncate");
   expect(name).toHaveClass("break-words");
+});
+
+it("the by-event headings and every row share one set of columns", () => {
+  state.live = [serverRow, { ...serverRow, id: "ev-3", impliedGmv: 12345678.9 }];
+  const { container } = render(<AdminSalesEventTable />);
+  // One element sizes the columns; the headings and each row are subgrids of it, so a big figure widens its
+  // column for every row at once. jsdom has no layout: the browser check measures the alignment.
+  const templates = [...container.querySelectorAll("*")].filter((el) => el.getAttribute("class")?.includes("lg:grid-cols-["));
+  expect(templates).toHaveLength(1);
+  const subgrids = [...container.querySelectorAll(".lg\\:grid-cols-subgrid")];
+  for (const el of subgrids) {
+    expect(el).toHaveClass("lg:grid", "lg:col-span-full");
+    expect(el.parentElement === templates[0] || subgrids.includes(el.parentElement!)).toBe(true);
+  }
+  expect(subgrids).toContain(screen.getByText("Event").parentElement);
+  for (const gmv of [screen.getByText("₱3,000.00"), screen.getByText("₱12,345,678.90")]) {
+    expect(subgrids).toContain(gmv.parentElement!.parentElement);
+  }
 });
 
 it("a browser-derived top event keeps its Implied badge", () => {

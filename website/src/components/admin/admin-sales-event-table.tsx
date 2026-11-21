@@ -88,22 +88,25 @@ export function AdminSalesEventTable() {
         />
       </div>
 
-      {/* Column headings for the desktop grid; each cell also carries its label for screen readers. */}
-      <div
-        aria-hidden="true"
-        className="hidden lg:grid lg:grid-cols-[2fr_1fr_1fr_1fr_1fr] lg:gap-6 pb-3"
-      >
-        <Kicker tone="soft">Event</Kicker>
-        <Kicker tone="soft" className="text-right">Date</Kicker>
-        <Kicker tone="soft" className="text-right">GMV</Kicker>
-        <Kicker tone="soft" className="text-right">Platform cut</Kicker>
-        <Kicker tone="soft" className="text-right">Refunds</Kicker>
+      {/* One desktop grid sizes the columns; the headings and every row are subgrids of it, so a big
+          figure widens its column for all of them. Each cell also carries its label for screen readers. */}
+      <div className="lg:grid lg:grid-cols-[2fr_1fr_1fr_1fr_1fr] lg:gap-x-6">
+        <div
+          aria-hidden="true"
+          className="hidden lg:grid lg:col-span-full lg:grid-cols-subgrid pb-3"
+        >
+          <Kicker tone="soft">Event</Kicker>
+          <Kicker tone="soft" className="text-right">Date</Kicker>
+          <Kicker tone="soft" className="text-right">GMV</Kicker>
+          <Kicker tone="soft" className="text-right">Platform cut</Kicker>
+          <Kicker tone="soft" className="text-right">Refunds</Kicker>
+        </div>
+        <ul className="border-y border-line divide-y divide-line lg:col-span-full lg:grid lg:grid-cols-subgrid">
+          {visible.map((row) => (
+            <EventTableRow key={row.id} row={row} />
+          ))}
+        </ul>
       </div>
-      <ul className="border-y border-line divide-y divide-line">
-        {visible.map((row) => (
-          <EventTableRow key={row.id} row={row} />
-        ))}
-      </ul>
 
       <LoadMoreButton
         shown={Math.min(shown, total)}
@@ -120,12 +123,12 @@ export function AdminSalesEventTable() {
 function EventTableRow({ row }: { row: SalesEventRow }) {
   const href = `${ROUTES.ADMIN_EVENTS}/${row.id}`;
   return (
-    <li>
+    <li className="lg:col-span-full lg:grid lg:grid-cols-subgrid">
       <Link
         href={href}
-        className="group block py-4 md:py-5 transition-colors"
+        className="group block py-4 md:py-5 transition-colors lg:col-span-full lg:grid lg:grid-cols-subgrid"
       >
-        <div className="lg:grid lg:grid-cols-[2fr_1fr_1fr_1fr_1fr] lg:items-baseline lg:gap-6">
+        <div className="lg:col-span-full lg:grid lg:grid-cols-subgrid lg:items-baseline">
           <div className="min-w-0">
             <div className="flex items-baseline gap-3 flex-wrap">
               <p className="font-display text-base text-ink break-words group-hover:text-fresh transition-colors">
