@@ -12,6 +12,7 @@ import { usePathname } from "next/navigation";
 import { Kicker } from "@/components/ui/kicker";
 import { RailTipPortal } from "@/components/ui/rail-tip-portal";
 import { KeyboardHintPill } from "@/components/admin/keyboard-hint-pill";
+import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { getAdminSectionGuideByHref } from "@/lib/admin-section-guide";
 import type { SectionGuideEntry } from "@/lib/section-guide";
@@ -160,6 +161,12 @@ export const ADMIN_ROUTES: ReadonlyArray<AdminRoute> = ADMIN_FLAGS_ENABLED
 export function AdminRail() {
   const pathname = usePathname();
   const [tipsDisabled, setTipsDisabled] = useState(false);
+  const [modKey, setModKey] = useState("Ctrl");
+
+  // Same platform check as keyboard-legend.tsx; read after mount so the server render matches.
+  useEffect(() => {
+    if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) setModKey("⌘");
+  }, []);
 
   useEffect(() => {
     try {
@@ -197,12 +204,9 @@ export function AdminRail() {
   const accountRoutes = ADMIN_ROUTES.filter((r) => r.group === "account");
 
   return (
-    <aside className="hidden md:block md:sticky md:top-20 md:self-start pt-6 md:pt-10 pb-6 md:pb-8 md:max-h-[calc(100vh-5rem)] md:overflow-y-auto">
-      <Kicker as="p" size="sm">
-        Admin
-      </Kicker>
-
-      <nav aria-label="Admin sections" className="mt-8 space-y-10">
+    <aside className="hidden md:flex md:flex-col md:sticky md:top-20 md:self-start pt-6 pb-6 md:pb-4 md:max-h-[calc(100vh-5rem)]">
+      {/* No "Admin" kicker: the header names the area, and all 14 rows must fit at 1366x768. Only the list scrolls, so the footer stays in view. */}
+      <nav aria-label="Admin sections" className="space-y-4 md:flex-1 md:min-h-0 md:overflow-y-auto">
         <div>
           <Kicker
             as="p"
@@ -212,7 +216,7 @@ export function AdminRail() {
           >
             {queueTotal === null ? "Queues" : allClear ? "Queues · all clear" : `Queues · ${queueTotal} open`}
           </Kicker>
-          <ul className="mt-4 space-y-3">
+          <ul className="mt-2 space-y-1">
             {queueRoutes.map((route) => (
               <RailRow
                 key={route.href}
@@ -233,7 +237,7 @@ export function AdminRail() {
           <Kicker as="p" size="sm">
             Catalog
           </Kicker>
-          <ul className="mt-4 space-y-3">
+          <ul className="mt-2 space-y-1">
             {catalogRoutes.map((route) => (
               <RailRow
                 key={route.href}
@@ -252,7 +256,7 @@ export function AdminRail() {
           <Kicker as="p" size="sm">
             Reports
           </Kicker>
-          <ul className="mt-4 space-y-3">
+          <ul className="mt-2 space-y-1">
             {reportRoutes.map((route) => (
               <RailRow
                 key={route.href}
@@ -271,7 +275,7 @@ export function AdminRail() {
           <Kicker as="p" size="sm">
             Account
           </Kicker>
-          <ul className="mt-4 space-y-3">
+          <ul className="mt-2 space-y-1">
             {accountRoutes.map((route) => (
               <RailRow
                 key={route.href}
@@ -287,18 +291,33 @@ export function AdminRail() {
         </div>
       </nav>
 
-      <div className="mt-12 pt-6 border-t border-line flex items-center justify-between gap-3">
-        <Kicker
-          as="button"
-          size="sm"
+      <div className="mt-3 pt-3 border-t border-line space-y-2">
+        <button
           type="button"
-          onClick={toggleTipsDisabled}
-          aria-pressed={tipsDisabled}
-          className="hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          onClick={() => useAdminPaletteStore.getState().setOpen(true)}
+          aria-label="Search the admin"
+          className="flex w-full items-center justify-between gap-2 rounded-full border border-line bg-bone hover:border-ink transition-colors px-3 py-1.5 group"
         >
-          {tipsDisabled ? "Show tips" : "Hide tips"}
-        </Kicker>
-        <KeyboardHintPill />
+          <span className="font-mono text-[14px] text-slate group-hover:text-ink transition-colors">
+            Search
+          </span>
+          <kbd className="font-mono text-[12px] text-ink rounded border border-line bg-bone-deep px-1.5 py-0.5">
+            {modKey} K
+          </kbd>
+        </button>
+        <div className="flex items-center justify-between gap-3">
+          <Kicker
+            as="button"
+            size="sm"
+            type="button"
+            onClick={toggleTipsDisabled}
+            aria-pressed={tipsDisabled}
+            className="hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+          >
+            {tipsDisabled ? "Show tips" : "Hide tips"}
+          </Kicker>
+          <KeyboardHintPill />
+        </div>
       </div>
     </aside>
   );
@@ -399,7 +418,7 @@ function RailRow({
           >
             {route.number}
           </span>
-          <span ref={labelRef} className="font-display text-base">
+          <span ref={labelRef} className="font-display text-base leading-snug">
             {route.label}
           </span>
           <span className="ml-auto flex items-baseline gap-2 shrink-0">
