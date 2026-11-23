@@ -82,7 +82,7 @@ export function AdminPayoutReasonModal({
       title={`${copy.title} · ${payoutId}`}
       intro={
         <>
-          This cycle{" "}
+          This payout{" "}
           <span className="text-ink tnum">({formatPrice(amount)})</span> will be
           marked {copy.verb}. {copy.note}
         </>

@@ -36,12 +36,12 @@ describe("AdminPayoutHoldModal (AX-28)", () => {
   it("a failed request shows the inline error and keeps the reason and note", async () => {
     const user = userEvent.setup();
     const { onSubmit, submit } = setup(vi.fn(async () => false));
-    await user.click(screen.getByRole("radio", { name: "Compliance review requested" }));
+    await user.click(screen.getByRole("radio", { name: "We need to review your account first" }));
     await user.type(screen.getByRole("textbox"), "Same card on 40 orders");
     await user.click(submit());
-    expect(onSubmit).toHaveBeenCalledWith("Compliance review requested — Same card on 40 orders");
+    expect(onSubmit).toHaveBeenCalledWith("We need to review your account first — Same card on 40 orders");
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Couldn.t finish/));
-    expect(screen.getByRole("radio", { name: "Compliance review requested" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "We need to review your account first" })).toBeChecked();
     expect(screen.getByRole("textbox")).toHaveValue("Same card on 40 orders");
     expect(submit()).toBeEnabled();
   });
@@ -50,5 +50,19 @@ describe("AdminPayoutHoldModal (AX-28)", () => {
     setup();
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/cycle/i);
     expect(screen.getByText(/This payout/)).toBeInTheDocument();
+  });
+
+  // FT-16 (C-19): the photographer reads the chosen reason word for word, so no internal words.
+  it("the reasons are in everyday words, and the intro says the photographer reads them as written", async () => {
+    const user = userEvent.setup();
+    const { onSubmit, submit } = setup();
+    expect(screen.getAllByRole("radio")).toHaveLength(6);
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/chargeback|compliance|payments lead/i);
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "The photographer reads the reason below exactly as it is written, with your note. You can approve or reject the payout later.",
+    );
+    await user.click(screen.getByRole("radio", { name: "We need to review your account first" }));
+    await user.click(submit());
+    expect(onSubmit.mock.calls[0]![0]).toMatch(/^We need to review your account first/);
   });
 });

@@ -67,7 +67,7 @@ it("bulk payout reserves every row before hashing and reuses the original key af
   post.mockResolvedValue({ groupId: "batch", results: [{ id: "a", ok: true }, { id: "b", ok: false }] });
   const failed = vi.fn();
   await act(async () => { await b.result.current.bulkApprove(["b", "a"], failed); });
-  expect(failed).toHaveBeenCalledWith(["b"]);
+  expect(failed).toHaveBeenCalledWith(["b"], [{ id: "b", ok: false }]);
   await act(async () => { await b.result.current.bulkApprove(["b"]); });
   expect(post.mock.calls[3]![2]).not.toEqual(original);
 });

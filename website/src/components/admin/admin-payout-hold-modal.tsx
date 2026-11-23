@@ -22,11 +22,11 @@ interface AdminPayoutHoldModalProps {
 }
 
 const HOLD_REASONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: "chargeback_review", label: "Chargeback rate elevated this period" },
-  { value: "dispute_pending", label: "Active disputes referencing this payout" },
-  { value: "compliance_review", label: "Compliance review requested" },
-  { value: "method_mismatch", label: "Payout method on file doesn't match record" },
-  { value: "manual_check", label: "Manual review pending payments lead" },
+  { value: "chargeback_review", label: "Many payment disputes on your recent sales" },
+  { value: "dispute_pending", label: "Open refund requests on photos in this payout" },
+  { value: "compliance_review", label: "We need to review your account first" },
+  { value: "method_mismatch", label: "Your payout account details do not match our records" },
+  { value: "manual_check", label: "We are checking this payout by hand" },
   { value: "other", label: "Other (see note)" },
 ];
 
@@ -79,7 +79,8 @@ export function AdminPayoutHoldModal({
             <span className="text-ink tnum">{payoutIds.length}</span> payouts
             totaling{" "}
             <span className="text-ink tnum">{formatPrice(totalAmount)}</span>{" "}
-            will be paused. Photographers are notified with the reason.
+            will be paused. Each photographer reads the reason below exactly as
+            it is written, with your note.
           </>
         ) : (
           <>
@@ -87,7 +88,9 @@ export function AdminPayoutHoldModal({
             <span className="text-ink tnum">
               ({formatPrice(totalAmount)})
             </span>{" "}
-            will be paused. The photographer is notified with the reason.
+            will be paused. The photographer reads the reason below exactly as
+            it is written, with your note. You can approve or reject the payout
+            later.
           </>
         )
       }

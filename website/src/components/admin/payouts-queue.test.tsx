@@ -219,16 +219,21 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   for (const row of rows) await user.click(screen.getByRole("checkbox", { name: `Select payout ${row.id}` }));
   await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 2" : "Hold 2…" }));
   const modal = screen.getByRole("dialog");
-  const submit = action === "approve" ? "Confirm approve" : "Hold 2 payouts";
+  const submit = action === "approve" ? "Approve" : "Hold 2 payouts";
   if (action === "hold") await user.click(within(modal).getAllByRole("radio")[0]!);
   await user.click(within(modal).getByRole("button", { name: submit }));
   expect(within(modal).getByRole("button", { name: action === "approve" ? "Approving…" : "Holding…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
   await act(async () => { request.resolve({ groupId: "partial", results: [
-    { id: payoutCycle.id, ok: true }, { id: "cycle-2", ok: false },
+    { id: payoutCycle.id, ok: true }, { id: "cycle-2", ok: false, error: "A different admin must give the second approval for this amount." },
   ] }); });
   expect(modal).toBeInTheDocument();
-  const retryLabel = action === "approve" ? "Confirm approve" : "Hold payout";
+  // FT-16 (C-22): the approve confirm names the payout that failed, with the server's reason.
+  if (action === "approve") {
+    expect(within(modal).getByRole("alert")).toHaveTextContent("cycle-2: A different admin must give the second approval for this amount.");
+    expect(within(modal).getByRole("alert")).not.toHaveTextContent(payoutCycle.id + ":");
+  }
+  const retryLabel = action === "approve" ? "Approve" : "Hold payout";
   expect(within(modal).getByRole("button", { name: retryLabel })).toBeEnabled();
   expect(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` })).not.toBeChecked();
   expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeChecked();
@@ -241,6 +246,24 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   expect(post).toHaveBeenLastCalledWith("/admin/payouts/bulk", expect.objectContaining({ ids: ["cycle-2"] }), expect.anything());
 });
 
+// FT-16 (C-22): the bulk confirm lists what it approves and uses the same verb as the single one.
+it("the bulk approve confirm lists every selected payout and its button is Approve", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", brandName: "Second Studio", amount: 1200 }]; client.setQueryData(key, rows);
+  await mount();
+  for (const row of rows) await user.click(screen.getByRole("checkbox", { name: `Select payout ${row.id}` }));
+  await user.click(screen.getByRole("button", { name: "Approve 2" }));
+  const modal = screen.getByRole("dialog");
+  const list = within(modal).getByRole("list");
+  expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+  expect(list).toHaveTextContent(payoutCycle.id);
+  expect(list).toHaveTextContent("cycle-2");
+  expect(list).toHaveTextContent("Second Studio");
+  expect(within(modal).getByRole("button", { name: "Approve" })).toBeEnabled();
+  expect(within(modal).queryByRole("button", { name: "Confirm approve" })).toBeNull();
+  expect(modal).toHaveTextContent("Approving sends no money. A larger payout needs a second, different admin before it can be paid.");
+});
+
 it.each(["approve", "hold"])("closes bulk %s and clears selection only after confirmation", async (action) => {
   const user = userEvent.setup();
   const request = deferred<unknown>();
@@ -250,7 +273,7 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" }));
   const modal = screen.getByRole("dialog");
   if (action === "hold") await user.click(within(modal).getAllByRole("radio")[0]!);
-  await user.click(within(modal).getByRole("button", { name: action === "approve" ? "Confirm approve" : "Hold payout" }));
+  await user.click(within(modal).getByRole("button", { name: action === "approve" ? "Approve" : "Hold payout" }));
   expect(modal).toBeInTheDocument();
   expect(screen.getByRole("checkbox")).toBeChecked();
   rows = [{ ...payoutCycle, status: action === "hold" ? "held" : "pending_review", approvedBy: admin.id }];
@@ -327,12 +350,12 @@ it("a held photographer's payout names the flag and disables approve and mark pa
     { ...payoutCycle, id: "cycle-2", status: "approved", relevanceFlagId: "flag-1", relevanceHold: true },
   ]; client.setQueryData(key, rows);
   const view = await mount();
-  expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(1);
-  expect(screen.getAllByRole("link", { name: /relevance flag/i })[0]).toHaveAttribute("href", "/admin/flags?row=flag-1");
+  expect(screen.getAllByText("Payouts paused: a photo check on this photographer is still open")).toHaveLength(1);
+  expect(screen.getAllByRole("link", { name: /photo check/i })[0]).toHaveAttribute("href", "/admin/flags?row=flag-1");
   expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Hold…" })[0]).toBeEnabled();
   view.unmount(); navigation.search = "status=in-progress"; await mount();
-  expect(screen.getAllByText("Payouts on hold: open relevance flag")).toHaveLength(1);
+  expect(screen.getAllByText("Payouts paused: a photo check on this photographer is still open")).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Mark processing" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Mark paid…" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
@@ -344,7 +367,7 @@ it("a held photographer's payout names the flag and disables approve and mark pa
 it("an unconfirmed flag shows a warning and leaves the buttons on", async () => {
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: false }]; client.setQueryData(key, rows);
   await mount();
-  expect(screen.getByText("Open relevance flag, not yet confirmed")).toBeInTheDocument();
+  expect(screen.getByText("A photo check on this photographer is open, not yet confirmed")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
 });
 it("the bulk bar refuses approve while a selected payout is on hold, and E does nothing in the drawer", async () => {
@@ -355,7 +378,7 @@ it("the bulk bar refuses approve while a selected payout is on hold, and E does 
   await mount();
   await user.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-2" }));
-  expect(screen.getByText("Some selected payouts are on hold: open relevance flag")).toBeInTheDocument();
+  expect(screen.getByText("Some selected payouts are paused by an open photo check")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^Approve \d/ })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   await user.keyboard("e");
@@ -366,7 +389,7 @@ it("the flag link in a row does not open the drawer or toggle selection, and Ent
   const user = userEvent.setup();
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
   await mount();
-  const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
+  const link = screen.getByRole("link", { name: "Payouts paused: a photo check on this photographer is still open" });
   await user.click(link);
   expect(navigation.replace).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -379,7 +402,7 @@ it("the flag link in a row does not open the drawer or toggle selection, and Ent
 it("an admin shortcut key pressed on the flag link still reaches the page", async () => {
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true }]; client.setQueryData(key, rows);
   await mount();
-  const link = screen.getByRole("link", { name: "Payouts on hold: open relevance flag" });
+  const link = screen.getByRole("link", { name: "Payouts paused: a photo check on this photographer is still open" });
   const seen = vi.fn();
   window.addEventListener("keydown", seen);
   try {

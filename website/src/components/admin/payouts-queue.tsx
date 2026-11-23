@@ -72,6 +72,8 @@ export function PayoutsQueue() {
   const { showToast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
+  // FT-16 (C-22): which payouts a bulk approve could not approve, and the server's reason for each.
+  const [bulkApproveError, setBulkApproveError] = useState<string | null>(null);
   const [holdTarget, setHoldTarget] = useState<HoldTarget>(null);
   const [markPaidTarget, setMarkPaidTarget] = useState<MarkPaidTarget | null>(
     null,
@@ -183,7 +185,7 @@ export function PayoutsQueue() {
       : selectedCycles.some((c) => c.status === "approved")
         ? "Some selected payouts are already approved"
         : selectedCycles.some(payoutActionsBlockedByHold)
-          ? "Some selected payouts are on hold: open relevance flag"
+          ? "Some selected payouts are paused by an open photo check"
           : null;
 
   const selectionActive = selected.size > 0;
@@ -326,7 +328,11 @@ export function PayoutsQueue() {
 
   async function handleBulkApproveConfirm() {
     const ids = Array.from(selected);
-    const ok = await bulkApprove(ids, (failedIds) => setSelected(new Set(failedIds)));
+    setBulkApproveError(null);
+    const ok = await bulkApprove(ids, (failedIds, failed) => {
+      setSelected(new Set(failedIds));
+      setBulkApproveError(failed.map((row) => (row.error ? `${row.id}: ${row.error}` : row.id)).join(" · "));
+    });
     if (ok) {
       setBulkApproveOpen(false);
       clearSelection();
@@ -486,7 +492,7 @@ export function PayoutsQueue() {
         approveDisabled={approveDisabled}
         submitting={submitting}
         approveDisabledReason={approveDisabledReason}
-        onApprove={() => setBulkApproveOpen(true)}
+        onApprove={() => { setBulkApproveError(null); setBulkApproveOpen(true); }}
         onHold={handleBulkHoldRequest}
         onClear={clearSelection}
       />
@@ -498,6 +504,8 @@ export function PayoutsQueue() {
         onConfirm={handleBulkApproveConfirm}
         count={selected.size}
         totalAmount={totalSelected}
+        cycles={selectedCycles}
+        error={bulkApproveError}
       />
       {holdTarget && (
         <AdminPayoutHoldModal
@@ -555,7 +563,7 @@ export function PayoutsQueue() {
           </p>
           <p className="font-sans text-sm text-slate">
             {confirmTarget.kind === "approve"
-              ? "Approving a payout does not send funds. Requests that need two admins stay pending until a different admin records the second approval."
+              ? "Approving sends no money. A larger payout needs a second, different admin before it can be paid."
               : "Do this once the transfer has started. Then mark it paid with the bank reference, or mark it failed."}
           </p>
         </AdminConfirmModal>

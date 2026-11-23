@@ -347,7 +347,7 @@ function ReportDetailBody({ report, cycleAmount }: ReportDetailBodyProps) {
     <div className="space-y-10">
       <section>
         <Kicker as="p" tone="soft" className="mb-3">
-          Cycle
+          Payout
         </Kicker>
         <div className="rounded-2xl border border-line bg-bone-deep p-4">
           <p className="text-[14px] text-ink break-words">

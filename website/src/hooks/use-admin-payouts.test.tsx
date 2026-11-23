@@ -99,7 +99,7 @@ it.each(["bulkApprove", "bulkHold"] as const)("%s refetches partial results with
   await act(async () => { refreshed.resolve({ items: [confirmed, second] }); expect(await pending).toBe(false); });
   await waitFor(() => expect(result.current.query.data).toEqual([confirmed, second]));
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain("1 succeeded, 1 failed");
-  expect(onPartialFailure).toHaveBeenCalledWith([second.id]);
+  expect(onPartialFailure).toHaveBeenCalledWith([second.id], [{ id: second.id, ok: false, error: "Conflict" }]);
   expect(post).toHaveBeenCalledWith("/admin/payouts/bulk", expect.objectContaining({ ids: [payoutCycle.id, second.id] }),
     { headers: { "Idempotency-Key": expect.any(String) } });
 });
