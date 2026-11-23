@@ -125,7 +125,7 @@ it("a decided appeal leaves the open list", async () => {
   // AX-35: the tab counts come from /admin/kpis, so a decision reads them again.
   await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  expect(await within(screen.getByRole("region", { name: "Open" })).findByText("No open appeals.")).toBeInTheDocument();
+  expect(await within(screen.getByRole("region", { name: "Open" })).findByText("No open appeals. You're caught up.")).toBeInTheDocument();
   expect(toasts()).toContain("Appeal won: Cebu City Marathon 2003");
   expect(useToastStore.getState().toasts.find((t) => t.message === "Appeal won: Cebu City Marathon 2003")?.kind).toBe("success");
 });

@@ -69,9 +69,9 @@ it("a failed first load (even with an empty message) shows an alert with Retry, 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Couldn't load the verifications. Please try again.");
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  expect(screen.queryByText("Queue is clear.")).toBeNull();
-  expect(screen.queryByText(/^0 (pending|stuck)$/)).toBeNull();
-  expect(screen.queryByText(/No photographers stuck/)).toBeNull();
+  expect(screen.queryByText("No profiles waiting. You're caught up.")).toBeNull();
+  expect(screen.queryByText(/^0 (waiting|not finished)$/)).toBeNull();
+  expect(screen.queryByText(/No photographers are part-way/)).toBeNull();
 });
 
 it("a row's completeness counts socials and payouts, the same number as the directory card", () => {
@@ -110,4 +110,14 @@ it("an Incomplete photographer with no handle links to their page by id", () => 
   mount([{ ...incomplete, userId: "photographer-5", brandName: "No Handle Studio", handle: null }]);
   const slab = document.getElementById("incomplete")!;
   expect(within(slab).getByRole("link", { name: "No Handle Studio" })).toHaveAttribute("href", "/admin/photographers/photographer-5");
+});
+
+it("an empty queue says nothing is waiting in one line, and the part-way list says there is nothing to do", () => {
+  mount([]);
+  expect(screen.getByText("No profiles waiting. You're caught up.")).toBeInTheDocument();
+  expect(screen.queryByText(/Check back/)).toBeNull();
+  expect(screen.getByText("Waiting for the ID check")).toBeInTheDocument();
+  expect(screen.getByText("0 waiting")).toBeInTheDocument();
+  expect(screen.getByText("Still filling in their settings. Nothing to do here.")).toBeInTheDocument();
+  expect(screen.getByText("0 not finished")).toBeInTheDocument();
 });

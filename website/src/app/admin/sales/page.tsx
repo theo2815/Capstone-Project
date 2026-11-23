@@ -176,7 +176,7 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
         <PulseRow
           label="Open · escalated"
           value={`${refunds.openCount} · ${refunds.escalatedCount}`}
-          caption="awaiting decision"
+          caption="waiting for a decision"
         />
       </ul>
 

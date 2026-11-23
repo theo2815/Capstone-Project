@@ -38,7 +38,7 @@ export function AdminMobileStrip() {
           </li>
           {queueTotal !== null && (
             <li className="shrink-0 pr-1">
-              <Kicker tnum>{queueTotal === 0 ? "All clear" : `${queueTotal} open`}</Kicker>
+              <Kicker tnum>{queueTotal === 0 ? "All clear" : `${queueTotal} waiting`}</Kicker>
             </li>
           )}
           {[...queueRoutes, null, ...otherRoutes].map((route) => {

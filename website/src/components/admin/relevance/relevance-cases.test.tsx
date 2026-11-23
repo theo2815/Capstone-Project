@@ -166,7 +166,7 @@ it("the Appeals tab says appeals arrive with the photographer side", async () =>
   fixtures.search = "tab=appeals";
   list = async () => ({ items: [], total: 0, offset: 0, limit: 50 });
   mount();
-  expect(await screen.findByText("No open appeals.")).toBeInTheDocument();
+  expect(await screen.findByText("No open appeals. You're caught up.")).toBeInTheDocument();
 });
 
 // RV-4.3: "Repeat cases" on the All tab keeps only cases whose photographer has a repeat case (the server filters).

@@ -288,3 +288,9 @@ it("a request card's values are not upper-cased", () => {
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   expect(screen.getByText(/· Sep 10 · 2026 · SRP, Cebu City · strong match/)).toBeInTheDocument();
 });
+
+it("an empty queue says no event requests are waiting", () => {
+  client.setQueryData(key, []);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(screen.getByText("No event requests waiting. You're caught up.")).toBeInTheDocument();
+});

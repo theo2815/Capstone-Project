@@ -85,8 +85,8 @@ export type RelevanceTab = "hidden" | "appeals" | "cant_tell" | "all";
 
 export const RELEVANCE_TABS: readonly { value: RelevanceTab; label: string; empty: string }[] = [
   { value: "hidden", label: "Hidden", empty: "No batch is hidden, or would have been hidden." },
-  { value: "appeals", label: "Appeals", empty: "No open appeals." },
-  { value: "cant_tell", label: "Can't tell", empty: "No batch is waiting on a person to judge it." },
+  { value: "appeals", label: "Appeals", empty: "No open appeals. You're caught up." },
+  { value: "cant_tell", label: "Can't tell", empty: "No batch is waiting for you. You're caught up." },
   { value: "all", label: "All", empty: "No batch has been checked yet." },
 ];
 

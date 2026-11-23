@@ -82,3 +82,8 @@ it("shows its guide intro, look-alike links and definitions without hover", () =
   render(<AdminSalesPage />);
   expectSectionIntro(ROUTES.ADMIN_SALES);
 });
+
+it("the open refunds line says they wait for a decision", () => {
+  render(<AdminSalesPage />);
+  expect(screen.getByText("waiting for a decision")).toBeInTheDocument();
+});

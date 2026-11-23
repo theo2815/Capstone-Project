@@ -102,7 +102,7 @@ it("keeps a typed reply when a refresh drops the report from the list", async ()
   reports = [];
   total = 0;
   await client.invalidateQueries({ queryKey: ["admin", "payouts", "reports"] });
-  await waitFor(() => expect(screen.getByText("No open reports.")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("No open reports. You're caught up.")).toBeInTheDocument());
   // Query again: the node captured above would keep its value even after unmounting.
   expect(within(screen.getByRole("dialog", { name: /acknowledge · report-1/i })).getByRole("textbox")).toHaveValue("Checking with GCash.");
 });

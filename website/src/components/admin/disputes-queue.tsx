@@ -36,7 +36,7 @@ import { formatPrice } from "@/lib/utils";
 // The server's views (no status filter in the UI on purpose; the server keeps `status=`).
 type QueueView = Extract<AdminDisputeView, "needs_me" | "overdue" | "refund_run" | "closed" | "all">;
 const VIEWS: readonly { value: QueueView; label: string; empty: string }[] = [
-  { value: "needs_me", label: "Needs you", empty: "Nothing needs you right now." },
+  { value: "needs_me", label: "Needs you", empty: "No disputes waiting. You're caught up." },
   { value: "overdue", label: "Overdue", empty: "Nothing is overdue." },
   { value: "refund_run", label: "Refund run", empty: "No approved refunds are waiting to be paid." },
   { value: "closed", label: "Closed", empty: "No closed disputes yet." },

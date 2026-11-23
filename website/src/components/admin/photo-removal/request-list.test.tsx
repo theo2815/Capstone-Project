@@ -90,3 +90,9 @@ it("a case row's date is in sentence case", async () => {
   render(<QueryClientProvider client={client}><RemovalRequestList /></QueryClientProvider>);
   expect(await screen.findByText(/photos · Oct 08 · 2026/)).toBeInTheDocument();
 });
+
+it("the Inbox list says no requests are waiting", async () => {
+  vi.mocked(removalApi.listAdminRemovalRequests).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  render(<QueryClientProvider client={client}><RemovalRequestList needsActionOnly /></QueryClientProvider>);
+  expect(await screen.findByText("No requests waiting. You're caught up.")).toBeVisible();
+});

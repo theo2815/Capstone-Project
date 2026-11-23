@@ -123,7 +123,7 @@ it("each action waits for the server before the row changes", async () => {
   expect(toasts()).toEqual(["Marked looks fine: Cebu City Marathon 2003"]);
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] });
   expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["success"]);
-  expect(await screen.findByText("No batch is waiting on a person to judge it.")).toBeInTheDocument();
+  expect(await screen.findByText("No batch is waiting for you. You're caught up.")).toBeInTheDocument();
 });
 
 it("a refused action shows the server's message", async () => {

@@ -318,3 +318,14 @@ it("the drawer's subtitle, ids and dates are not upper-cased", async () => {
   // A title holds two handles, so it must wrap at 375.
   expect(within(drawer).getAllByRole("heading", { level: 2 })[0]).toHaveClass("break-words");
 });
+
+it("an empty Needs you list says no disputes are waiting", async () => {
+  vi.mocked(api.get).mockImplementation(async (path) => {
+    if (path.startsWith("/admin/disputes?")) return page([]);
+    if (path === "/admin/kpis") return fixtures.kpis;
+    throw new Error(`unexpected GET ${path}`);
+  });
+  seed([]);
+  renderQueue();
+  expect(await screen.findByText("No disputes waiting. You're caught up.")).toBeInTheDocument();
+});

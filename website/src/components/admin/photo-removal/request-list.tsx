@@ -73,7 +73,7 @@ export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnl
           <p className="text-slate">No cases match these filters.</p>
           <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} onClick={() => setFilter({ status: null, source: null, needs: null })}>Clear filters</button>
         </div>
-      ) : <p className="text-slate">{needsActionOnly ? "No cases need action." : "No removal cases yet."}</p>)}
+      ) : <p className="text-slate">{needsActionOnly ? "No requests waiting. You're caught up." : "No removal cases yet."}</p>)}
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((row) => {
           const runner = row.source === "RUNNER";
