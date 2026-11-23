@@ -24,7 +24,7 @@ function LiveAside() { const query = useAdminUserDetail(adminUser.userId); retur
 function mount(row?: AdminUserRow) {
   return render(<QueryClientProvider client={client}>{row ? <AdminActionAside row={row} /> : <LiveAside />}</QueryClientProvider>);
 }
-const section = () => screen.getByRole("region", { name: "Automatic actions" });
+const section = () => screen.getByRole("region", { name: "Automatic photo checks" });
 beforeEach(() => {
   useAuthStore.getState().setUser(admin); useToastStore.getState().clear();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -36,7 +36,7 @@ afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); v
 
 it("the control shows only for a photographer", () => {
   mount({ ...adminUser, role: "RUNNER" });
-  expect(screen.queryByRole("region", { name: "Automatic actions" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Automatic photo checks" })).not.toBeInTheDocument();
   cleanup();
   mount({ ...adminUser, relevanceConsentWithdrawnAt: null });
   expect(section()).toBeInTheDocument();
@@ -45,6 +45,7 @@ it("the control shows only for a photographer", () => {
 it("a photographer who has not withdrawn shows the Record withdrawal action", () => {
   mount();
   expect(within(section()).getByText("Consent to automatic hides and payout holds: not withdrawn.")).toBeInTheDocument();
+  expect(within(section()).getByText("Use this only when the photographer has emailed to withdraw consent.")).toBeInTheDocument();
   expect(within(section()).getByRole("button", { name: "Record withdrawal" })).toBeEnabled();
   expect(within(section()).queryByRole("button", { name: "Clear withdrawal" })).not.toBeInTheDocument();
 });
@@ -73,7 +74,7 @@ it("recording asks for a confirm, calls the route once and shows the new state o
     'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are.',
   );
   expect(put).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Record" }));
+  await user.click(within(dialog).getByRole("button", { name: "Record withdrawal" }));
   const busy = within(dialog).getByRole("button", { name: "Recording…" });
   expect(busy).toHaveAttribute("aria-busy", "true");
   await user.click(busy); await user.keyboard("{Escape}");
@@ -101,7 +102,7 @@ it("clearing asks for a confirm, calls the route once and shows the new state on
     "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms.",
   );
   expect(del).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Clear" }));
+  await user.click(within(dialog).getByRole("button", { name: "Clear withdrawal" }));
   await user.click(within(dialog).getByRole("button", { name: "Clearing…" }));
   expect(del).toHaveBeenCalledTimes(1);
   expect(del).toHaveBeenCalledWith(PATH);
@@ -119,9 +120,9 @@ it("a refused action shows the server's message and leaves the state as it was",
   const user = userEvent.setup(); mount();
   await user.click(within(section()).getByRole("button", { name: "Record withdrawal" }));
   const dialog = screen.getByRole("dialog");
-  await user.click(within(dialog).getByRole("button", { name: "Record" }));
+  await user.click(within(dialog).getByRole("button", { name: "Record withdrawal" }));
   await waitFor(() => expect(useToastStore.getState().toasts.map((t) => t.message)).toContain("User not found"));
-  expect(within(dialog).getByRole("button", { name: "Record" })).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "Record withdrawal" })).toBeEnabled();
   expect(within(section()).getByText("Consent to automatic hides and payout holds: not withdrawn.")).toBeInTheDocument();
   expect(useToastStore.getState().toasts.map((t) => t.message)).not.toContain("Withdrawal recorded");
   await user.keyboard("{Escape}");
@@ -148,7 +149,7 @@ it("the other admin actions are locked while the withdrawal call runs", async ()
   vi.spyOn(api, "put").mockReturnValue(request.promise as Promise<never>);
   const user = userEvent.setup(); mount();
   await user.click(within(section()).getByRole("button", { name: "Record withdrawal" }));
-  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Record" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Record withdrawal" }));
   const panel = screen.getByRole("complementary", { name: "Admin actions" });
   const buttons = within(panel).getAllByRole("button");
   expect(buttons.map((b) => b.textContent)).toEqual(expect.arrayContaining(["Reject…", "Suspend…", "Reset verification…", "Send message…"]));

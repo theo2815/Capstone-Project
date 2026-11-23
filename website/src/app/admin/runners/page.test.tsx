@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as adminApi from "@/lib/api-admin";
 import { useAuthStore } from "@/store/auth-store";
+import { useToastStore } from "@/store/toast-store";
 import { admin, adminUser } from "@/test/fixtures/admin";
 import AdminRunnersPage from "./page";
 import { expectSectionIntro } from "@/test/admin-section-intro";
@@ -56,10 +57,12 @@ it("suspends the runner whose row opened the shared Suspend modal", async () => 
   const row = (await screen.findByText("Ana Runner")).closest("li")!;
   await userEvent.click(within(row).getByRole("button", { name: /Suspend/ }));
   const dialog = await screen.findByRole("dialog", { name: "Suspend account" });
-  expect(dialog).toHaveTextContent("Ana Runner will be signed out");
+  expect(dialog).toHaveTextContent("Ana Runner is signed out shortly and cannot sign in until you unsuspend. The reason is saved for them, but they cannot sign in to read it and QuickPitik does not email them, so tell them yourself if they should know.");
+  expect(dialog).not.toHaveTextContent("They get a message with the reason");
   await userEvent.click(within(dialog).getByLabelText("Compliance review requested"));
   await userEvent.click(within(dialog).getByRole("button", { name: "Suspend" }));
   await waitFor(() => expect(adminApi.suspendUser).toHaveBeenCalledWith("runner-7", "Compliance review requested"));
+  await waitFor(() => expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: "Ana Runner is suspended. They were not emailed." }));
 });
 
 it("offers the runner suspend reasons, not the photographer ones (AX-72)", async () => {
@@ -97,8 +100,10 @@ it("never carries a message draft from one runner to another", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await userEvent.click(within(rows[1]).getByRole("button", { name: /Send message/ }));
   const dialog = await screen.findByRole("dialog", { name: "Send message" });
-  expect(dialog).toHaveTextContent("Reach out to Ana Runner privately. The message lands directly in their inbox.");
+  expect(dialog).toHaveTextContent("Write to Ana Runner privately. The message goes to their QuickPitik inbox. No email is sent.");
   expect(within(dialog).getByLabelText(/^Subject/)).toHaveValue("");
+  expect(within(dialog).getByLabelText(/^Subject/)).toHaveAttribute("placeholder", "About your refund request");
+  expect(within(dialog).getByLabelText(/^Message/)).toHaveAttribute("placeholder", "Hi, this is QuickPitik support.");
 });
 
 it("offers Unsuspend for a suspended runner", async () => {

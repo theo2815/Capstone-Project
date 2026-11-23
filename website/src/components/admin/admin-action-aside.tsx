@@ -68,7 +68,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
     const ok = await reject(row.userId, reason, reviewRevision);
     if (ok) {
       setRejectOpen(false);
-      showToast({ kind: "info", message: `Sent back · ${displayName}` });
+      showToast({ kind: "success", message: `Sent back · ${displayName}` });
     }
     return ok;
   }
@@ -77,7 +77,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
     const ok = await suspend(row.userId, reason);
     if (ok) {
       setSuspendOpen(false);
-      showToast({ kind: "info", message: `Suspended · ${displayName}` });
+      showToast({ kind: "success", message: `${displayName} is suspended. They were not emailed.` });
     }
     return ok;
   }
@@ -85,7 +85,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   async function handleUnsuspend() {
     const ok = await unsuspend(row.userId);
     if (ok) {
-      showToast({ kind: "success", message: `Unsuspended · ${displayName}` });
+      showToast({ kind: "success", message: `${displayName} can sign in again. They are told in their inbox.` });
     }
   }
 
@@ -94,7 +94,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
     if (ok) {
       setResetOpen(false);
       showToast({
-        kind: "info",
+        kind: "success",
         message: `Verification reset · ${displayName}`,
       });
     }
@@ -277,6 +277,7 @@ function ConsentWithdrawal({ row, locked, busy, setBusy }: { row: AdminUserRow; 
       <Kicker as="p" tone="soft" id={headingId}>
         {T.title}
       </Kicker>
+      {!withdrawn && <p className="font-sans text-sm text-slate mt-2">{T.caption}</p>}
       <p className="font-sans text-sm text-ink-soft mt-2">
         {withdrawn
           ? <>{T.withdrawnOn} <span className="tnum whitespace-nowrap">{formatLongDate(withdrawnAt)}</span>. {T.withdrawnAfter}</>

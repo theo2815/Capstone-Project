@@ -14,6 +14,8 @@ interface AdminMessageModalProps {
   submitting: boolean;
   recoveryNotice?: string | null;
   photographerName: string;
+  subjectPlaceholder?: string;
+  bodyPlaceholder?: string;
 }
 
 // Drafts stay in memory until the domain hook confirms the keyed send.
@@ -24,6 +26,8 @@ export function AdminMessageModal({
   photographerName,
   submitting,
   recoveryNotice,
+  subjectPlaceholder = "Quick question about your latest upload",
+  bodyPlaceholder = "Hey, just wanted to flag…",
 }: AdminMessageModalProps) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -46,7 +50,7 @@ export function AdminMessageModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send message"
-      intro={`Reach out to ${photographerName} privately. The message lands directly in their inbox.`}
+      intro={`Write to ${photographerName} privately. The message goes to their QuickPitik inbox. No email is sent.`}
       submitLabel="Send"
       submitting={submitting}
       pendingLabel="Sending…"
@@ -60,7 +64,7 @@ export function AdminMessageModal({
         onChange={setSubject}
         maxLength={80}
         showCounter
-        placeholder="Quick question about your latest upload"
+        placeholder={subjectPlaceholder}
       />
       <AdminTextarea
         id="msg-body"
@@ -69,7 +73,7 @@ export function AdminMessageModal({
         onChange={setBody}
         maxLength={600}
         rows={5}
-        placeholder="Hey, just wanted to flag…"
+        placeholder={bodyPlaceholder}
       />
     </AdminFormModal>
   );

@@ -53,7 +53,7 @@ describe("AdminSuspendModal reasons (AX-72)", () => {
   const PHOTOGRAPHER_LABELS = [
     "Watermark or branding violates policy",
     "Suspected fraudulent uploads",
-    "Chargeback pattern flagged by payments",
+    "Many payment disputes from buyers",
     "Multiple unresolved runner complaints",
     "Compliance review requested",
     "Other (see note)",
