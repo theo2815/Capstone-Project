@@ -70,7 +70,7 @@ export function AdminRejectModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send back for fixes"
-      intro={`${photographerName} will see your reason on their settings page so they know what to update before resubmitting.`}
+      intro={`${photographerName} gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.`}
       submitLabel="Send back"
       submitDisabled={!selectedReason}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}

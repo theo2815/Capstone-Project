@@ -40,7 +40,7 @@ it("the row opens through its title button, and the checkbox only selects", asyn
   expect(container.querySelector('[role="button"]')).toBeNull();
   await userEvent.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
   expect(navigation.replace).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Reject 1…" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send back 1…" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("checkbox", { name: "Select Test Studio" }));
   await userEvent.click(screen.getByRole("button", { name: "Test Studio" }));
   expect(navigation.replace).toHaveBeenCalledWith(expect.stringContaining("row=photographer-1"), expect.anything());
@@ -56,7 +56,7 @@ it("Incomplete leaves out suspended photographers and links each row to its phot
 it("Select all ticks every visible row, and bulk Reject is a danger button", async () => {
   mount([adminUser, second]);
   await userEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
-  const reject = screen.getByRole("button", { name: "Reject 2…" });
+  const reject = screen.getByRole("button", { name: "Send back 2…" });
   expect(reject).toHaveClass("text-error");
   expect(screen.getByRole("button", { name: "Clear" })).toHaveClass("min-h-[44px]");
   await userEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
@@ -99,7 +99,7 @@ it("the drawer's subtitle, email and Joined are not upper-cased", async () => {
   const drawer = await screen.findByRole("dialog");
   notUpperCased(within(drawer).getAllByText(/Joined Sep 2026/));
   notUpperCased(await within(drawer).findAllByText("photographer@example.test"));
-  await userEvent.click(within(drawer).getByRole("button", { name: /Identity/ }));
+  await userEvent.click(within(drawer).getByRole("button", { name: /Who they are/ }));
   for (const el of within(drawer).getAllByText("photographer@example.test", { selector: "dd" })) expect(el).toHaveClass("break-words");
   for (const el of within(drawer).getAllByText("Test Studio", { selector: "p" })) expect(el).not.toHaveClass("truncate");
   await userEvent.click(within(drawer).getByRole("button", { name: /Account/ }));
@@ -120,4 +120,27 @@ it("an empty queue says nothing is waiting in one line, and the part-way list sa
   expect(screen.getByText("0 waiting")).toBeInTheDocument();
   expect(screen.getByText("Still filling in their settings. Nothing to do here.")).toBeInTheDocument();
   expect(screen.getByText("0 not finished")).toBeInTheDocument();
+});
+
+// FT-13 (C-02, C-06, C-07, C-08): plain words on the row, the drawer and the Incomplete slab.
+it("FT-13: the row names its links and accounts, lists what is missing, and has a 44 px chevron", () => {
+  const snapshot = { hasCover: false, hasBrandName: true, hasWatermark: false, hasHandle: true, hasRegion: true, socialCount: 1, payoutCount: 2 };
+  mount([{ ...adminUser, settingsSnapshot: snapshot }]);
+  const row = screen.getByRole("button", { name: "Test Studio" }).closest("article")!;
+  expect(row).toHaveTextContent("· 1 social link · 2 payout accounts");
+  expect(row).toHaveTextContent("Missing: cover banner, watermark");
+  expect(within(row).getByRole("button", { name: "Open review for Test Studio" })).toHaveClass("size-11");
+});
+it("FT-13: the Incomplete slab says they finish it themselves", () => {
+  mount([incomplete]);
+  expect(within(document.getElementById("incomplete")!).getByText("They finish this themselves")).toBeInTheDocument();
+});
+it("FT-13: the drawer's first section is Who they are, and says where ID photos are checked", async () => {
+  navigation.search = "row=photographer-1";
+  vi.spyOn(api, "get").mockImplementation((async (url: string) => (url.endsWith("/settings") ? adminUserSettings : url === "/admin/users/photographer-1" ? adminUser : [])) as typeof api.get);
+  mount([adminUser]);
+  const drawer = await screen.findByRole("dialog");
+  await userEvent.click(await within(drawer).findByRole("button", { name: /Who they are/ }));
+  const link = within(drawer).getByRole("link", { name: "Seller details" });
+  expect(link.closest("p")).toHaveTextContent("ID photos are checked under Seller details.");
 });

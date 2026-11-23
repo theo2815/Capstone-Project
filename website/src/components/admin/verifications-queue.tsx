@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
@@ -18,6 +18,8 @@ import { PAGE_SIZE } from "@/lib/pagination-config";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
+import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
+import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
 import { AvatarDisc } from "@/components/account/avatar-disc";
@@ -81,6 +83,7 @@ export function VerificationsQueue() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
   const [drawerRejectOpen, setDrawerRejectOpen] = useState(false);
+  const [approveOpen, setApproveOpen] = useState(false);
   const [rejectRevisions, setRejectRevisions] = useState<Record<string, number>>({});
   const [rowId, setRowId] = useUrlState<string>("row", "");
   const detail = useAdminUserDetail(rowId || null);
@@ -128,9 +131,30 @@ export function VerificationsQueue() {
     return { ...candidate, adminHold: candidate.adminHold ?? byId.get(rowId)?.adminHold };
   }, [rowId, byId, detail.data, detail.isSuccess]);
 
+  // C-05: the row the drawer last showed, and the id this admin just decided (so their own decision never reads as someone else's).
+  const shownRowRef = useRef<AdminUserRow | null>(null);
+  const ownDecisionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (rowId && detail.isSuccess && !detail.isFetching && !openRow && !submitting) setRowId("");
-  }, [rowId, openRow, setRowId, detail.isSuccess, detail.isFetching, submitting]);
+    if (openRow) shownRowRef.current = openRow;
+  }, [openRow]);
+  // Another row (or none): no decision of this admin's on it yet, and no approve confirm left open.
+  useEffect(() => {
+    ownDecisionRef.current = null;
+    setApproveOpen(false);
+  }, [rowId]);
+  useEffect(() => {
+    if (!openRow) setApproveOpen(false);
+  }, [openRow]);
+  useEffect(() => {
+    if (rowId && detail.isSuccess && !detail.isFetching && !openRow && !submitting) {
+      const shown = shownRowRef.current;
+      shownRowRef.current = null;
+      if (shown?.userId === rowId && ownDecisionRef.current !== rowId) {
+        showToast({ kind: "info", message: `${shown.brandName ?? shown.name} was already decided by someone else.` });
+      }
+      setRowId("");
+    }
+  }, [rowId, openRow, setRowId, detail.isSuccess, detail.isFetching, submitting, showToast]);
 
   // Drop ids that have left the pending pool (e.g. just approved /
   // rejected — the row no longer renders a checkbox).
@@ -182,7 +206,7 @@ export function VerificationsQueue() {
     [incomplete, incompleteLoaded],
   );
   const queueNavDisabled =
-    submitting || openRow !== null || bulkRejectOpen || drawerRejectOpen;
+    submitting || openRow !== null || bulkRejectOpen || drawerRejectOpen || approveOpen;
   const { focusedId, setFocusedId } = useQueueKeyboardNav({
     rowIds,
     disabled: queueNavDisabled,
@@ -250,9 +274,10 @@ export function VerificationsQueue() {
     setSelected(new Set(failed));
     const count = ids.length - failed.length;
     if (!failed.length) setBulkRejectOpen(false);
+    const failedNames = failed.map((id) => { const row = byId.get(id); return row ? row.brandName ?? row.name : id; }).join(", ");
     if (count) showToast({
       kind: failed.length ? "error" : "info",
-      message: failed.length ? `${count}/${ids.length} updated — ${failed.length} failed` : `Sent back · ${count} ${count === 1 ? "photographer" : "photographers"}`,
+      message: failed.length ? `${count} of ${ids.length} sent back. Not sent back, still ticked: ${failedNames}.` : `Sent back · ${count} ${count === 1 ? "photographer" : "photographers"}`,
     });
     return !failed.length;
   }
@@ -260,6 +285,7 @@ export function VerificationsQueue() {
   async function handleDrawerRejectSubmit(reason: string) {
     if (!openRow) return;
     const row = openRow;
+      ownDecisionRef.current = row.userId;
       const ok = await reject(row.userId, reason, rejectRevisions[row.userId]);
       if (ok) {
         showToast({ kind: "info", message: `Sent back · ${row.brandName ?? row.name}` });
@@ -271,7 +297,9 @@ export function VerificationsQueue() {
   async function handleApproveHeld() {
     if (!openRow) return;
     const row = openRow;
+    ownDecisionRef.current = row.userId;
     if (await approveHeld(row.userId, row.verificationRevision)) {
+      setApproveOpen(false);
       showToast({ kind: "success", message: `Hold released · ${row.brandName ?? row.name}` });
     }
   }
@@ -279,7 +307,7 @@ export function VerificationsQueue() {
   // Drawer verb: R opens the reject reason modal. Disabled while the
   // modal is on top so a stray R doesn't punch through.
   useDrawerVerbs({
-    active: openRow !== null && !drawerRejectOpen && !submitting,
+    active: openRow !== null && !drawerRejectOpen && !approveOpen && !submitting,
     verbs: openRow
       ? {
           R: () => openRejection(false),
@@ -381,7 +409,7 @@ export function VerificationsQueue() {
               {incompleteVisible.map((row) => (
                 <li
                   key={row.userId}
-                  className="flex items-center justify-between gap-4 border-b border-line pb-3"
+                  className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-line pb-3"
                 >
                   <div className="min-w-0">
                     <p className="font-display text-base text-ink truncate">
@@ -399,7 +427,7 @@ export function VerificationsQueue() {
                     </p>
                   </div>
                   <Kicker as="span" tone="soft" className="shrink-0">
-                    Self-serve
+                    They finish this themselves
                   </Kicker>
                 </li>
               ))}
@@ -444,7 +472,7 @@ export function VerificationsQueue() {
         <AdminDetailDrawer
           open={true}
           onClose={() => { if (!submitting) setRowId(""); }}
-          escDisabled={drawerRejectOpen || submitting}
+          escDisabled={drawerRejectOpen || approveOpen || submitting}
           kicker="Verification"
           title={openRow.brandName ?? openRow.name}
           rightHeader={
@@ -474,7 +502,7 @@ export function VerificationsQueue() {
                   type="button"
                   disabled={submitting}
                   aria-busy={submitting}
-                  onClick={handleApproveHeld}
+                  onClick={() => setApproveOpen(true)}
                   className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
                 >
                   Approve
@@ -487,14 +515,14 @@ export function VerificationsQueue() {
                 onClick={() => openRejection(false)}
                 className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
               >
-                Reject…
+                Send back…
               </button>
             </>
           }
         >
           {openRow.adminHold && (
             <p className="font-sans text-sm text-ink-soft mb-4">
-              Held after an admin reset or rejection
+              Held: it was sent back or reset before, so it needs your approval.
             </p>
           )}
           <VerificationDetailBody row={openRow} />
@@ -509,6 +537,22 @@ export function VerificationsQueue() {
           onSubmit={handleDrawerRejectSubmit}
           photographerName={openRow.brandName ?? openRow.name}
         />
+      )}
+
+      {openRow && (
+        <AdminConfirmModal
+          open={approveOpen}
+          submitting={submitting}
+          pendingLabel="Approving…"
+          onClose={() => setApproveOpen(false)}
+          onConfirm={() => void handleApproveHeld()}
+          title={`Approve ${openRow.brandName ?? openRow.name}?`}
+          confirmLabel="Approve"
+        >
+          <p className="font-sans text-sm text-ink-soft">
+            This releases the hold. If their ID check has passed, the profile goes live now and they are told. If it has not, the profile goes live by itself when the check passes.
+          </p>
+        </AdminConfirmModal>
       )}
     </>
   );
@@ -534,6 +578,10 @@ function PendingRow({
   onOpenDrawer: () => void;
 }) {
   const completeness = computeCompleteness(row.settingsSnapshot);
+  // C-08: the dots are colour only, so the missing items are also named in text.
+  const missing = row.settingsSnapshot
+    ? completenessItems(row.settingsSnapshot).filter((item) => !item.filled).map((item) => item.label.toLowerCase())
+    : [];
   const title = row.brandName ?? row.name;
   const hintId = useId();
 
@@ -572,6 +620,7 @@ function PendingRow({
                 <p className="font-mono text-[13px] text-slate">
                   @{row.handle ?? "—"}
                 </p>
+                {row.adminHold && <AdminStatusPill label="Held" tone="amber" />}
               </div>
               <div className="mt-1 flex items-center gap-x-2 gap-y-1 flex-wrap font-sans text-sm text-slate">
                 {(row.region || row.city) && <span>{row.region || row.city} ·</span>}
@@ -580,10 +629,13 @@ function PendingRow({
                 <span className="tnum">
                   {completeness.filled} of {completeness.total} fields
                 </span>
+                {missing.length > 0 && <span>· Missing: {missing.join(", ")}</span>}
                 {row.settingsSnapshot && (
                   <span>
-                    · <span className="tnum">{row.settingsSnapshot.socialCount}</span> social ·{" "}
-                    <span className="tnum">{row.settingsSnapshot.payoutCount}</span> payout
+                    · <span className="tnum">{row.settingsSnapshot.socialCount}</span>{" "}
+                    {row.settingsSnapshot.socialCount === 1 ? "social link" : "social links"} ·{" "}
+                    <span className="tnum">{row.settingsSnapshot.payoutCount}</span>{" "}
+                    {row.settingsSnapshot.payoutCount === 1 ? "payout account" : "payout accounts"}
                   </span>
                 )}
               </div>
@@ -598,7 +650,7 @@ function PendingRow({
               disabled={disabled}
               onClick={onOpenDrawer}
               aria-label={`Open review for ${title}`}
-              className="relative z-10 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-8 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
+              className="relative z-10 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 size-11 rounded-full text-slate hover:text-ink hover:bg-bone-deep transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ›
@@ -660,7 +712,11 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
         </div>
       </div>
 
-      <CollapsibleReviewSection kicker="Identity">
+      <CollapsibleReviewSection kicker="Who they are">
+        <p className="font-sans text-sm text-ink-soft mb-4">
+          ID photos are checked under{" "}
+          <Link className="underline" href={`${ROUTES.ADMIN_VERIFICATIONS}#seller-details`}>Seller details</Link>.
+        </p>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-8">
           <FieldRow label="Email" value={row.email} mono={false} />
           <FieldRow label="Legal name" value={row.name} mono={false} />
@@ -801,7 +857,7 @@ function VerificationsBulkBar({
             onClick={onReject}
             className={cn(BTN_DANGER, BTN_SIZE.sm)}
           >
-            Reject {count}…
+            Send back {count}…
           </button>
           <button
             type="button"

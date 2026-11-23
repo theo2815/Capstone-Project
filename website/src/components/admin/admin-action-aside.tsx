@@ -141,7 +141,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
             onClick={() => { setReviewRevision(row.verificationRevision); setRejectOpen(true); }}
             className={dangerBtn}
           >
-            Reject…
+            Send back…
           </button>
         )}
 

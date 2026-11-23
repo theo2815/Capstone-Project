@@ -69,7 +69,7 @@ export function AdminResetVerificationModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Reset verification"
-      intro={`${photographerName} will drop back to incomplete and see your reason in their inbox so they know what to update before resubmitting.`}
+      intro={`${photographerName} goes back to Incomplete and gets your reason in their inbox. Until they send their profile again and you approve it, they cannot upload and their public page does not open. Photos already sold keep working.`}
       submitLabel="Reset verification"
       submitDisabled={!selectedReason}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
