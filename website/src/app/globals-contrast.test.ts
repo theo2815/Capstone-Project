@@ -25,6 +25,14 @@ it("warning text reaches 4.5:1 on surface, paper and paper-deep", () => {
   }
 });
 
+it("caption text (--slate-soft) reaches 4.5:1 on surface, paper and paper-deep", () => {
+  const value = css.match(/--slate-soft:\s*(#[0-9A-Fa-f]{6})/)?.[1];
+  expect(value).toBeDefined();
+  for (const bg of ["#FFFFFF", "#F8F5EE", "#EFEAE0"]) {
+    expect(contrast(value!, bg), `${value} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
 it("the admin's shared parts use the warning-text token, not raw amber", () => {
   const files = ["admin-status-pill.tsx", "admin-form-fields.tsx", "admin-payout-row.tsx", "admin-payout-bulk-bar.tsx"];
   const raw = files.filter((f) => /amber-\d/.test(readFileSync(path.join(__dirname, "../components/admin", f), "utf8")));
