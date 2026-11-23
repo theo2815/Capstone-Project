@@ -10,9 +10,11 @@ import {
 } from "@/lib/admin-queues";
 import { useAdminKpisQuery } from "@/hooks/use-admin-data";
 import { ROUTES } from "@/lib/constants";
+import { ADMIN_QUEUE_LINES } from "@/lib/admin-section-guide";
 
 import { AdminKpiStrip } from "@/components/admin/admin-kpi-strip";
 import { AdminInboxFilterChips } from "@/components/admin/admin-inbox-filter-chips";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
 import {
   VerificationsQueue,
 } from "@/components/admin/verifications-queue";
@@ -78,6 +80,9 @@ export default function AdminInboxPage() {
       <Header pendingCount={pendingCount} />
       <AdminKpiStrip />
       <AdminInboxFilterChips value={typeInUrl ? active.inboxType : ""} />
+      {typeInUrl && (
+        <p className="font-sans text-sm text-ink-soft mt-4 max-w-xl">{ADMIN_QUEUE_LINES[active.key]}</p>
+      )}
       {typeInUrl ? CONTENT[active.key] : <Skeleton className="h-72 w-full rounded-2xl mt-8 md:mt-10" />}
     </>
   );
@@ -92,10 +97,7 @@ function Header({ pendingCount }: { pendingCount: number | null }) {
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Inbox.
       </h1>
-      {/* Hidden on phones so the queue starts on the first screen. */}
-      <p className="hidden md:block font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Everything waiting on an admin today, one queue at a time.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_INBOX} />
     </header>
   );
 }
