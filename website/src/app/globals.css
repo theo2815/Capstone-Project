@@ -28,7 +28,7 @@
   --pine-soft: #123f28;  /* lighter forest green */
 
   --slate: #475569;      /* quiet secondary text, kickers */
-  --slate-soft: #64748B; /* tertiary text, captions */
+  --slate-soft: #5C6B81; /* tertiary text, captions: 4.5:1 on surface, paper and paper-deep (app/globals-contrast.test.ts) */
   --line: #E5E2D9;       /* subtle borders on paper */
   --line-strong: #D4D2C8;
   --surface: #FFFFFF;    /* card surfaces */

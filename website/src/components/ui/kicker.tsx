@@ -28,7 +28,7 @@ type KickerProps<C extends ElementType> = KickerOwnProps & {
 // SE-class phones (≤390 px) keep the original 13 px.
 // See QuickPitik Vault/website/notes/ui-pitfalls.md (2026-05-07 floor-bump entries).
 // tone="default" → text-slate (~7.4:1 on bone, AA), the everyday choice.
-// tone="soft"    → text-slate-soft (now #64748B → ~5.6:1 on bone, AA).
+// tone="soft"    → text-slate-soft (#5C6B81: 4.98:1 on bone, 4.52:1 on bone-deep, 5.42:1 on surface; AA).
 // tone="active"  → text-fresh, reserved for the one-fresh-per-viewport accent.
 //
 // Replaces hand-rolled chains like:
