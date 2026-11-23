@@ -176,6 +176,9 @@ export interface AdminSellerDetails extends AdminSellerDetailsRow {
   hasIdNumber: boolean;
   // Automatic tries that failed a check; optional so an older backend still parses.
   failedAutoChecks?: number;
+  /** The server's pass marks, 0-100 (FT-29); absent from an older backend. */
+  livenessPassMark?: number | null;
+  faceMatchPassMark?: number | null;
   repeatMatches: RepeatMatch[];
   // Links that expire after five minutes; only on E4, and each fetch logs a view.
   files: { idFront: string; idBack: string | null; selfie: string; birForm: string | null; livenessReference: string | null } | null;
