@@ -4,6 +4,8 @@ import { EventRequestsQueue } from "@/components/admin/event-requests-queue";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdminEvents } from "@/hooks/use-admin-events";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // Focus-mode route for the V46 event requests queue, sharing its body with
 // /admin/inbox?type=events via the lifted <EventRequestsQueue>. Same shape
@@ -30,10 +32,7 @@ export default function AdminEventRequestsPage() {
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
           Event requests.
         </h1>
-        <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-          Photographer events stay hidden, and pricing changes on live events
-          stay pending, until you approve them.
-        </p>
+        <AdminSectionIntro href={ROUTES.ADMIN_EVENT_REQUESTS} />
       </header>
       <EventRequestsQueue />
     </>

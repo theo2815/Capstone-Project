@@ -2,6 +2,8 @@
 
 import { RelevanceCases } from "@/components/admin/relevance/relevance-cases";
 import { Kicker } from "@/components/ui/kicker";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // The Photo Relevance page: the cases and appeals with their actions (RelevanceCases).
 export default function AdminRelevancePage() {
@@ -12,10 +14,7 @@ export default function AdminRelevancePage() {
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
           Photo Relevance.
         </h1>
-        <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-          Uploaded batches checked for junk, wrong-event and copied photos. &ldquo;Would have hidden&rdquo;
-          means recorded only; nothing was hidden.
-        </p>
+        <AdminSectionIntro href={ROUTES.ADMIN_RELEVANCE} />
       </header>
       <RelevanceCases />
     </>

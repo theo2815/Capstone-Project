@@ -8,6 +8,8 @@ import { useAdminUserActions } from "@/hooks/use-admin-users";
 import { useAuthStore } from "@/store/auth-store";
 import { admin, adminUser } from "@/test/fixtures/admin";
 import AdminPhotographersPage from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 const nav = vi.hoisted(() => ({ search: new URLSearchParams(""), replace: vi.fn(), push: vi.fn() }));
 vi.mock("@/lib/api-admin", async (orig) => ({
@@ -144,4 +146,10 @@ it("shows the error and Retry when the first load fails", async () => {
   mount();
   expect(await screen.findByText(/Couldn.t load photographers/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([]));
+  mount();
+  expectSectionIntro(ROUTES.ADMIN_PHOTOGRAPHERS);
 });

@@ -9,6 +9,7 @@ import {
 } from "@/components/admin/flags-queue";
 import { Kicker } from "@/components/ui/kicker";
 import { ADMIN_FLAGS_ENABLED, ROUTES } from "@/lib/constants";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
 
 // Phase 2 admin redesign — /admin/flags is the focus-mode route for the
 // flags queue, sharing its body (search + four slabs) with /admin/inbox
@@ -62,10 +63,7 @@ function Header({
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Flags.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Photos reported by runners or surfaced during admin review. Hide
-        what shouldn&apos;t be live.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_FLAGS} />
     </header>
   );
 }

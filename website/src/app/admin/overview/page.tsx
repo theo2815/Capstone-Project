@@ -11,6 +11,7 @@ import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
 import type { AdminKpis } from "@/lib/api-admin";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
 
 // Phase 1 admin redesign — /admin/overview is now the weekly-review tab.
 // 8-tile KPI grid + 30-day trend + decisions timeline. The daily landing
@@ -189,9 +190,7 @@ function Header() {
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Overview.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Platform counts and the last 30 days. Today&apos;s work is in the Inbox.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_OVERVIEW} />
     </header>
   );
 }

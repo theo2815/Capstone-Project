@@ -6,6 +6,8 @@ import { ApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/auth-store";
 import { admin, payoutCycle } from "@/test/fixtures/admin";
 import AdminPayoutsPage from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 vi.mock("@/lib/api-admin", async (orig) => ({
   ...(await orig<typeof import("@/lib/api-admin")>()),
@@ -59,4 +61,10 @@ it("shows no awaiting review count when the counts route is missing", async () =
   await new Promise((done) => setTimeout(done, 20));
   expect(header()).not.toHaveTextContent(/awaiting review/);
   expect(header()).toHaveTextContent("total");
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({});
+  mount();
+  expectSectionIntro(ROUTES.ADMIN_PAYOUTS);
 });

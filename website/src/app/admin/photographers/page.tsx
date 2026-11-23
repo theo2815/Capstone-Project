@@ -18,6 +18,8 @@ import { useUrlState } from "@/hooks/use-url-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 const TABS: ReadonlyArray<{ key: AdminUserStatusFilter; label: string; empty: string }> = [
   { key: "pending", label: "Pending", empty: "Queue is clear." },
@@ -150,9 +152,7 @@ function Header() {
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Photographers.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Every photographer, by status.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_PHOTOGRAPHERS} />
     </header>
   );
 }

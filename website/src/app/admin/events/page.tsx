@@ -18,6 +18,8 @@ import { useAdminEventsInfinite, useAdminEventCounts, useAdminEventActions } fro
 import { useToast } from "@/hooks/use-toast";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import type { EventState, ListEvent } from "@/types/event";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // Admin Events page. Four status tabs (Live / Upcoming / Recent / Archive),
 // one list of <AdminEventCard>s at a time. Lifecycle state is derived from `event.date`
@@ -379,10 +381,8 @@ function Header({
           + New event
         </button>
       </div>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Every race on the platform. Photographers can upload for 4 days from
-        race day.
-      </p>
+      {/* Full width under the title row: inside the title column it is squeezed beside the button on a phone. */}
+      <AdminSectionIntro href={ROUTES.ADMIN_EVENTS} />
     </header>
   );
 }

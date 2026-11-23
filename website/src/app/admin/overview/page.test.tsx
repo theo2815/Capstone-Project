@@ -5,6 +5,8 @@ import { api } from "@/lib/api";
 import { admin } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import AdminOverviewPage from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 vi.mock("@/components/admin/admin-overview-trend", () => ({ AdminOverviewTrend: () => null }));
 const kpis = vi.hoisted(() => ({ value: undefined as unknown, isError: false, refetch: () => {} }));
@@ -82,4 +84,11 @@ it("the heading is the rail label", () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Overview.");
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  vi.spyOn(api, "get").mockReturnValue(new Promise(() => {}));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
+  expectSectionIntro(ROUTES.ADMIN_OVERVIEW);
 });

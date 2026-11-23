@@ -11,7 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ROUTES } from "@/lib/constants";
 import { useAdminSalesKpisQuery } from "@/hooks/use-admin-data";
-import { SALES_TREND_WEEKS, useRefundPulse } from "@/lib/admin-sales";
+import { useRefundPulse } from "@/lib/admin-sales";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
 import { PLATFORM_CUT_RATE } from "@/lib/platform-economics";
 import { cn, formatPrice } from "@/lib/utils";
 
@@ -145,11 +146,10 @@ function Header({ totalSales }: { totalSales: number | undefined }) {
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Sales.
       </h1>
+      <AdminSectionIntro href={ROUTES.ADMIN_SALES} />
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Where revenue comes from across photographers, events, and the last{" "}
-        <span className="font-mono tnum">{SALES_TREND_WEEKS}</span> weeks —{" "}
         <span className="font-mono tnum">{totalSales?.toLocaleString() ?? "—"}</span>{" "}
-        photos sold to date.
+        photos sold so far this year.
       </p>
     </header>
   );

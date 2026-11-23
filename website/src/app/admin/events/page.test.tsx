@@ -13,6 +13,8 @@ import { admin, adminEvent, eventRegions } from "@/test/fixtures/admin";
 import { adminEventKeys } from "@/hooks/use-admin-events";
 import AdminEventsPage from "./page";
 import { useAdminEventActions } from "@/hooks/use-admin-events";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // A tiny in-memory URL: the page keeps its status tab in ?status=.
 const nav = vi.hoisted(() => {
@@ -330,4 +332,9 @@ it("a search link that names a tab keeps that tab (FT-4)", async () => {
   await mountLoaded();
   expect(screen.getByRole("button", { name: /^Live now/, pressed: true })).toBeInTheDocument();
   expect(new URLSearchParams(nav.get()).get("status")).toBe("live");
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  mount();
+  expectSectionIntro(ROUTES.ADMIN_EVENTS);
 });
