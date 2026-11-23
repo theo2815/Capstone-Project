@@ -40,7 +40,9 @@ export function AdminDisputeCard({
   const paymentLabel =
     DISPUTE_PAYMENT_LABEL[dispute.orderSnapshot.paymentMethod] ??
     dispute.orderSnapshot.paymentMethod;
-  const attentionLabel = dispute.attention ? DISPUTE_ATTENTION_LABEL[dispute.attention] : null;
+  // "Needs review" beside the Open pill says nothing new, so it is left out.
+  const repeatsStatus = dispute.attention === "review" && dispute.status === "open";
+  const attentionLabel = dispute.attention && !repeatsStatus ? DISPUTE_ATTENTION_LABEL[dispute.attention] : null;
 
   const idLineId = useId();
 

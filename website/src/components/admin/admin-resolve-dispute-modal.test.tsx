@@ -10,7 +10,7 @@ function renderModal(props: Partial<React.ComponentProps<typeof AdminResolveDisp
     <AdminResolveDisputeModal open onClose={() => {}} onContinue={() => {}} disputeId="d1"
       orderTotal={300} itemChargeAmount={100} reasonLabel="Too blurred to recognise" {...props} />,
   );
-  return screen.getByRole("dialog", { name: "Resolve d1" });
+  return screen.getByRole("dialog", { name: "Approve refund · d1" });
 }
 
 it("a QR Ph dispute offers only a full refund", () => {
@@ -29,7 +29,7 @@ it("a dispute that can't be refunded points to Deny instead of Approve", async (
   });
   expect(dialog).toHaveTextContent("PayMongo can only refund a whole payment.");
   expect(dialog).toHaveTextContent("The payment covers 3 photos.");
-  expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Review refund" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Deny with this reason" }));
   expect(onDenyWithReason).toHaveBeenCalledWith("bought_together");
 });
@@ -41,12 +41,24 @@ it("a no_payment dispute shows the reason and no Deny shortcut", () => {
   });
   expect(dialog).toHaveTextContent("No settled payment yet.");
   expect(within(dialog).queryByRole("button", { name: "Deny with this reason" })).not.toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Review refund" })).toBeDisabled();
 });
 
 it("the note starts filled in", () => {
   const dialog = renderModal();
   expect(within(dialog).getByRole("textbox")).toHaveValue("Approved: Too blurred to recognise.");
-  expect(within(dialog).getByRole("button", { name: "Continue" })).toBeEnabled();
+  expect(within(dialog).getByRole("button", { name: "Review refund" })).toBeEnabled();
   expect(dialog).toHaveTextContent("This photo's charge");
+});
+
+// FT-18 (C-38): one verb, and why QR Ph has one option. (W18.3 and W18.4 are held: a completed refund shows this note to the runner.)
+it("is titled Approve refund and continues with Review refund", () => {
+  const dialog = renderModal();
+  expect(within(dialog).getByRole("button", { name: "Review refund" })).toBeInTheDocument();
+  expect(dialog).not.toHaveTextContent("This payment was made by QR Ph");
+});
+
+it("a QR Ph dispute says why only a full refund is offered", () => {
+  const dialog = renderModal({ paymentMethod: "qrph" });
+  expect(within(dialog).getByText("This payment was made by QR Ph, so only a full refund is possible.")).toBeInTheDocument();
 });

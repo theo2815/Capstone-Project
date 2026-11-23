@@ -155,10 +155,10 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
     let submit: HTMLElement;
     if (action === "refund") {
       await user.click(screen.getByRole("button", { name: "Approve refund…" }));
-      dialog = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+      dialog = screen.getByRole("dialog", { name: "Approve refund · dispute-1" });
       await user.clear(within(dialog).getByRole("textbox"));
       await user.type(within(dialog).getByRole("textbox"), note);
-      await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+      await user.click(within(dialog).getByRole("button", { name: "Review refund" }));
       dialog = screen.getByRole("dialog", { name: "Confirm refund" });
       submit = within(dialog).getByRole("button", { name: "Confirm refund" });
     } else {
@@ -171,7 +171,7 @@ describe.each(["detail", "queue"])("dispute %s", (surface) => {
     const label = submit.textContent!;
     await user.click(submit);
     expect(submit).toBeDisabled();
-    expect(submit).toHaveTextContent(action === "refund" ? "Resolving" : action === "deny" ? "Denying" : "Escalating");
+    expect(submit).toHaveTextContent(action === "refund" ? "Refunding" : action === "deny" ? "Denying" : "Escalating");
     await user.click(submit);
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(useToastStore.getState().toasts).toEqual([]);
@@ -216,11 +216,11 @@ it.each([
     : <DisputesQueue />}</QueryClientProvider>);
   if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
   await user.click(screen.getByRole("button", { name: "Approve refund…" }));
-  const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  const form = screen.getByRole("dialog", { name: "Approve refund · dispute-1" });
   expect(within(form).getByText(/Full refund/)).toHaveTextContent("₱127.50");
   await user.clear(within(form).getByRole("textbox"));
   await user.type(within(form).getByRole("textbox"), "Refund approved.");
-  await user.click(within(form).getByRole("button", { name: "Continue" }));
+  await user.click(within(form).getByRole("button", { name: "Review refund" }));
   const confirm = screen.getByRole("dialog", { name: "Confirm refund" });
   expect(confirm).toHaveTextContent("₱127.50");
 
@@ -230,7 +230,7 @@ it.each([
   expect(api.post).toHaveBeenCalledWith(`/admin/disputes/${dispute.id}/resolve`, {
     resolution: "refund_full", refundAmount: 127.5, reason: "Refund approved.",
   });
-  expect(useToastStore.getState().toasts.at(-1)?.message).toMatch(/Refund requested|Refund pending/);
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Refund approved. PayMongo is sending it, and the dispute closes when it is confirmed.");
   expect(useToastStore.getState().toasts.at(-1)?.message).not.toMatch(/Refunded/);
   },
 );
@@ -242,26 +242,25 @@ it.each(["detail", "queue"])("labels a provider-confirmed %s refund with the ret
     : <DisputesQueue />}</QueryClientProvider>);
   if (surface === "queue") await user.click(screen.getByRole("button", { description: /dispute-1/i }));
   await user.click(screen.getByRole("button", { name: "Approve refund…" }));
-  const form = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  const form = screen.getByRole("dialog", { name: "Approve refund · dispute-1" });
   await user.clear(within(form).getByRole("textbox"));
   await user.type(within(form).getByRole("textbox"), "Refund approved.");
-  await user.click(within(form).getByRole("button", { name: "Continue" }));
+  await user.click(within(form).getByRole("button", { name: "Review refund" }));
   const confirm = screen.getByRole("dialog", { name: "Confirm refund" });
   const returned: Dispute = { ...dispute, status: "resolved", resolution: "refund_full", refundAmount: 85 };
   vi.spyOn(api, "post").mockResolvedValueOnce(returned);
   await user.click(within(confirm).getByRole("button", { name: "Confirm refund" }));
-  expect(useToastStore.getState().toasts.at(-1)?.message).toContain("Refunded");
-  expect(useToastStore.getState().toasts.at(-1)?.message).toContain("₱85.00");
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Refunded ₱85.00 · dispute-1");
 });
 
 it.each([null, 0, undefined])("disables monetary resolve when the item charge is %s", async (itemChargeAmount) => {
   const user = userEvent.setup();
   render(<AdminResolveDisputeModal open onClose={() => {}} onContinue={() => {}}
     disputeId="dispute-1" orderTotal={300} itemChargeAmount={itemChargeAmount} />);
-  const dialog = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  const dialog = screen.getByRole("dialog", { name: "Approve refund · dispute-1" });
   await user.type(within(dialog).getByRole("textbox"), "Reviewed the request.");
   if (itemChargeAmount === 0) expect(dialog).toHaveTextContent("This item has no refundable charge.");
-  expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Review refund" })).toBeDisabled();
 });
 
 it("accepts at most 500 resolve-note characters and only centavo partial amounts below the item charge", async () => {
@@ -269,7 +268,7 @@ it("accepts at most 500 resolve-note characters and only centavo partial amounts
   const onContinue = vi.fn();
   render(<AdminResolveDisputeModal open onClose={() => {}} onContinue={onContinue}
     disputeId="dispute-1" orderTotal={300} itemChargeAmount={127.5} />);
-  const dialog = screen.getByRole("dialog", { name: "Resolve dispute-1" });
+  const dialog = screen.getByRole("dialog", { name: "Approve refund · dispute-1" });
   const note = within(dialog).getByRole("textbox");
   fireEvent.change(note, { target: { value: "a".repeat(501) } });
   expect(note).toHaveValue("a".repeat(500));
@@ -277,10 +276,10 @@ it("accepts at most 500 resolve-note characters and only centavo partial amounts
   const amount = within(dialog).getByRole("spinbutton");
   for (const invalid of ["0", "127.5", "127.501", "1.001"]) {
     fireEvent.change(amount, { target: { value: invalid } });
-    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Review refund" })).toBeDisabled();
   }
   fireEvent.change(amount, { target: { value: "127.49" } });
-  await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+  await user.click(within(dialog).getByRole("button", { name: "Review refund" }));
   expect(onContinue).toHaveBeenCalledWith({ resolution: "refund_partial", refundAmount: 127.49, note: "a".repeat(500) });
 });
 
@@ -355,9 +354,60 @@ it("Deny with this reason closes Approve and opens Deny with that reason picked"
   };
   render(<QueryClientProvider client={client}><AdminDisputeActionAside dispute={blocked} runnerHandle="runner" /></QueryClientProvider>);
   await user.click(screen.getByRole("button", { name: "Approve refund…" }));
-  await user.click(within(screen.getByRole("dialog", { name: "Resolve dispute-1" })).getByRole("button", { name: "Deny with this reason" }));
-  expect(screen.queryByRole("dialog", { name: "Resolve dispute-1" })).not.toBeInTheDocument();
+  await user.click(within(screen.getByRole("dialog", { name: "Approve refund · dispute-1" })).getByRole("button", { name: "Deny with this reason" }));
+  expect(screen.queryByRole("dialog", { name: "Approve refund · dispute-1" })).not.toBeInTheDocument();
   const deny = screen.getByRole("dialog", { name: "Deny dispute-1" });
   expect(screen.getAllByRole("dialog")).toHaveLength(1);
   expect(await within(deny).findByRole("radio", { name: /refund window closed/ })).toBeChecked();
+});
+
+// FT-18: the toast says what an approval did when the money has not moved yet.
+it("a QR Ph approval toasts the next step, not a refund", async () => {
+  const user = userEvent.setup();
+  const qrph: Dispute = { ...dispute, orderSnapshot: { ...dispute.orderSnapshot, paymentMethod: "qrph" } };
+  render(<QueryClientProvider client={client}><AdminDisputeActionAside dispute={qrph} runnerHandle={qrph.runnerHandle} /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Approve refund…" }));
+  await user.click(within(screen.getByRole("dialog", { name: "Approve refund · dispute-1" })).getByRole("button", { name: "Review refund" }));
+  vi.spyOn(api, "post").mockResolvedValueOnce({ ...qrph, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review" });
+  await user.click(within(screen.getByRole("dialog", { name: "Confirm refund" })).getByRole("button", { name: "Confirm refund" }));
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Refund approved. Next, send the runner the refund link.");
+});
+
+// FT-18 (C-44): a refund that went wrong shows the payment ID and the next step, not "closed".
+describe("a dispute whose refund went wrong", () => {
+  const problem = (status: Dispute["status"], refundStatus: string): Dispute => ({
+    ...dispute, status, attention: "refund_problem", refundStatus, resolution: "refund_full", refundAmount: 100, paymentId: "pay_failed1",
+  });
+  const renderAside = (d: Dispute) =>
+    render(<QueryClientProvider client={client}><AdminDisputeActionAside dispute={d} runnerHandle={d.runnerHandle} /></QueryClientProvider>);
+
+  it.each(["open", "escalated"] as const)("a failed refund (%s) shows the payment ID, the sentence and both buttons", (status) => {
+    renderAside(problem(status, "failed"));
+    expect(screen.getByText("pay_failed1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy payment ID" })).toBeInTheDocument();
+    expect(screen.getByText("The refund failed. You can approve the refund again, or deny the dispute.")).toBeInTheDocument();
+    expect(screen.queryByText("This dispute is closed. No further actions are available.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve refund…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Deny…" })).toBeEnabled();
+  });
+
+  // A non-QR approval leaves the dispute open; the server refuses every decision while the refund is in flight.
+  it.each(["open", "escalated"] as const)("a refund still in flight (%s) shows the payment ID, says QuickPitik keeps checking and offers no decision", (status) => {
+    renderAside(problem(status, "processing"));
+    expect(screen.getByText("pay_failed1")).toBeInTheDocument();
+    for (const name of ["Approve refund…", "Deny…", "Escalate…"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    expect(screen.getByText("PayMongo has not confirmed this refund yet. QuickPitik keeps checking by itself. Look up the payment in PayMongo if it stays like this.")).toBeInTheDocument();
+    expect(screen.queryByText("This dispute is closed. No further actions are available.")).not.toBeInTheDocument();
+  });
+});
+
+// FT-18 (C-35): Escalate says what really happens; the shared note field names who reads it.
+it("the Escalate dialog says who is told and that the dispute stays in this queue", async () => {
+  const user = userEvent.setup();
+  render(<QueryClientProvider client={client}><AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} /></QueryClientProvider>);
+  await user.click(screen.getByRole("button", { name: "Escalate…" }));
+  const dialog = screen.getByRole("dialog", { name: "Escalate dispute-1" });
+  expect(dialog).toHaveTextContent("This marks the dispute as escalated and tells the runner and the photographer it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards.");
+  const note = within(dialog).getByLabelText("Note for other admins (optional, max 280)");
+  expect(note).toHaveAttribute("placeholder", "What still needs checking?");
 });

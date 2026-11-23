@@ -50,11 +50,11 @@ export function AdminEscalateModal({
     >
       <AdminTextarea
         id="escalate-note"
-        label="Note for next reviewer (optional, max 280)"
+        label="Note for other admins (optional, max 280)"
         value={note}
         onChange={setNote}
         maxLength={280}
-        placeholder="Why is this beyond your tier?"
+        placeholder="What still needs checking?"
       />
     </AdminFormModal>
   );

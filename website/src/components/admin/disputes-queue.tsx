@@ -183,6 +183,10 @@ export function DisputesQueue() {
         onChange={setView}
       />
       <div className="pt-6 md:pt-8 space-y-6" aria-busy={list.isFetching}>
+        <p className="font-sans text-sm text-slate">
+          Needs you: waiting for your decision. Overdue: past the due date on the dispute. Refund run: approved QR Ph
+          refunds you still have to pay in PayMongo.
+        </p>
         {list.error != null && items.length > 0 && (
           <div role="alert" className="flex flex-wrap items-center gap-3">
             <p className="font-sans text-sm text-error">Couldn&apos;t refresh.</p>

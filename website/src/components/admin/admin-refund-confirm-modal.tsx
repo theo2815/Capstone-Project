@@ -32,7 +32,7 @@ export function AdminRefundConfirmModal({
     <AdminConfirmModal
       open={open}
       submitting={submitting}
-      pendingLabel="Resolving…"
+      pendingLabel="Refunding…"
       onClose={onCancel}
       onConfirm={onConfirm}
       title="Confirm refund"
@@ -51,6 +51,10 @@ export function AdminRefundConfirmModal({
         {paymentMethod === "qrph"
           ? "After you approve, make the refund link in the PayMongo dashboard and send it here. PayMongo's dashboard can only refund the whole payment."
           : "The refund goes to the original payment method when the provider confirms it. The dispute then closes."}
+      </p>
+      <p className="font-sans text-sm text-slate">
+        The runner is told. A finished refund cannot be undone: the sale is taken back from the photographer&apos;s
+        earnings and, on a full refund, the runner&apos;s download of this photo ends.
       </p>
     </AdminConfirmModal>
   );

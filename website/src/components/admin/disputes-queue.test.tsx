@@ -191,7 +191,7 @@ it("on a phone the action buttons sit in a row stuck to the bottom of the drawer
     // The row comes after the evidence, so it can stay in view to the end of the scroll.
     const claim = within(drawer).getByText(dispute.note);
     expect(claim.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    for (const [button, modal] of [["Approve refund…", `Resolve ${dispute.id}`], ["Deny…", `Deny ${dispute.id}`], ["Escalate…", `Escalate ${dispute.id}`]]) {
+    for (const [button, modal] of [["Approve refund…", `Approve refund · ${dispute.id}`], ["Deny…", `Deny ${dispute.id}`], ["Escalate…", `Escalate ${dispute.id}`]]) {
       await user.click(within(row).getByRole("button", { name: button }));
       expect(await screen.findByRole("dialog", { name: modal })).toBeInTheDocument();
       await user.keyboard("{Escape}");
@@ -232,7 +232,8 @@ it("an overdue dispute shows the overdue chip", async () => {
   renderQueue();
   const card = screen.getByRole("button", { description: late.id }).closest("article")!;
   expect(card).toHaveTextContent("Overdue · 2d");
-  expect(card).toHaveTextContent("Needs review");
+  // FT-18 (C-40): "Needs review" only repeats the Open pill, so it is not shown.
+  expect(card).not.toHaveTextContent("Needs review");
 });
 
 it("Esc on the Deny opened from Approve closes Deny and leaves the drawer open", async () => {
@@ -249,7 +250,7 @@ it("Esc on the Deny opened from Approve closes Deny and leaves the drawer open",
   renderQueue();
   const drawer = await screen.findByRole("dialog");
   await user.click(within(drawer).getByRole("button", { name: "Approve refund…" }));
-  await user.click(within(screen.getByRole("dialog", { name: `Resolve ${blocked.id}` })).getByRole("button", { name: "Deny with this reason" }));
+  await user.click(within(screen.getByRole("dialog", { name: `Approve refund · ${blocked.id}` })).getByRole("button", { name: "Deny with this reason" }));
   expect(screen.getByRole("dialog", { name: `Deny ${blocked.id}` })).toBeInTheDocument();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog", { name: `Deny ${blocked.id}` })).not.toBeInTheDocument());
@@ -328,4 +329,11 @@ it("an empty Needs you list says no disputes are waiting", async () => {
   seed([]);
   renderQueue();
   expect(await screen.findByText("No disputes waiting. You're caught up.")).toBeInTheDocument();
+});
+
+// FT-18 (C-36): one line under the view tabs says what each tab means.
+it("a line under the view tabs says what each tab means", () => {
+  seed([dispute]);
+  renderQueue();
+  expect(screen.getByText("Needs you: waiting for your decision. Overdue: past the due date on the dispute. Refund run: approved QR Ph refunds you still have to pay in PayMongo.")).toBeInTheDocument();
 });
