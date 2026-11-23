@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -73,11 +73,22 @@ export default function AdminEventsPage() {
   // AX-21 (EV1): each tab is its own server list, paged, and the search runs on the server.
   const [search, setSearch] = useUrlState<string>("q", "", { debounceMs: 300 });
   // The server search follows the URL, which trails typing by the 300 ms debounce.
-  const q = (useSearchParams().get("q") ?? "").trim();
+  const params = useSearchParams();
+  const q = (params.get("q") ?? "").trim();
+  const statusInUrl = params.get("status") !== null;
   const list = useAdminEventsInfinite(section.matchState, q);
   const catalog = list.items;
   const counts = useAdminEventCounts(q);
   const platformCounts = useAdminEventCounts("");
+  // FT-4: a search link with no tab (Sales) opens the first tab that holds a match, once; a tab named in
+  // the URL or clicked stays (Live is the default and leaves the URL, so a ref remembers the choice).
+  const tabDecided = useRef(statusInUrl);
+  useEffect(() => {
+    if (tabDecided.current || !q || !counts) return;
+    tabDecided.current = true;
+    const first = SECTIONS.find((s) => counts[s.matchState] > 0);
+    if (first && first.id !== section.id) setTab(first.id);
+  }, [q, counts, section.id, setTab]);
   const { createEvent, editEvent, deleteEvent, setListing, pendingAction, isPending, recoveryNotice } = useAdminEventActions();
   const { showToast } = useToast();
   const { confirm } = useConfirmation();
@@ -269,7 +280,7 @@ export default function AdminEventsPage() {
         label="Event status"
         tabs={SECTIONS.map((g) => ({ key: g.id, label: g.title, count: counts?.[g.matchState] }))}
         value={section.id}
-        onChange={setTab}
+        onChange={(tab) => { tabDecided.current = true; setTab(tab); }}
       />
       {list.isLoading && (
         <div className="mt-8 md:mt-10 space-y-3" aria-busy="true">

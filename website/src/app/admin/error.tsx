@@ -8,6 +8,7 @@ export default function AdminError({ retry }: { error: Error & { digest?: string
   return (
     <div role="alert" className="space-y-3">
       <p className="font-sans text-sm text-error">This admin page could not load.</p>
+      <p className="font-sans text-sm text-ink-soft">It may be your connection. Press Retry, or reload the page.</p>
       <button type="button" onClick={() => retry()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
         Retry
       </button>

@@ -140,7 +140,7 @@ function PhotographerRow({
 }
 
 function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
-  const href = `${ROUTES.ADMIN_EVENTS}/${row.id}`;
+  const href = `${ROUTES.ADMIN_EVENTS}?q=${encodeURIComponent(row.name)}`;
   return (
     <li>
       <Link
