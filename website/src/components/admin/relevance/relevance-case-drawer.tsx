@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { Thumb } from "@/components/admin/flag-relevance-evidence";
+import { CollapsibleReviewSection } from "@/components/admin/admin-collapse";
 import {
   CONSEQUENCES_TEXT,
   actionLabel,
@@ -12,6 +13,7 @@ import {
   isNoConsent,
   isWouldHave,
   sampleLabel,
+  verdictHelp,
   verdictLabel,
   verdictNoteLabel,
   type RelevanceCaseDetail,
@@ -37,7 +39,8 @@ export function RelevanceCaseSubtitle({ row }: { row: RelevanceCaseRow }) {
 }
 
 /**
- * The body of a case: verdict, the model's reason, the numbers, words, samples and alerts. The actions sit in the drawer footer.
+ * The body of a case: verdict, the checker's reason, the numbers, words, samples and alerts, then the technical details
+ * folded away (FT-20). The actions sit in the drawer footer.
  * RV-3.5: the appeal drawer leaves the samples out (`samples={false}`) and shows them once the admin opened them.
  */
 export function RelevanceCaseBody({ detail, samples = true }: { detail: RelevanceCaseDetail; samples?: boolean }) {
@@ -46,11 +49,13 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
   // RVF-9: a no-consent case keeps its own note; the no-consent line is added below it.
   const noConsentToo = isNoConsent(row) && row.verdictNote !== "NO_CONSENT";
   const overridden = detail.modelVerdict !== row.verdict;
+  const help = verdictHelp(row.verdict);
   return (
     <div className="space-y-10">
       <section className="space-y-3">
         <Kicker as="p" tone="soft">Verdict</Kicker>
         <p className="font-display text-xl md:text-2xl font-extrabold text-ink">{verdictLabel(row.verdict)}</p>
+        {help && <p className="font-sans text-sm text-slate">{verdictLabel(row.verdict)}: {help}</p>}
         {isWouldHave(row) ? (
           <div className="rounded-xl border border-line bg-bone-deep p-4 space-y-1">
             <p className="font-sans text-sm font-medium text-ink">Would have hidden: {actionLabel(row.action)}.</p>
@@ -64,8 +69,8 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
             {overridden && (
               <p className="font-sans text-sm font-medium text-ink">
                 {detail.modelVerdict
-                  ? `The model said ${verdictLabel(detail.modelVerdict)}; code stored ${verdictLabel(row.verdict)}.`
-                  : `The model gave no usable verdict; code stored ${verdictLabel(row.verdict)}.`}
+                  ? `The checker first said ${verdictLabel(detail.modelVerdict)}. The saved verdict is ${verdictLabel(row.verdict)}.`
+                  : `The checker gave no usable answer. The saved verdict is ${verdictLabel(row.verdict)}.`}
               </p>
             )}
             {note && <p className="font-sans text-sm text-ink-soft">{note}</p>}
@@ -90,11 +95,8 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
       )}
 
       <section className="space-y-3">
-        <Kicker as="p" tone="soft">Model&apos;s reason · admins only</Kicker>
+        <Kicker as="p" tone="soft">The checker&apos;s reason · admins only</Kicker>
         <p className="font-sans text-sm md:text-base text-ink-soft whitespace-pre-line break-words">{detail.adminReason ?? "No reason recorded."}</p>
-        {detail.evidenceUsed.length > 0 && (
-          <p className={labelCls}>Evidence used: {detail.evidenceUsed.map(evidenceLabel).join(", ")}</p>
-        )}
       </section>
 
       <section className="space-y-3">
@@ -108,7 +110,6 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
           <Field label="Not a race" value={n(detail.notRace)} />
           <Field label="Junk" value={row.junkPercent === null ? n(detail.junk) : `${n(detail.junk)} (${row.junkPercent}%)`} />
           <Field label="Words read" value={`${n(detail.wordsPhotos)} of ${n(row.batchPhotos)} photos`} />
-          <Field label="Junk band" value={bandLabel(detail.band)} />
         </dl>
       </section>
 
@@ -151,17 +152,28 @@ export function RelevanceCaseBody({ detail, samples = true }: { detail: Relevanc
         </section>
       )}
 
-      {detail.summarySent && (
-        <section className="space-y-3">
-          <Kicker as="p" tone="soft">Summary sent to the model</Kicker>
-          <pre className="max-h-64 overflow-auto rounded-xl border border-line bg-bone-deep p-4 font-mono text-[13px] text-ink whitespace-pre-wrap break-words tnum">
-            {detail.summarySent}
-          </pre>
-          <p className={labelCls}>
-            {detail.model ?? "Model unknown"} · prompt {detail.promptVersion ?? "unknown"}
-          </p>
-        </section>
-      )}
+      {/* FT-20 (C-51, W20.7): the parts only a builder needs, closed by default. */}
+      <CollapsibleReviewSection kicker="Technical details">
+        <div className="space-y-6">
+          <dl>
+            <Field label="Junk band" value={bandLabel(detail.band)} />
+          </dl>
+          {detail.evidenceUsed.length > 0 && (
+            <p className={labelCls}>Evidence used: {detail.evidenceUsed.map(evidenceLabel).join(", ")}</p>
+          )}
+          {detail.summarySent && (
+            <section className="space-y-3">
+              <Kicker as="p" tone="soft">Summary sent to the model</Kicker>
+              <pre className="max-h-64 overflow-auto rounded-xl border border-line bg-bone-deep p-4 font-mono text-[13px] text-ink whitespace-pre-wrap break-words tnum">
+                {detail.summarySent}
+              </pre>
+              <p className={labelCls}>
+                {detail.model ?? "Model unknown"} · prompt {detail.promptVersion ?? "unknown"}
+              </p>
+            </section>
+          )}
+        </div>
+      </CollapsibleReviewSection>
     </div>
   );
 }

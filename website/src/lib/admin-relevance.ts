@@ -84,14 +84,14 @@ export interface RelevanceCaseDetail {
 export type RelevanceTab = "hidden" | "appeals" | "cant_tell" | "all";
 
 export const RELEVANCE_TABS: readonly { value: RelevanceTab; label: string; empty: string }[] = [
-  { value: "hidden", label: "Hidden", empty: "No batch is hidden, or would have been hidden." },
-  { value: "appeals", label: "Appeals", empty: "No open appeals. You're caught up." },
   { value: "cant_tell", label: "Can't tell", empty: "No batch is waiting for you. You're caught up." },
+  { value: "appeals", label: "Appeals", empty: "No open appeals. You're caught up." },
+  { value: "hidden", label: "Hidden or recorded", empty: "No batch is hidden, or would have been hidden." },
   { value: "all", label: "All", empty: "No batch has been checked yet." },
 ];
 
 export const parseRelevanceTab = (raw: string): RelevanceTab =>
-  RELEVANCE_TABS.some((t) => t.value === raw) ? (raw as RelevanceTab) : "hidden";
+  RELEVANCE_TABS.some((t) => t.value === raw) ? (raw as RelevanceTab) : "cant_tell";
 
 const VERDICT_LABEL: Record<string, string> = {
   FITS: "Fits",
@@ -102,19 +102,29 @@ const VERDICT_LABEL: Record<string, string> = {
   CANT_TELL: "Can't tell",
 };
 
+// FT-20 (W20.2): one line under the verdict in the drawer, read after the verdict's name.
+const VERDICT_HELP: Record<string, string> = {
+  FITS: "the photos belong to this event.",
+  MIXED: "most photos belong; some look like junk.",
+  JUNK_DUMP: "most photos are blurry, dark or not of the race.",
+  WRONG_EVENT: "the photos look like they are from another event.",
+  COPIED: "the photos match another photographer's upload.",
+  CANT_TELL: "the checker could not decide. A person must.",
+};
+
 // Why code replaced the model's answer with "Can't tell" (plan 5.9), or applied a case as record-only (5.14).
 const NOTE_LABEL: Record<string, string> = {
-  CALL_FAILED: "The call to the model failed after every try.",
-  CUT_OFF: "The model's answer was cut off or refused.",
-  BAD_JSON: "The model's answer was not the expected JSON.",
-  UNKNOWN_VALUE: "The model answered with a verdict that does not exist.",
-  CONTRADICTS: "The model's verdict contradicts the measured numbers or the copy rule.",
-  THIN_EVIDENCE: "The model said wrong event without enough evidence.",
+  CALL_FAILED: "The checker could not be reached after every try.",
+  CUT_OFF: "The checker's answer was cut off or refused.",
+  BAD_JSON: "The checker's answer could not be read.",
+  UNKNOWN_VALUE: "The checker answered with a verdict that does not exist.",
+  CONTRADICTS: "The checker's verdict contradicts the measured numbers or the copy rule.",
+  THIN_EVIDENCE: "The checker said wrong event without enough evidence.",
   SMALL_BATCH: "The batch is too small for anything but Fits or Can't tell.",
-  SUSPICIOUS_WORDS: "Words read off the photos seemed to tell the model what to answer.",
+  SUSPICIOUS_WORDS: "Words read off the photos seemed to tell the checker what to answer.",
   NO_CONSENT: "The photographer has not accepted the Terms that allow automatic hiding.",
   ADMIN_HIDE: "An admin hid this batch from this page.",
-  WORDS_ONLY: "The model called this a wrong event from printed words only. The camera dates do not show it, so nothing was hidden. Look at the batch. In auto-hide you can hide it by hand if it is from another event.",
+  WORDS_ONLY: "The checker called this a wrong event from printed words only. The camera dates do not show it, so nothing was hidden. Look at the batch. In auto-hide you can hide it by hand if it is from another event.",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -154,6 +164,8 @@ const label = (map: Record<string, string>, value: string | null): string | null
   value === null ? null : (map[value] ?? value);
 
 export const verdictLabel = (v: string | null) => label(VERDICT_LABEL, v) ?? "Not decided";
+/** FT-20 (W20.2): no help line for a verdict this page does not know. */
+export const verdictHelp = (v: string | null) => (v === null ? null : (VERDICT_HELP[v] ?? null));
 export const verdictNoteLabel = (n: string | null) => label(NOTE_LABEL, n);
 export const actionLabel = (a: string | null) => label(ACTION_LABEL, a);
 export const alertKindLabel = (k: string) => label(ALERT_LABEL, k) ?? k;
@@ -162,6 +174,17 @@ export const bandLabel = (b: string | null) => label(BAND_LABEL, b) ?? "Not work
 
 /** Applied in record-only with a hide recorded: nothing was hidden. The server works it out. */
 export const isWouldHave = (row: Pick<RelevanceCaseRow, "wouldHave">) => row.wouldHave;
+
+export const WAITING_FOR_YOU = "Waiting for you";
+/**
+ * FT-20 (W20.1): the row's state word. The list holds current (applied) cases only, so a hide not in record-only is
+ * live; a record-only hide was only recorded; a Can't tell case waits for a person. Other rows show none.
+ */
+export function caseStateLabel(row: Pick<RelevanceCaseRow, "verdict" | "action" | "appliedMode" | "wouldHave">): string | null {
+  if ((row.action === "HIDE_JUNK" || row.action === "HIDE_ALL") && row.appliedMode !== "RECORD_ONLY") return "Hidden now";
+  if (row.wouldHave) return "Recorded only";
+  return row.verdict === "CANT_TELL" ? WAITING_FOR_YOU : null;
+}
 
 /** RVF-9: the mark first; an older server only has the note. */
 export const isNoConsent = (row: Pick<RelevanceCaseRow, "noConsent" | "verdictNote">) =>
@@ -224,7 +247,7 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
   },
   // RV-4.3 (A.8): the case stays as it is; AdminFlagService tells the photographer only once no hold is left.
   end_hold: {
-    label: "End hold",
+    label: "End hold…",
     title: "End hold",
     confirm: "Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other Photo Relevance hold is left.",
     confirmLabel: "Confirm end hold",
@@ -233,7 +256,7 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
   },
   // RV-4.5b: a no-consent Copied case; the server sends the photographer the approved "Payouts on hold" message.
   hold_payouts: {
-    label: "Hold payouts",
+    label: "Hold payouts…",
     title: "Hold payouts",
     // An appeal needs a hiding case (RelevanceAppealService.file), so before a hide only End hold lifts it.
     confirm: "Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, an accepted appeal lifts it too. Works only while the relevance mode is auto-hide.",
@@ -257,9 +280,14 @@ export const CONSEQUENCES_TEXT = {
   holdSince: "Payouts on hold since",
   endHoldHint: "One photographer can have several holds, one per Copied case. Payouts resume only when the last one ends.",
   openPhotographer: "Open photographer →",
-  repeat: "Repeat cases",
+  repeat: "Photographers with repeat cases",
   repeatEmpty: "No photographer has a repeat case.",
 } as const;
+
+// FT-20 (C-52, C-54; W20.8, W20.9): how to choose a restore, and the size of a whole-batch hide or restore.
+export const RESTORE_GUIDE = "Look at the junk samples first. If most are real photos of this race, restore the batch.";
+export const batchCountLine = (photos: number, photographer: string) => `${photos.toLocaleString()} photos in this batch, from ${photographer}.`;
+export const HIDE_PROGRESS = "You can follow the progress under Held photos.";
 
 export const HIDDEN_PHOTOS_EMPTY = "No photo of this batch is held.";
 export const PHOTO_RESTORED = "Photo restored";

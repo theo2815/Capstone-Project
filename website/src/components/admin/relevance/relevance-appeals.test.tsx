@@ -260,3 +260,18 @@ it("the appeal drawer's subtitle is not upper-cased", async () => {
   const subtitle = within(open).getByText(/Filed Feb 16 · 2003/);
   expect(subtitle.closest(".uppercase")).toBeNull();
 });
+
+// FT-20 (C-55, W20.1, W20.12): an open appeal row shows the first line of the reason and that it waits for the admin.
+it("an open appeal row shows the reason's first line and Waiting for you", async () => {
+  lists.WON = [{ ...openAppeal, appealId: "a2", status: "WON", eventName: "Won Race" }];
+  fixtures.search = "tab=appeals";
+  mount();
+  const open = await screen.findByRole("region", { name: "Open" });
+  const snippet = await within(open).findByText("<b>These are my race photos</b>");
+  expect(snippet).toHaveClass("line-clamp-1");
+  expect(within(open).getByText("Waiting for you")).toBeInTheDocument();
+  const won = screen.getByRole("region", { name: "Accepted" });
+  await within(won).findByText("Won Race");
+  expect(within(won).queryByText("Waiting for you")).not.toBeInTheDocument();
+  expect(within(won).queryByText("<b>These are my race photos</b>")).not.toBeInTheDocument();
+});

@@ -41,7 +41,7 @@ describe("caseActions", () => {
 
 it("the words-only note and alert have labels", () => {
   expect(verdictNoteLabel("WORDS_ONLY")).toBe(
-    "The model called this a wrong event from printed words only. The camera dates do not show it, so nothing was hidden. Look at the batch. In auto-hide you can hide it by hand if it is from another event.",
+    "The checker called this a wrong event from printed words only. The camera dates do not show it, so nothing was hidden. Look at the batch. In auto-hide you can hide it by hand if it is from another event.",
   );
   expect(alertKindLabel("WORDS_ONLY")).toBe("Wrong event on words only");
 });
