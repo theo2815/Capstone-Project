@@ -23,6 +23,13 @@ const DECISIONS: [RemovalDecision, string][] = [
   ["REMOVE", "Remove"], ["RETAIN", "Retain"], ["MORE_EVIDENCE", "Ask for more evidence"], ["RETAIN_RESTRICTED", "Retain restricted (stays hidden)"],
 ];
 const DECISION_LABEL = Object.fromEntries(DECISIONS) as Record<RemovalDecision, string>;
+// What each choice does (backend facts F3); shown under the select once chosen.
+const DECISION_EFFECT: Record<RemovalDecision, string> = {
+  REMOVE: "The photo is deleted for good. This cannot be undone.",
+  RETAIN: "The photo goes back on sale and in search.",
+  MORE_EVIDENCE: "The photo stays hidden. The photographer is told more evidence was asked for, but nobody is asked automatically: follow up yourself.",
+  RETAIN_RESTRICTED: "The photo stays hidden and is not deleted. You review it again on the date you set.",
+};
 const RESPONSE: Record<PhotographerRemovalResponse, string> = { AGREE: "agreed", OBJECT: "objected", ALREADY_DELETED: "already deleted" };
 // Only COMPLETE is proof of erasure; anything else is shown as what it is.
 const CLEANUP: Record<string, string> = {
@@ -180,6 +187,7 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
       <div className="space-y-2">
         <h2 id="removal-decisions" className="font-display text-xl font-extrabold text-ink">Owner responses and decisions</h2>
         <p className="text-sm text-slate">QuickPitik decides each photo. An owner&apos;s response is input, not a veto or consent, and silence after the deadline means overdue — never approval.</p>
+        <p className="text-sm text-slate">When you decide, the photographer is told the outcome by inbox and email. When a photo is removed, a runner who filed the request and buyers with an account are told too. Guest buyers and people whose request came through support are not.</p>
       </div>
       <ReviewCurrentState request={request} actions={actions} refreshing={detail.isFetching} refresh={detail.refetch} />
 
@@ -289,10 +297,12 @@ function ItemRow({ item, draft, busy, alt, onChange, onRetry }: {
           <div className="space-y-1">
             <AdminFieldLabel htmlFor={`decision-${item.id}`}>Decision<span className="sr-only"> for {photo}</span></AdminFieldLabel>
             <select id={`decision-${item.id}`} value={draft.decision} disabled={busy} className={REMOVAL_INPUT}
+              aria-describedby={draft.decision ? `decision-effect-${item.id}` : undefined}
               onChange={(e) => onChange({ decision: e.target.value as Draft["decision"] })}>
               <option value="">No decision</option>
               {DECISIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
+            {draft.decision && <p id={`decision-effect-${item.id}`} className="text-sm text-slate">{DECISION_EFFECT[draft.decision]}</p>}
           </div>
           {draft.decision && (
             <div className="space-y-1">

@@ -468,7 +468,13 @@ function CancelCase({ request, disabled }: { request: PhotoRemovalRequestDto; di
 
 type SuggestionAction = "promote" | "dismiss" | "demote";
 const SUGGESTION_DONE: Record<SuggestionAction, string> = {
-  promote: "Photo hidden and sent to its photographer for review.", demote: "Photo is public again and kept as a suggestion.", dismiss: "Suggestion dismissed.",
+  promote: "Photo hidden and sent to its photographer for review.", demote: "The photo is back on sale. It stays listed here as a possible match.", dismiss: "Possible match removed.",
+};
+
+const CONFIRM: Record<SuggestionAction, { title: string; button: string; body: string }> = {
+  promote: { title: "Hide this photo?", button: "Hide photo", body: "It is hidden from sale and search, and its photographer is asked to review it." },
+  demote: { title: "Put this photo back on sale?", button: "Put back on sale", body: "It goes back on sale and in search, and stays on this case as a suggestion." },
+  dismiss: { title: "Remove this possible match?", button: "Remove", body: "The photo stays public and nobody is told. You cannot bring it back to this list." },
 };
 
 // RD-6 suggestion review on an open runner case. Promote hides and verifies; dismiss leaves the photo public;
@@ -478,7 +484,7 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
   const { commandFor, done } = useCommandIds();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<{ action: "promote" | "demote"; item: PhotoRemovalItemDto } | null>(null);
+  const [confirming, setConfirming] = useState<{ action: SuggestionAction; item: PhotoRemovalItemDto } | null>(null);
   const hidden = request.items.filter((item) => item.autoHidden && item.state === "VERIFIED");
   const suggestions = request.items.filter((item) => item.state === "CANDIDATE");
   const busy = actions.reviewSuggestions.isPending || refreshing || actions.reviewRequired(request.id) || request.status !== "OPEN";
@@ -521,23 +527,23 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
           <ul className="space-y-2">
             {hidden.map((item) => row(item, item.adminDecision == null && (
               <button type="button" disabled={busy} onClick={() => setConfirming({ action: "demote", item })} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
-                Make public again, keep as suggestion<span className="sr-only"> for {item.photoIdSnapshot}</span>
+                Put back on sale…<span className="sr-only"> for {item.photoIdSnapshot}</span>
               </button>
             )))}
           </ul>
         )}
       </section>
       <section aria-labelledby="runner-suggestions" className="space-y-3">
-        <h2 id="runner-suggestions" className="font-display text-xl font-extrabold text-ink">Suggestions (still public)</h2>
-        <p className="text-sm text-slate">Possible matches that were not hidden. Promote hides a photo and sends it to its photographer for review; dismiss leaves it public.</p>
-        {suggestions.length === 0 ? <p className="text-sm text-slate">No suggestions left.</p> : (
+        <h2 id="runner-suggestions" className="font-display text-xl font-extrabold text-ink">Possible matches (still public)</h2>
+        <p className="text-sm text-slate">Photos that may show this runner and were not hidden. Hide one to send it to its photographer for review, or mark it as not this runner.</p>
+        {suggestions.length === 0 ? <p className="text-sm text-slate">No possible matches left.</p> : (
           <ul className="space-y-2">
             {suggestions.map((item) => row(item, <>
               <button type="button" disabled={busy} onClick={() => setConfirming({ action: "promote", item })} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
-                Promote<span className="sr-only"> {item.photoIdSnapshot}</span>
+                Hide this photo…<span className="sr-only"> {item.photoIdSnapshot}</span>
               </button>
-              <button type="button" disabled={busy} onClick={() => void review("dismiss", item.id)} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
-                Dismiss<span className="sr-only"> {item.photoIdSnapshot}</span>
+              <button type="button" disabled={busy} onClick={() => setConfirming({ action: "dismiss", item })} className={cn(BTN_GHOST, BTN_SIZE.sm)}>
+                Not this runner…<span className="sr-only"> {item.photoIdSnapshot}</span>
               </button>
             </>))}
           </ul>
@@ -547,14 +553,12 @@ function RunnerSuggestions({ request, refreshing, refresh }: { request: PhotoRem
       {notice && <p role="status" className="text-sm text-ink">{notice}</p>}
       <AdminConfirmModal open={!!confirming} onClose={() => { setConfirming(null); setError(null); }}
         onConfirm={() => confirming && void review(confirming.action, confirming.item.id)}
-        title={confirming?.action === "promote" ? "Promote this photo?" : "Make this photo public again?"}
-        confirmLabel={confirming?.action === "promote" ? "Promote and hide" : "Make public again"}
+        title={CONFIRM[confirming?.action ?? "promote"].title}
+        confirmLabel={CONFIRM[confirming?.action ?? "promote"].button}
         tone={confirming?.action === "promote" ? "danger" : "primary"}
         confirmDisabled={busy} submitting={actions.reviewSuggestions.isPending} error={confirming ? error : null}>
         <p className="font-sans text-sm text-ink-soft">
-          {confirming?.action === "promote"
-            ? "It is hidden from sale and search, and its photographer is asked to review it."
-            : "It goes back on sale and in search, and stays on this case as a suggestion."}
+          {CONFIRM[confirming?.action ?? "promote"].body}
         </p>
       </AdminConfirmModal>
     </div>
