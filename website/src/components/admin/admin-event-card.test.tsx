@@ -36,3 +36,16 @@ it("keeps green off the Live row text; only the dot is fresh (UA6)", () => {
   expect(state).toHaveClass("text-ink");
   expect(state.querySelector("[aria-hidden]")).toHaveClass("bg-fresh");
 });
+
+it("shows the price per photo, and Free at zero (FT-15, R-12)", () => {
+  mount();
+  expect(screen.getByText("₱80.00 per photo")).toBeInTheDocument();
+  cleanup(); mount({ event: { ...adminEvent, pricePerPhoto: 0 } });
+  expect(screen.getByText("Free")).toBeInTheDocument();
+});
+
+it.each([["open", "Recent"], ["past", "Archive"]] as const)("a %s row reads its tab name, %s (FT-15, B-31)", (state, word) => {
+  mount({ event: { ...adminEvent, state } });
+  expect(screen.getByText(word)).toBeInTheDocument();
+  expect(screen.queryByText(/Open for sale|Archived/)).not.toBeInTheDocument();
+});

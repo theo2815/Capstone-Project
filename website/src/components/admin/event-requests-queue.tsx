@@ -206,7 +206,7 @@ export function EventRequestsQueue() {
         }
         intro={
           rejecting
-            ? `${rejecting.createdByName ?? rejecting.submittedByName ?? "The photographer"} sees your reason in their inbox.`
+            ? `${rejecting.createdByName ?? rejecting.submittedByName ?? "The photographer"} sees your reason in their inbox. Write what they should change.`
             : undefined
         }
         submitLabel={
@@ -409,7 +409,7 @@ function RequestRow({
             aria-busy={busy}
             className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
           >
-            {pendingLabel === "Joining…" ? pendingLabel : "Same race → join"}
+            {pendingLabel === "Joining…" ? pendingLabel : "Same race as an existing one…"}
           </button>
         )}
         <button

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import type { EventState, ListEvent } from "@/types/event";
 import { ROUTES } from "@/lib/constants";
-import { cn } from "@/lib/utils";
+import { cn, formatPrice } from "@/lib/utils";
 import { BTN_DANGER, BTN_GHOST, BTN_SIZE } from "@/components/ui/button-styles";
 import type { EventReviewStatus } from "@/lib/photographer-mock";
 
@@ -87,6 +87,9 @@ export function AdminEventCard({
         <p className="font-sans text-sm text-slate">
           <span className="tnum">{dateLabel}</span> · {event.city}
           {event.location && event.location !== event.city && ` · ${event.location}`}
+          {event.pricePerPhoto != null && (
+            <> · <span className="tnum">{event.pricePerPhoto === 0 ? "Free" : `${formatPrice(event.pricePerPhoto)} per photo`}</span></>
+          )}
         </p>
         {review && (
           <p className="font-sans text-sm text-slate">
@@ -167,8 +170,8 @@ export function AdminEventCard({
 const STATE_LABEL: Record<EventState, string> = {
   live: "Live now",
   upcoming: "Upcoming",
-  open: "Open for sale",
-  past: "Archived",
+  open: "Recent",
+  past: "Archive",
 };
 // The dot takes the text colour (fresh on live rows); the word carries the meaning.
 const STATE_TEXT: Record<EventState, string> = {
