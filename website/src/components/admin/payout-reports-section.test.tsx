@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
 import { useAuthStore } from "@/store/auth-store";
+import { useToastStore } from "@/store/toast-store";
 import { admin, report } from "@/test/fixtures/admin";
 import { PayoutReportsSection } from "./payout-reports-section";
 
@@ -105,4 +106,44 @@ it("keeps a typed reply when a refresh drops the report from the list", async ()
   await waitFor(() => expect(screen.getByText("No open reports. You're caught up.")).toBeInTheDocument());
   // Query again: the node captured above would keep its value even after unmounting.
   expect(within(screen.getByRole("dialog", { name: /acknowledge · report-1/i })).getByRole("textbox")).toHaveValue("Checking with GCash.");
+});
+
+it("says what each report tab means", async () => {
+  renderSection();
+  expect(await screen.findByText("Open: not answered yet. Acknowledged: you replied and are still working on it. Resolved: closed.")).toBeInTheDocument();
+});
+
+it("after Acknowledge, the toast names the tab the report moved to", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "fetch").mockResolvedValue({ ...report, status: "acknowledged" });
+  renderSection();
+  await user.click(await screen.findByRole("button", { name: /report-1/ }));
+  await user.click(screen.getByRole("button", { name: "Acknowledge…" }));
+  const dialog = screen.getByRole("dialog", { name: /acknowledge · report-1/i });
+  await user.type(within(dialog).getByRole("textbox"), "Checking with GCash.");
+  await user.click(within(dialog).getByRole("button", { name: "Send acknowledgement" }));
+  await waitFor(() => expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Reply sent. The report is now under Acknowledged."));
+});
+
+it("the Resolve dialog says it is final, and its toast says the note was sent", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "fetch").mockResolvedValue({ ...report, status: "resolved" });
+  renderSection();
+  await user.click(await screen.findByRole("button", { name: /report-1/ }));
+  await user.click(screen.getByRole("button", { name: "Resolve…" }));
+  const dialog = screen.getByRole("dialog", { name: /resolve · report-1/i });
+  expect(within(dialog).getByText("Closes the report and sends your note to @photographer. Say what happened and how it was fixed, with the transfer reference. This is final: a resolved report cannot be reopened.")).toBeInTheDocument();
+  await user.type(within(dialog).getByRole("textbox"), "Sent again, ref 12345.");
+  await user.click(within(dialog).getByRole("button", { name: "Resolve report" }));
+  await waitFor(() => expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Report resolved. The photographer was sent your note."));
+});
+
+it.each(["Acknowledge", "Resolve"])("the %s… dialog says the note needs 10 characters", async (verb) => {
+  const user = userEvent.setup();
+  renderSection();
+  await user.click(await screen.findByRole("button", { name: /report-1/ }));
+  await user.click(screen.getByRole("button", { name: `${verb}…` }));
+  const textbox = within(screen.getByRole("dialog", { name: new RegExp(`${verb} · report-1`, "i") })).getByRole("textbox");
+  expect(textbox).toHaveAccessibleDescription("At least 10 characters.");
+  expect(textbox).not.toHaveAttribute("placeholder", expect.stringMatching(/24h|MY-32C887R/));
 });
