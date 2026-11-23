@@ -13,7 +13,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: navigation.repl
 vi.mock("@/lib/constants", async (original) => ({ ...await original<object>(), ADMIN_FLAGS_ENABLED: true }));
 // Stubs, so the test can count how many modal instances the queue mounts.
 vi.mock("./admin-flag-hide-modal", () => ({ AdminFlagHideModal: () => <div data-testid="hide-modal" /> }));
-vi.mock("./admin-escalate-modal", () => ({ AdminEscalateModal: () => <div data-testid="escalate-modal" /> }));
+vi.mock("./admin-escalate-modal", () => ({ AdminEscalateModal: ({ body }: { body?: string }) => <div data-testid="escalate-modal" data-body={body} /> }));
 
 const flag: Flag = { id: "flag-1", photoId: "photo-1", eventId: "event-1", eventName: "Race", photographerHandle: "photographer", reportedBy: "runner", reason: "low_quality", note: "Blurry", status: "open", reportedAt: "2026-09-10T00:00:00Z", reviewedAt: null, reviewedBy: null, reviewerNote: null, photoSnapshot: { alt: "Runner", kmMark: null, bib: null, thumbnailUrl: null }, targetKind: "photo", targetId: "photo-1", payoutHoldAt: null };
 const relevanceFlag: Flag = { ...flag, id: "flag-2", photoId: null, reason: "batch_relevance_low", note: "event e1: copy 5/8", targetKind: "user", targetId: "user-1" };
@@ -57,6 +57,28 @@ it("each history slab reads its own statuses from the server", async () => {
   }
   expect(cardsIn("dismissed")).toHaveLength(2);
   expect(document.getElementById("dismissed")).toHaveTextContent("2 flags");
+});
+
+// FT-19 (C-68, C-66, C-64): slab words match their contents; escalate and the drawer promise nothing untrue.
+it("the third slab is titled Closed, and the escalate dialog says nobody is told", async () => {
+  mount();
+  await waitFor(() => expect(document.getElementById("dismissed")).not.toBeNull());
+  const slab = document.getElementById("dismissed")!;
+  expect(within(slab).getByText("Closed")).toBeInTheDocument();
+  expect(within(slab).getByText("Dismissed or resolved")).toBeInTheDocument();
+  expect(within(slab).getByText("No closed flags.")).toBeInTheDocument();
+  expect(within(document.getElementById("hidden")!).getByText("Flags an admin acted on by hiding a photo")).toBeInTheDocument();
+  expect(within(document.getElementById("escalated")!).getByText("Marked for a second look")).toBeInTheDocument();
+  expect(screen.getByTestId("escalate-modal")).toHaveAttribute("data-body", "Marks this flag as escalated so other admins can see it needs a second look. Nobody is told, nothing else changes, and you can still close it afterwards.");
+});
+
+it("the drawer names an automatic check as the one who raised the flag", async () => {
+  serve([{ ...flag, reportedBy: "system" }]);
+  navigation.search = "row=flag-1";
+  mount();
+  const drawer = await screen.findByRole("dialog");
+  expect(within(drawer).getAllByText(/Automatic check/).length).toBeGreaterThanOrEqual(2);
+  expect(drawer).not.toHaveTextContent(/\bSystem\b/);
 });
 
 it("Load more appends the next server page", async () => {

@@ -1,7 +1,8 @@
 // Content moderation queue. Rows come from GET /api/v1/admin/flags
 // (AdminFlagDto); `photoSnapshot` is hydrated server-side so the UI never
-// cross-references a photo store. Runner-side flag filing is not built yet —
-// nothing constructs a flag row today.
+// cross-references a photo store. Flags are raised by signed-in runners and
+// photographers who report a race or a photographer (MeReportsController), or by
+// the system's own checks (SystemFlagService). Nobody can report a single photo.
 
 import { ApiError } from "@/lib/api";
 

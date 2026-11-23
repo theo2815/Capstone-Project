@@ -329,7 +329,7 @@ export function FlagsQueue() {
         id="hidden"
         number="02"
         title="Hidden"
-        caption="Photo removed from runner views"
+        caption="Flags an admin acted on by hiding a photo"
         totalCount={hiddenList.total}
         rows={hidden}
         empty="No hidden photos."
@@ -341,11 +341,11 @@ export function FlagsQueue() {
       <FlagSlab
         id="dismissed"
         number="03"
-        title="Dismissed"
-        caption="False alarms"
+        title="Closed"
+        caption="Dismissed or resolved"
         totalCount={dismissedTotal}
         rows={dismissed}
-        empty="No dismissed flags."
+        empty="No closed flags."
         onOpenRow={handleOpenRow}
         actions={cardActions}
         focusedId={focusedId}
@@ -355,7 +355,7 @@ export function FlagsQueue() {
         id="escalated"
         number="04"
         title="Escalated"
-        caption="Pushed to higher review"
+        caption="Marked for a second look"
         totalCount={escalatedList.total}
         rows={escalated}
         empty="No escalations."
@@ -407,7 +407,7 @@ export function FlagsQueue() {
         onClose={closeModal}
         onSubmit={handleEscalateSubmit}
         targetLabel={`Escalate ${modal.id}`}
-        body="Push this flag to the next review tier. The photo stays live in the meantime; higher tier decides hide vs. dismiss."
+        body="Marks this flag as escalated so other admins can see it needs a second look. Nobody is told, nothing else changes, and you can still close it afterwards."
       />
     </>
   );
@@ -499,7 +499,7 @@ function FlagSubtitle({ flag }: { flag: Flag }) {
   const eventName = flagEventName(flag);
   return (
     <p className="font-sans text-sm text-slate-soft tnum break-words">
-      {flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`}
+      {flag.reportedBy === "system" ? "Automatic check" : `@${flag.reportedBy}`}
       <span className="text-slate-soft"> · </span>
       @{flag.photographerHandle}
       <span className="text-slate-soft"> · </span>
@@ -661,7 +661,7 @@ function FlagDetailBody({ flag }: { flag: Flag }) {
           <FieldRow
             label="Reported by"
             value={
-              flag.reportedBy === "system" ? "System" : `@${flag.reportedBy}`
+              flag.reportedBy === "system" ? "Automatic check" : `@${flag.reportedBy}`
             }
             mono
           />

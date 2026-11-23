@@ -48,6 +48,15 @@ it("an event flag shows the event name and note, with no Hide button", () => {
   expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
 });
 
+// FT-19 (C-64, C-66): the card says who raised the flag, and its dismiss promises nothing about a photo.
+it("a flag the system raised says Automatic check, and its dismiss sentence names no photo", async () => {
+  renderCard(eventFlag);
+  expect(screen.getByText(/Automatic check/)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  const sentence = screen.getByText("Close this flag as a false alarm. Nothing changes for the race or the photographer, and nobody is told. The dismissal is logged.");
+  expect(sentence.textContent).not.toMatch(/\bphoto\b/i);
+});
+
 it("a photographer flag links to their admin page and names no event", () => {
   renderCard(userFlag);
   expect(screen.getByRole("link", { name: "@juanshots" })).toHaveAttribute("href", "/admin/photographers/juanshots");

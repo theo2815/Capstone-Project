@@ -158,7 +158,7 @@ export function AdminFlagCard({
 
         <p className="font-sans text-sm text-slate-soft tnum">
           {flag.reportedBy === "system"
-            ? "System"
+            ? "Automatic check"
             : `@${flag.reportedBy}`}
           <span className="text-slate-soft"> · </span>
           {flag.targetKind === "user" ? (
@@ -260,7 +260,7 @@ export function AdminFlagCard({
                 ? relevanceConfirmText(confirm)
                 : flag.status === "hidden"
                   ? "Reopen the photo for runners (unless another hidden flag still targets it) and mark this flag a false alarm."
-                  : "Mark this flag a false alarm. The photo stays live, no action against the photographer. The dismissal is logged."}
+                  : "Close this flag as a false alarm. Nothing changes for the race or the photographer, and nobody is told. The dismissal is logged."}
             </p>
             <button
               type="button"
