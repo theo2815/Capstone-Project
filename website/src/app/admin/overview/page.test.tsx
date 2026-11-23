@@ -76,3 +76,10 @@ it("the tiles and their loading grid take their columns from the room beside the
   // Two whole lines of the label's own line height, so a one-line label's value starts level with a two-line one's.
   expect(label.className).toContain("min-h-[2lh]");
 });
+
+it("the heading is the rail label", () => {
+  vi.spyOn(api, "get").mockReturnValue(new Promise(() => {}));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Overview.");
+});

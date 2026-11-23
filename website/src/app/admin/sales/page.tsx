@@ -141,9 +141,9 @@ function refundCaption(amount: number, count: number): string {
 function Header({ totalSales }: { totalSales: number | undefined }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
-      <Kicker tone="soft">Sales · Revenue intelligence</Kicker>
+      <Kicker>Sales · Money report</Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
-        The money.
+        Sales.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
         Where revenue comes from across photographers, events, and the last{" "}

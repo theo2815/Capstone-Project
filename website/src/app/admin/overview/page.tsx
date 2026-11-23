@@ -184,10 +184,10 @@ function Header() {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
-        Overview · Weekly review
+        Overview · Platform report
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
-        The week.
+        Overview.
       </h1>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
         Platform counts and the last 30 days. Today&apos;s work is in the Inbox.
