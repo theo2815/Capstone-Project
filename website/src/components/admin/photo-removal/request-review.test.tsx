@@ -295,7 +295,7 @@ it("groups auto-hidden photos and public suggestions with an other-people badge"
   serverCase = runnerOpen;
   renderReview();
   const hidden = await screen.findByRole("region", { name: "Hidden automatically" });
-  const suggestions = screen.getByRole("region", { name: "Suggestions (still public)" });
+  const suggestions = screen.getByRole("region", { name: "Possible matches (still public)" });
   expect(within(hidden).getAllByRole("listitem")).toHaveLength(2);
   expect(within(hidden).getAllByText("Other people visible")).toHaveLength(1);
   expect(within(suggestions).getAllByRole("listitem")).toHaveLength(1);
@@ -313,21 +313,22 @@ it("promote sends the expected version to the suggestions endpoint", async () =>
   serverCase = runnerOpen;
   vi.mocked(removalApi.reviewRemovalSuggestions).mockImplementation(async () => { serverCase = { ...runnerOpen, version: 8 }; return serverCase; });
   renderReview();
-  await user.click(await screen.findByRole("button", { name: "Promote photo-c1" }));
-  // AX-36 RM3: Promote hides a public photo, so it waits for a confirm.
-  const dialog = await screen.findByRole("dialog", { name: "Promote this photo?" });
+  await user.click(await screen.findByRole("button", { name: "Hide this photo… photo-c1" }));
+  // AX-36 RM3: Hide this photo… hides a public photo, so it waits for a confirm.
+  const dialog = await screen.findByRole("dialog", { name: "Hide this photo?" });
   expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();
-  await user.click(within(dialog).getByRole("button", { name: "Promote and hide" }));
+  await user.click(within(dialog).getByRole("button", { name: "Hide photo" }));
   expect(await screen.findByText("Photo hidden and sent to its photographer for review.")).toBeVisible();
   await waitFor(() => {
     expect(removalApi.getAdminRemovalRequest).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("button", { name: "Dismiss photo-c1" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Not this runner… photo-c1" })).toBeEnabled();
   });
   await waitFor(() => expect(removalApi.reviewRemovalSuggestions).toHaveBeenCalledTimes(1));
   const [id, body] = vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[0];
   expect(id).toBe("case-1");
   expect(body).toEqual({ commandId: expect.any(String), expectedVersion: 7, promote: ["c1"], dismiss: [], demote: [] });
-  await user.click(screen.getByRole("button", { name: "Dismiss photo-c1" }));
+  await user.click(screen.getByRole("button", { name: "Not this runner… photo-c1" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Remove this possible match?" })).getByRole("button", { name: "Remove" }));
   await waitFor(() => expect(removalApi.reviewRemovalSuggestions).toHaveBeenCalledTimes(2));
   expect(vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[1][1]).toMatchObject({ expectedVersion: 8, dismiss: ["c1"] });
 });
@@ -338,10 +339,10 @@ it("demote is offered only on auto-hidden photos", async () => {
     removalItem("d1", "Photographer B", { autoHidden: true, adminDecision: "MORE_EVIDENCE" })] };
   renderReview();
   await screen.findByRole("region", { name: "Hidden automatically" });
-  const demotes = screen.getAllByRole("button", { name: /^Make public again, keep as suggestion/ }).map((b) => b.textContent);
+  const demotes = screen.getAllByRole("button", { name: /^Put back on sale…/ }).map((b) => b.textContent);
   expect(demotes).toHaveLength(2);
   expect(demotes.join()).toMatch(/photo-h1.*photo-h2/);
-  expect(screen.queryByRole("button", { name: /^Promote photo-h1/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Hide this photo… photo-h1/ })).toBeNull();
 });
 
 it("runner cases have no evidence replace", async () => {
@@ -379,23 +380,62 @@ it("the case page has an h1 while loading and on error", async () => {
   expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
 });
 
+// FT-21 (C-80): Not this runner… has no undo, so it waits for a confirm that says so.
+it("Not this runner… calls nothing until Remove is confirmed", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerOpen;
+  vi.mocked(removalApi.reviewRemovalSuggestions).mockImplementation(async () => { serverCase = { ...runnerOpen, version: 8 }; return serverCase; });
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: "Not this runner… photo-c1" }));
+  const dialog = await screen.findByRole("dialog", { name: "Remove this possible match?" });
+  expect(within(dialog).getByText("The photo stays public and nobody is told. You cannot bring it back to this list.")).toBeVisible();
+  expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+  expect(await screen.findByText("Possible match removed.")).toBeVisible();
+  expect(vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[0][1]).toMatchObject({ expectedVersion: 7, dismiss: ["c1"], promote: [], demote: [] });
+});
+
+it("Cancel on Not this runner… sends nothing, and Put back on sale says where the photo went", async () => {
+  const user = userEvent.setup();
+  serverCase = runnerOpen;
+  vi.mocked(removalApi.reviewRemovalSuggestions).mockImplementation(async () => serverCase);
+  renderReview();
+  await user.click(await screen.findByRole("button", { name: "Not this runner… photo-c1" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Remove this possible match?" })).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: /^Put back on sale… for photo-h1/ }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Put this photo back on sale?" })).getByRole("button", { name: "Put back on sale" }));
+  expect(await screen.findByText("The photo is back on sale. It stays listed here as a possible match.")).toBeVisible();
+  expect(vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[0][1]).toMatchObject({ demote: ["h1"], promote: [], dismiss: [] });
+});
+
+it("no suggestion button says promote, demote or dismiss", async () => {
+  serverCase = runnerOpen;
+  renderReview();
+  const suggestions = await screen.findByRole("region", { name: "Possible matches (still public)" });
+  expect(within(suggestions).getByText("Photos that may show this runner and were not hidden. Hide one to send it to its photographer for review, or mark it as not this runner.")).toBeVisible();
+  const names = screen.getAllByRole("button").map((b) => b.textContent ?? "");
+  expect(names.join(" | ")).not.toMatch(/promote|demote|dismiss|suggestion/i);
+});
+
 it("the promote confirm is disabled, not silent, while the case refreshes", async () => {
   const user = userEvent.setup();
   serverCase = runnerOpen;
   renderReview();
-  await user.click(await screen.findByRole("button", { name: "Promote photo-c1" }));
-  const dialog = await screen.findByRole("dialog", { name: "Promote this photo?" });
+  await user.click(await screen.findByRole("button", { name: "Hide this photo… photo-c1" }));
+  const dialog = await screen.findByRole("dialog", { name: "Hide this photo?" });
   vi.mocked(removalApi.getAdminRemovalRequest).mockReturnValue(new Promise(() => {}));
   await act(async () => { void client.invalidateQueries(); });
-  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Promote and hide" })).toBeDisabled());
+  await waitFor(() => expect(within(dialog).getByRole("button", { name: "Hide photo" })).toBeDisabled());
 });
 
 it("make public again needs a confirm and Cancel sends nothing", async () => {
   const user = userEvent.setup();
   serverCase = runnerOpen;
   renderReview();
-  await user.click(await screen.findByRole("button", { name: /^Make public again, keep as suggestion for photo-h1/ }));
-  const dialog = await screen.findByRole("dialog", { name: "Make this photo public again?" });
+  await user.click(await screen.findByRole("button", { name: /^Put back on sale… for photo-h1/ }));
+  const dialog = await screen.findByRole("dialog", { name: "Put this photo back on sale?" });
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();

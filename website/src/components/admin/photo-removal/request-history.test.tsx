@@ -65,18 +65,28 @@ it("records a guest notice follow-up and keeps the note after a failure", async 
   renderHistory();
   expect(await screen.findByRole("heading", { name: "Guest buyer notices" })).toBeInTheDocument();
   expect(screen.getAllByText(/guest@example\.test/).length).toBeGreaterThan(0);
-  await user.type(screen.getByLabelText("Support update"), "Emailed the guest buyer about the removal");
+  await user.type(screen.getByLabelText("Note what support told the requester or a guest buyer"), "Emailed the guest buyer about the removal");
   await user.selectOptions(screen.getByLabelText("Guest buyer notice (optional)"), "notice-1");
   await user.click(screen.getByRole("button", { name: "Record update" }));
   expect(screen.getByRole("button", { name: "Recording…" })).toBeDisabled();
   await act(async () => { fail(new Error("Gateway timeout")); });
   expect(await screen.findByText("Gateway timeout")).toBeInTheDocument();
-  expect(screen.getByLabelText("Support update")).toHaveValue("Emailed the guest buyer about the removal");
+  expect(screen.getByLabelText("Note what support told the requester or a guest buyer")).toHaveValue("Emailed the guest buyer about the removal");
   await user.click(screen.getByRole("button", { name: "Record update" }));
   await waitFor(() => expect(removalApi.addRemovalSupportUpdate).toHaveBeenCalledTimes(2));
   const [first, second] = vi.mocked(removalApi.addRemovalSupportUpdate).mock.calls.map((call) => call[1]);
   expect(second).toEqual(first);
   expect(first).toMatchObject({ note: "Emailed the guest buyer about the removal", noticeId: "notice-1", expectedVersion: 7 });
   expect(await screen.findByText("Support update recorded.")).toBeInTheDocument();
-  expect(screen.getByLabelText("Support update")).toHaveValue("");
+  expect(screen.getByLabelText("Note what support told the requester or a guest buyer")).toHaveValue("");
+});
+
+// FT-21 (C-77): the support note and the guest buyer list say that nothing is sent.
+it("the support note box says it does not message anyone", async () => {
+  renderHistory();
+  const box = await screen.findByLabelText("Note what support told the requester or a guest buyer");
+  expect(box).toHaveAttribute("placeholder", "What was said, and to whom");
+  const line = screen.getByText("This only adds a note to the history. It does not message anyone.");
+  expect(box.getAttribute("aria-describedby")).toContain(line.id);
+  expect(screen.getByText("QuickPitik cannot message guest buyers. Contact each one yourself, then note it below.")).toBeVisible();
 });

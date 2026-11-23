@@ -71,6 +71,26 @@ it("mixedResponsesRequireIndependentDecisions", async () => {
   expect(body.urgentReason).toBeUndefined();
 });
 
+// FT-21 (C-75, C-77): each choice says what it does, and the section says who is told.
+it("choosing a decision shows its effect under the select", async () => {
+  const user = userEvent.setup();
+  renderDecision();
+  expect(await screen.findByText("When you decide, the photographer is told the outcome by inbox and email. When a photo is removed, a runner who filed the request and buyers with an account are told too. Guest buyers and people whose request came through support are not.")).toBeVisible();
+  const select = screen.getByLabelText("Decision for photo-a1");
+  expect(select).not.toHaveAttribute("aria-describedby");
+  const effects: [string, string][] = [
+    ["REMOVE", "The photo is deleted for good. This cannot be undone."],
+    ["RETAIN", "The photo goes back on sale and in search."],
+    ["MORE_EVIDENCE", "The photo stays hidden. The photographer is told more evidence was asked for, but nobody is asked automatically: follow up yourself."],
+    ["RETAIN_RESTRICTED", "The photo stays hidden and is not deleted. You review it again on the date you set."],
+  ];
+  for (const [decision, effect] of effects) {
+    await user.selectOptions(select, decision);
+    const line = screen.getByText(effect);
+    expect(select.getAttribute("aria-describedby")).toBe(line.id);
+  }
+});
+
 // FT-11 (C-76): the removal confirm says the erasure is permanent and who is told.
 it("the removal confirm says it cannot be undone and who is told", async () => {
   const user = userEvent.setup();

@@ -80,6 +80,7 @@ function SupportUpdate({ request, refreshing, refresh }: {
       {request.guestBuyerRemovalNotices.length > 0 && (
         <div className="space-y-1 text-sm">
           <h3 className="font-display font-bold text-ink">Guest buyer notices</h3>
+          <p className="text-slate">QuickPitik cannot message guest buyers. Contact each one yourself, then note it below.</p>
           <ul className="space-y-1 text-slate">
             {request.guestBuyerRemovalNotices.map((notice) => (
               <li key={notice.noticeId} className="break-words">
@@ -89,8 +90,9 @@ function SupportUpdate({ request, refreshing, refresh }: {
           </ul>
         </div>
       )}
-      <AdminTextarea id="removal-support-note" label="Support update" maxLength={2000} value={note} disabled={pending}
-        placeholder="What support told the runner or a guest buyer" onChange={setNote} />
+      <AdminTextarea id="removal-support-note" label="Note what support told the requester or a guest buyer" maxLength={2000} value={note} disabled={pending}
+        placeholder="What was said, and to whom" describedBy="removal-support-note-help" onChange={setNote} />
+      <p id="removal-support-note-help" className="text-sm text-slate">This only adds a note to the history. It does not message anyone.</p>
       {request.guestBuyerRemovalNotices.length > 0 && (
         <div className="space-y-2">
           <AdminFieldLabel htmlFor="removal-support-notice">Guest buyer notice (optional)</AdminFieldLabel>
