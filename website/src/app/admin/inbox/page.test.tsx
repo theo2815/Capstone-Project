@@ -120,3 +120,14 @@ it("the heading is the rail label", async () => {
   await renderPage();
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Inbox.");
 });
+
+it("says what the Inbox is at every width, and what the open queue is for", async () => {
+  url.search = "type=payouts";
+  settle({});
+  await renderPage();
+  const intro = screen.getByText(/^Everything that is waiting for an admin, one queue at a time\./);
+  expect(intro.className).not.toMatch(/(^|\s)hidden(\s|$)/);
+  expect(
+    screen.getByText("Photographers asking to be paid. Approving sends no money: you send it yourself, then mark the payout paid."),
+  ).toBeTruthy();
+});
