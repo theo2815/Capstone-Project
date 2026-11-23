@@ -245,9 +245,10 @@ export default function AdminEventsPage() {
       title: "Delete event?",
       message: (
         <>
-          Removes <strong className="text-ink">{event.name}</strong> from{" "}
-          <span className="font-mono text-[13px]">/events</span>, the
-          photographer upload picker, and the admin board.
+          Removes <strong className="text-ink">{event.name}</strong> from the
+          public events list, the photographer upload picker and this page. Its
+          photos can no longer be bought. Runners who already paid can still
+          download. Nobody is told. This cannot be undone from the dashboard.
         </>
       ),
       confirmLabel: "Delete event",
@@ -255,7 +256,7 @@ export default function AdminEventsPage() {
       onConfirm: async () => {
         const ok = await deleteEvent(event.id);
         if (!ok) throw new Error("Another action is pending or the session changed. Review this event before retrying.");
-        showToast({ kind: "info", message: `Deleted · ${event.name}` });
+        showToast({ kind: "success", message: `Deleted · ${event.name}` });
       },
     });
   }

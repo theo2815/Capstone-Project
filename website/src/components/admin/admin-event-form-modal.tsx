@@ -370,6 +370,7 @@ export function AdminEventFormModal({
           aria-describedby={dateError ? "event-date-error" : undefined}
         />
         <FieldError id="event-date-error" message={dateError} density="tight" />
+        {mode === "edit" && <p className="font-sans text-sm text-slate">The date decides which tab the event sits under and when uploads close.</p>}
       </div>
 
       <AdminTextInput
@@ -386,6 +387,7 @@ export function AdminEventFormModal({
         inputClassName="tnum"
         hint={priceHint}
       />
+      {mode === "edit" && !event?.eventType && <p className="font-sans text-sm text-slate">Changing the price re-prices every photo already in this event. Orders already paid keep the price they were charged.</p>}
       {mode === "edit" && event?.eventType && <RacePriceList eventId={event.id} />}
 
       <AdminTextInput

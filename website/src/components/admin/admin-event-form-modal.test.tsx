@@ -208,3 +208,19 @@ it("a press that leaves a field shows its error after the press, not during it",
   fireEvent.pointerUp(document.body);
   expect(await screen.findByText("Add a title.")).toBeInTheDocument();
 });
+
+it("says what a price or a date change does, in edit mode only (FT-15, B-30)", () => {
+  mount("edit");
+  expect(screen.getByText("Changing the price re-prices every photo already in this event. Orders already paid keep the price they were charged.")).toBeInTheDocument();
+  expect(screen.getByText("The date decides which tab the event sits under and when uploads close.")).toBeInTheDocument();
+  cleanup(); mount("create");
+  expect(screen.queryByText(/re-prices every photo/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/decides which tab/)).not.toBeInTheDocument();
+});
+
+it("leaves the price line to the race price block on a shared race (FT-15)", () => {
+  vi.spyOn(api, "get").mockReturnValue(new Promise(() => {}));
+  mount("edit", { ...adminEvent, eventType: "ROAD_RACE" });
+  expect(screen.queryByText(/re-prices every photo/)).not.toBeInTheDocument();
+  expect(screen.getByText("The date decides which tab the event sits under and when uploads close.")).toBeInTheDocument();
+});

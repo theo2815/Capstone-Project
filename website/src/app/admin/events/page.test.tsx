@@ -88,7 +88,7 @@ it("waits in delete confirmation, retains the event on failure, and allows retry
   remove.mockImplementationOnce(async () => { rows = []; return { removed: true }; });
   await user.click(submit); await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(screen.queryByText("Cebu Race")).not.toBeInTheDocument(); expect(client.getQueryData(key)).toEqual([]);
-  expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error", "info"]);
+  expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error", "success"]);
 });
 it.each(["create", "edit"])("retains %s form input and canonical rows after failure, then retries", async (mode) => {
   const user = userEvent.setup(); const request = deferred();
@@ -337,4 +337,18 @@ it("a search link that names a tab keeps that tab (FT-4)", async () => {
 it("shows its guide intro, look-alike links and definitions without hover", () => {
   mount();
   expectSectionIntro(ROUTES.ADMIN_EVENTS);
+});
+
+it("the delete dialog names what deleting does and that it cannot be undone (FT-15, B-30)", async () => {
+  await mountLoaded();
+  await userEvent.click(screen.getByRole("button", { name: /delete/i }));
+  const dialog = screen.getByRole("dialog", { name: "Delete event?" });
+  expect(dialog).toHaveTextContent("Removes Cebu Race from the public events list, the photographer upload picker and this page. Its photos can no longer be bought. Runners who already paid can still download. Nobody is told. This cannot be undone from the dashboard.");
+});
+it("a row in the Recent tab reads Recent, its tab name (FT-15, B-31)", async () => {
+  rows = [{ ...adminEvent, state: "open" }];
+  nav.set("status=recent");
+  await mountLoaded();
+  expect(screen.getByRole("article")).toHaveTextContent("Recent");
+  expect(screen.queryByText("Open for sale")).not.toBeInTheDocument();
 });

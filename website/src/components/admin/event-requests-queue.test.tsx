@@ -44,6 +44,7 @@ it.each(["pending", "change_pending"] as const)("retains %s rejection input thro
   const label = reviewStatus === "pending" ? "Send back" : "Decline";
   await user.click(screen.getByRole("button", { name: label }));
   const dialog = screen.getByRole("dialog"); const reason = within(dialog).getByLabelText("Reason (max 500)");
+  expect(dialog).toHaveTextContent(/sees your reason in their inbox. Write what they should change./);
   await user.type(reason, "Please clarify pricing"); await user.click(within(dialog).getByRole("button", { name: label }));
   expect(reason).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   expect(within(dialog).getByRole("button", { name: reviewStatus === "pending" ? "Sending back…" : "Declining…" })).toBeDisabled();
@@ -209,7 +210,7 @@ it("shows duplicate candidates and decides only after the API answers", async ()
   expect(approveDialog).toHaveTextContent("It stays its own race, apart from Cebu Marathon.");
   await user.click(within(approveDialog).getByRole("button", { name: "Cancel" }));
   expect(post).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  await user.click(screen.getByRole("button", { name: "Same race as an existing one…" }));
   // Joining merges and removes the request, so nothing is sent until the admin confirms.
   expect(post).not.toHaveBeenCalled();
   expect(screen.getByText(/will cover/)).toHaveTextContent("Ana Cruz will cover Cebu Marathon");
@@ -261,7 +262,7 @@ it("join confirm sends the request's current revision, not the one it had when t
   client.setQueryData(key, [race]); const user = userEvent.setup();
   const post = vi.spyOn(api, "post").mockResolvedValue(target);
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  await user.click(screen.getByRole("button", { name: "Same race as an existing one…" }));
   act(() => { client.setQueryData(key, [{ ...race, reviewRevision: 9 }]); });
   await user.click(screen.getByRole("button", { name: "Join race" }));
   expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 9 });
@@ -270,7 +271,7 @@ it("join confirm closes when the request is gone", async () => {
   client.setQueryData(key, [race]); const user = userEvent.setup();
   const post = vi.spyOn(api, "post");
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: "Same race → join" }));
+  await user.click(screen.getByRole("button", { name: "Same race as an existing one…" }));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   act(() => { client.setQueryData(key, []); });
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
