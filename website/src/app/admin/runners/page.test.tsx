@@ -7,6 +7,8 @@ import * as adminApi from "@/lib/api-admin";
 import { useAuthStore } from "@/store/auth-store";
 import { admin, adminUser } from "@/test/fixtures/admin";
 import AdminRunnersPage from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 const nav = vi.hoisted(() => ({ search: new URLSearchParams(""), replace: vi.fn(), push: vi.fn() }));
 vi.mock("@/lib/api-admin", async (orig) => ({
@@ -106,4 +108,10 @@ it("offers Unsuspend for a suspended runner", async () => {
   expect(within(row).getByText("Suspended")).toBeInTheDocument();
   expect(within(row).getByRole("button", { name: "Unsuspend" })).toBeInTheDocument();
   expect(within(row).getByRole("button", { name: /Send message/ })).toBeInTheDocument();
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([]));
+  mount();
+  expectSectionIntro(ROUTES.ADMIN_RUNNERS);
 });

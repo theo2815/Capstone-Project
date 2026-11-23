@@ -20,6 +20,8 @@ import {
   fetchMfaStatus,
   type MfaEnrollResponse,
 } from "@/lib/api-admin-mfa";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // /admin/security — admin TOTP two-step verification management. Enroll →
 // scan/enter the secret → confirm with a code → save recovery codes; or disable
@@ -139,10 +141,7 @@ export default function AdminSecurityPage() {
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
           Security.
         </h1>
-        <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-          Add a second step to admin sign-in with an authenticator app. Required
-          for the accounts that approve and pay out real money.
-        </p>
+        <AdminSectionIntro href={ROUTES.ADMIN_SECURITY} />
       </header>
 
       <section className="pt-8 md:pt-10 max-w-xl">

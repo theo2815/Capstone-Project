@@ -5,6 +5,8 @@ import { useAdminKpis } from "@/hooks/use-admin-data";
 import { DisputesQueue } from "@/components/admin/disputes-queue";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // Phase 2 admin redesign — /admin/disputes is now the focus-mode route
 // for the disputes queue, sharing its body with /admin/inbox via the
@@ -47,10 +49,7 @@ function Header({
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Disputes.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Refund requests and complaints from runners. Resolve before they
-        escalate.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_DISPUTES} />
     </header>
   );
 }

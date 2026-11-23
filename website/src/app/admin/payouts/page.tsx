@@ -7,6 +7,8 @@ import { useAdminPayoutCounts, usePendingPayoutsTotal } from "@/hooks/use-admin-
 import { PayoutReportsSection } from "@/components/admin/payout-reports-section";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // /admin/payouts hosts the payouts queue (pending → approved → held → paid)
 // plus the "Reports from photographers" section. In the request-based flow
@@ -45,10 +47,7 @@ function Header({
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Payouts.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Photographer payout requests. Approve, hold with a reason, or mark paid
-        after a manual transfer.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_PAYOUTS} />
     </header>
   );
 }

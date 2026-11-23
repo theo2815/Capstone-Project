@@ -1,6 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import AdminSalesPage from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 vi.mock("@/components/admin/admin-sales-trend", () => ({ AdminSalesTrend: () => null }));
 vi.mock("@/components/admin/admin-sales-leaderboard", () => ({ AdminSalesLeaderboard: () => null }));
@@ -15,7 +17,6 @@ vi.mock("@/hooks/use-admin-data", () => ({
   useAdminSalesKpisQuery: (range: "ytd" | "week") => state[range],
 }));
 vi.mock("@/lib/admin-sales", () => ({
-  SALES_TREND_WEEKS: 12,
   // The dispute list has not loaded any refunded rows yet, while the server total says ₱120.
   useRefundPulse: () => ({ refundCount: 0, openCount: 0, escalatedCount: 0 }),
 }));
@@ -48,7 +49,7 @@ it("a failed money query shows an alert with Retry and no derived money", () => 
   expect(state.ytd.refetch).toHaveBeenCalled();
   expect(screen.queryByText(/₱/)).toBeNull();
   expect(screen.queryByText("no refunds processed")).toBeNull();
-  expect(screen.getByText(/photos sold to date/)).toHaveTextContent("— photos sold to date");
+  expect(screen.getByText(/photos sold so far this year/)).toHaveTextContent("— photos sold so far this year.");
 });
 
 it("the refund pulse agrees with the refunds tile and rates against this week's GMV", () => {
@@ -66,13 +67,18 @@ it("shows no refund rate for a week without sales, even when an older sale was r
   expect(screen.getByText("of this week's gross merch volume").closest("li")).toHaveTextContent("—");
 });
 
-it("reads the cut and the trend length from their values, not fixed copy", () => {
+it("reads the cut and the year's photo count from their values, not fixed copy", () => {
   render(<AdminSalesPage />);
   expect(screen.getByText("25% of every sale")).toBeInTheDocument();
-  expect(screen.getByText(/photos sold to date/)).toHaveTextContent("the last 12 weeks");
+  expect(screen.getByText(/photos sold so far this year/)).toHaveTextContent("400 photos sold so far this year.");
 });
 
 it("the heading is the rail label", () => {
   render(<AdminSalesPage />);
   expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Sales.");
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  render(<AdminSalesPage />);
+  expectSectionIntro(ROUTES.ADMIN_SALES);
 });

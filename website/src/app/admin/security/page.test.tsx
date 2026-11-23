@@ -7,6 +7,8 @@ import { useAuthStore } from "@/store/auth-store";
 import * as mfa from "@/lib/api-admin-mfa";
 import * as utils from "@/lib/utils";
 import Page from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // Records exactly what the page hands the QR package.
 const qr = vi.hoisted(() => ({ values: [] as string[] }));
@@ -150,4 +152,9 @@ it("draws the QR from exactly the enroll response's otpauthUri and still shows t
   expect(screen.getByText("JBSWY3DPEHPK3PXP")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy key" })).toBeInTheDocument();
   expect(screen.queryByText(/coming soon/i)).not.toBeInTheDocument();
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  expectSectionIntro(ROUTES.ADMIN_SECURITY);
 });

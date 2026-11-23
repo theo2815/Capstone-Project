@@ -5,6 +5,8 @@ import { api } from "@/lib/api";
 import { admin, adminUser } from "@/test/fixtures/admin";
 import { useAuthStore } from "@/store/auth-store";
 import AdminVerificationsPage from "./page";
+import { expectSectionIntro } from "@/test/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // The two queues have their own tests; here only the header counts matter.
 vi.mock("@/components/admin/verifications-queue", () => ({ VerificationsQueue: () => null }));
@@ -31,4 +33,9 @@ it("an older backend without the seller-details count, or a failed list, never s
   await new Promise((r) => setTimeout(r, 50));
   expect(within(header).getByText("Verifications", { selector: "p" })).toBeInTheDocument();
   expect(header).not.toHaveTextContent(/\d/);
+});
+
+it("shows its guide intro, look-alike links and definitions without hover", () => {
+  mount({}, new Promise(() => {}));
+  expectSectionIntro(ROUTES.ADMIN_VERIFICATIONS);
 });

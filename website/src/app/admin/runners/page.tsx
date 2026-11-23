@@ -16,6 +16,8 @@ import type { AdminUserRow } from "@/lib/admin-user-registry";
 import { formatMemberSince, sentenceCaseDate } from "@/lib/format";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 // AX-41 (M1): find a runner on the server, then suspend, unsuspend or message
 // them with the same modals and actions the photographer detail page uses.
@@ -67,9 +69,7 @@ export default function AdminRunnersPage() {
         <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
           Runners.
         </h1>
-        <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-          Find a runner by name or email, then suspend or message them.
-        </p>
+        <AdminSectionIntro href={ROUTES.ADMIN_RUNNERS} />
       </header>
 
       <div className="mt-8 md:mt-10">

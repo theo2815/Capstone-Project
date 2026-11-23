@@ -8,6 +8,8 @@ import {
 } from "@/components/admin/verifications-queue";
 import { SellerDetailsQueue } from "@/components/admin/seller-details-queue";
 import { Kicker } from "@/components/ui/kicker";
+import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import { ROUTES } from "@/lib/constants";
 
 export default function AdminVerificationsPage() {
   const pendingCount = usePendingVerificationsCount();
@@ -35,10 +37,7 @@ function Header({ pendingCount, sellerDetailsCount }: { pendingCount: number | n
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Verifications.
       </h1>
-      <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Profiles go live by themselves once the identity check passes. Here
-        you reject a profile, or approve one that was held.
-      </p>
+      <AdminSectionIntro href={ROUTES.ADMIN_VERIFICATIONS} />
     </header>
   );
 }
