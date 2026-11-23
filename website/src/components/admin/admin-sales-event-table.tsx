@@ -121,7 +121,7 @@ export function AdminSalesEventTable() {
 }
 
 function EventTableRow({ row }: { row: SalesEventRow }) {
-  const href = `${ROUTES.ADMIN_EVENTS}/${row.id}`;
+  const href = `${ROUTES.ADMIN_EVENTS}?q=${encodeURIComponent(row.name)}`;
   return (
     <li className="lg:col-span-full lg:grid lg:grid-cols-subgrid">
       <Link

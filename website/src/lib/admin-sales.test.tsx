@@ -185,3 +185,12 @@ it("the fetchers call the AX-12 routes and unwrap their lists", async () => {
     "/admin/sales/top-photographers?range=ytd&limit=10",
   ]);
 });
+
+it("an event row in either list opens the Events page searched for that event, not a missing page (FT-4)", () => {
+  state.live = [{ ...serverRow, name: "Cebu Marathon" }];
+  for (const List of [AdminSalesEventTable, AdminSalesLeaderboard]) {
+    const { unmount } = render(<List />);
+    expect(screen.getByText("Cebu Marathon").closest("a")).toHaveAttribute("href", "/admin/events?q=Cebu%20Marathon");
+    unmount();
+  }
+});

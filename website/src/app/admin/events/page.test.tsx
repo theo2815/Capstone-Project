@@ -313,3 +313,21 @@ it("keeps the count in the tab and does not repeat it under the tabs (EV6)", asy
   expect(screen.getByRole("button", { name: "Live now 1", pressed: true })).toBeInTheDocument();
   expect(screen.queryByText("1 event")).not.toBeInTheDocument();
 });
+it("a search link with no tab opens the first tab that holds the match (FT-4)", async () => {
+  rows = [{ ...adminEvent, id: "e2", slug: "mandaue", name: "Mandaue Run", state: "open" }];
+  nav.set("q=Mandaue%20Run");
+  await mountLoaded();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Recent 1", pressed: true })).toBeInTheDocument());
+  expect(new URLSearchParams(nav.get()).get("status")).toBe("recent");
+  // An empty Live tab can still be opened: the switch happens once.
+  await userEvent.click(screen.getByRole("button", { name: /^Live now/ }));
+  await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+  expect(screen.getByRole("button", { name: /^Live now/, pressed: true })).toBeInTheDocument();
+});
+it("a search link that names a tab keeps that tab (FT-4)", async () => {
+  rows = [{ ...adminEvent, state: "open" }];
+  nav.set("status=live&q=Cebu");
+  await mountLoaded();
+  expect(screen.getByRole("button", { name: /^Live now/, pressed: true })).toBeInTheDocument();
+  expect(new URLSearchParams(nav.get()).get("status")).toBe("live");
+});
