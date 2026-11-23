@@ -45,6 +45,7 @@ it.each(["card", "drawer"])("%s retains flag reasons on failure and blocks repea
   const scope = surface === "drawer" ? within(await screen.findByRole("dialog")) : screen;
   await user.click((await scope.findAllByRole("button", { name: "Hide…" }))[0]!);
   const dialog = screen.getByRole("dialog", { name: "Hide flag-1" });
+  await user.click(within(dialog).getByRole("radio", { name: "Violates platform policy" }));
   await user.type(within(dialog).getByRole("textbox"), "Keep this explanation");
   const submit = within(dialog).getByRole("button", { name: "Hide photo" });
   await user.click(submit);
@@ -70,11 +71,40 @@ it("distinguishes an accepted hide from a failed queue refresh", async () => {
   await userEvent.click((await screen.findAllByRole("button", { name: "Hide…" }))[0]);
   const dialog = screen.getByRole("dialog", { name: "Hide flag-1" });
   vi.mocked(api.get).mockRejectedValue(new Error("Refresh unavailable"));
+  await userEvent.click(within(dialog).getByRole("radio", { name: "Violates platform policy" }));
   await userEvent.click(within(dialog).getByRole("button", { name: "Hide photo" }));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenCalledTimes(1);
   expect(useToastStore.getState().toasts.some((toast) => /saved.*could not refresh/.test(toast.message))).toBe(true);
   expect(useToastStore.getState().toasts.some((toast) => toast.kind === "error")).toBe(false);
+});
+
+// FT-11 (C-67): no reason starts picked, so a quick Enter never hides with one the admin did not choose.
+it("the Hide dialog opens with no reason, says nobody is told, and Other needs a note", async () => {
+  const user = userEvent.setup();
+  const post = vi.spyOn(api, "post").mockResolvedValue({ ...flag, status: "hidden" });
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
+  await user.click((await screen.findAllByRole("button", { name: "Hide…" }))[0]!);
+  const dialog = screen.getByRole("dialog", { name: "Hide flag-1" });
+  expect(within(dialog).getByText("The photo is hidden from search and galleries. Nobody is told automatically: the reason is saved on the flag for admins. To tell the photographer, send them a message from their page.")).toBeInTheDocument();
+  expect(within(dialog).getAllByRole("radio").some((radio) => (radio as HTMLInputElement).checked)).toBe(false);
+  const submit = within(dialog).getByRole("button", { name: "Hide photo" });
+  expect(submit).toBeDisabled();
+  const note = within(dialog).getByRole("textbox");
+  expect(note).toHaveAttribute("placeholder", "Anything another admin should know");
+  await user.type(note, "x");
+  fireEvent.submit(dialog.querySelector("form")!);
+  expect(post).not.toHaveBeenCalled();
+  await user.clear(note);
+  await user.click(within(dialog).getByRole("radio", { name: "Other (see note)" }));
+  expect(within(dialog).getByLabelText("Note (required, max 280)")).toBe(note);
+  fireEvent.submit(dialog.querySelector("form")!);
+  expect(await within(dialog).findByText("Add a note: Other needs one.")).toBeInTheDocument();
+  expect(post).not.toHaveBeenCalled();
+  await user.type(note, "Shows a bib number");
+  await user.click(submit);
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  expect(JSON.stringify(post.mock.calls[0])).toContain("Other (see note) — Shows a bib number");
 });
 
 const refusal = () => new ApiError([{ code: "INVALID_STATE_TRANSITION", message: "This flag is already closed." }], 409);

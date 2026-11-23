@@ -65,9 +65,10 @@ it("lists open appeals first and shows the open count on the tab", async () => {
   mount();
   const open = await screen.findByRole("region", { name: "Open" });
   expect(await within(open).findByText("Cebu City Marathon 2003")).toBeInTheDocument();
-  expect(await within(screen.getByRole("region", { name: "Won" })).findByText("Won Race")).toBeInTheDocument();
+  expect(await within(screen.getByRole("region", { name: "Accepted" })).findByText("Won Race")).toBeInTheDocument();
   const sections = screen.getAllByRole("region").map((r) => r.getAttribute("aria-label"));
-  expect(sections).toEqual(["Open", "Won", "Lost"]);
+  expect(sections).toEqual(["Open", "Accepted", "Rejected"]);
+  expect(await within(screen.getByRole("region", { name: "Rejected" })).findByText("No appeal has been rejected.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Appeals 1" })).toBeInTheDocument();
 });
 
@@ -84,13 +85,14 @@ it("the decide buttons are disabled until the evidence was opened", async () => 
   const user = userEvent.setup();
   mount();
   const d = await drawer();
-  const won = await within(d).findByRole("button", { name: "Won" });
+  const won = await within(d).findByRole("button", { name: "Accept appeal…" });
   expect(won).toBeDisabled();
-  expect(within(d).getByRole("button", { name: "Lost" })).toBeDisabled();
+  expect(within(d).getByRole("button", { name: "Reject appeal…" })).toBeDisabled();
   expect(within(d).queryByText("Junk samples")).not.toBeInTheDocument();
+  expect(within(d).getByText("Opening the samples records that you looked at them. Then you can decide: accepting puts the photos back on sale, rejecting keeps them off sale.")).toBeInTheDocument();
   await user.click(within(d).getByRole("button", { name: "Open the samples" }));
   await waitFor(() => expect(won).toBeEnabled());
-  expect(within(d).getByRole("button", { name: "Lost" })).toBeEnabled();
+  expect(within(d).getByRole("button", { name: "Reject appeal…" })).toBeEnabled();
   expect(within(d).getByText("Junk samples")).toBeInTheDocument();
 });
 
@@ -118,16 +120,16 @@ it("a decided appeal leaves the open list", async () => {
   expect(note).toHaveClass("focus:ring-2");
   expect(note).toHaveAccessibleDescription("The photographer never sees this note.");
   await user.type(note, "  Real race photos  ");
-  await user.click(await within(d).findByRole("button", { name: "Won" }));
+  await user.click(await within(d).findByRole("button", { name: "Accept appeal…" }));
   const invalidate = vi.spyOn(client, "invalidateQueries");
-  await user.click(await screen.findByRole("button", { name: "Confirm won" }));
+  await user.click(await screen.findByRole("button", { name: "Accept appeal" }));
   expect(posts("/decide")).toEqual([["/admin/relevance/appeals/a1/decide", { outcome: "WON", note: "Real race photos" }]]);
   // AX-35: the tab counts come from /admin/kpis, so a decision reads them again.
   await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin", "kpis"] }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(await within(screen.getByRole("region", { name: "Open" })).findByText("No open appeals. You're caught up.")).toBeInTheDocument();
-  expect(toasts()).toContain("Appeal won: Cebu City Marathon 2003");
-  expect(useToastStore.getState().toasts.find((t) => t.message === "Appeal won: Cebu City Marathon 2003")?.kind).toBe("success");
+  expect(toasts()).toContain("Appeal accepted: Cebu City Marathon 2003");
+  expect(useToastStore.getState().toasts.find((t) => t.message === "Appeal accepted: Cebu City Marathon 2003")?.kind).toBe("success");
 });
 
 it("the server's refusal is shown", async () => {
@@ -139,8 +141,8 @@ it("the server's refusal is shown", async () => {
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  await user.click(await within(d).findByRole("button", { name: "Lost" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm lost" }));
+  await user.click(await within(d).findByRole("button", { name: "Reject appeal…" }));
+  await user.click(await screen.findByRole("button", { name: "Reject appeal" }));
   await waitFor(() => expect(toasts()).toContain("Open this appeal's evidence before deciding it"));
   expect(screen.getByRole("dialog", { name: "Cebu City Marathon 2003" })).toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Open" })).getByText("Cebu City Marathon 2003")).toBeInTheDocument();
@@ -153,21 +155,21 @@ it("a refused evidence look keeps the decide buttons locked and shows the server
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
   await waitFor(() => expect(toasts()).toContain("Deciding appeals needs the relevance mode auto-hide"));
-  expect(within(d).getByRole("button", { name: "Won" })).toBeDisabled();
+  expect(within(d).getByRole("button", { name: "Accept appeal…" })).toBeDisabled();
 });
 
-it("Won and Lost send nothing until the confirm, and cancelling keeps the note", async () => {
+it("Accept and Reject send nothing until the confirm, and cancelling keeps the note", async () => {
   const user = userEvent.setup();
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
   await user.type(within(d).getByLabelText("Note (admins only, optional)"), "Checked");
-  await user.click(await within(d).findByRole("button", { name: "Lost" }));
-  const confirm = await screen.findByRole("dialog", { name: "Appeal lost" });
+  await user.click(await within(d).findByRole("button", { name: "Reject appeal…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Reject this appeal?" });
   expect(within(confirm).getByText(/counts against the photographer\. This cannot be undone\./)).toBeInTheDocument();
   expect(posts("/decide")).toEqual([]);
   await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Appeal lost" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Reject this appeal?" })).not.toBeInTheDocument());
   expect(posts("/decide")).toEqual([]);
   expect(within(d).getByLabelText("Note (admins only, optional)")).toHaveValue("Checked");
 });
@@ -178,8 +180,8 @@ it("two confirms in one tick send one decision", async () => {
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  await user.click(await within(d).findByRole("button", { name: "Won" }));
-  const ok = await screen.findByRole("button", { name: "Confirm won" });
+  await user.click(await within(d).findByRole("button", { name: "Accept appeal…" }));
+  const ok = await screen.findByRole("button", { name: "Accept appeal" });
   act(() => { ok.click(); ok.click(); });
   await waitFor(() => expect(posts("/decide")).toHaveLength(1));
   await act(async () => {});
@@ -195,10 +197,10 @@ it("when another admin opened the samples since, the samples can be opened again
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  await user.click(await within(d).findByRole("button", { name: "Won" }));
-  await user.click(await screen.findByRole("button", { name: "Confirm won" }));
+  await user.click(await within(d).findByRole("button", { name: "Accept appeal…" }));
+  await user.click(await screen.findByRole("button", { name: "Accept appeal" }));
   expect(await within(d).findByRole("button", { name: "Open the samples" })).toBeEnabled();
-  expect(within(d).getByRole("button", { name: "Won" })).toBeDisabled();
+  expect(within(d).getByRole("button", { name: "Accept appeal…" })).toBeDisabled();
 });
 
 it("the open count is read with one row, and the Appeals tab reads no cases", async () => {
@@ -215,14 +217,14 @@ it("the confirm of an appeal on a closed case says it only records the decision"
   mount();
   let d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  await user.click(await within(d).findByRole("button", { name: "Won" }));
-  expect(within(await screen.findByRole("dialog", { name: "Appeal won" })).getByText(/^Marks the appeal won and tells the photographer\./)).toBeInTheDocument();
+  await user.click(await within(d).findByRole("button", { name: "Accept appeal…" }));
+  expect(within(await screen.findByRole("dialog", { name: "Accept this appeal?" })).getByText(/^Accepts the appeal and tells the photographer\./)).toBeInTheDocument();
   cleanup(); client.clear();
   lists.OPEN = [{ ...openAppeal, caseStage: "CLOSED" }];
   mount();
   d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  for (const [button, title] of [["Won", "Appeal won"], ["Lost", "Appeal lost"]] as const) {
+  for (const [button, title] of [["Accept appeal…", "Accept this appeal?"], ["Reject appeal…", "Reject this appeal?"]] as const) {
     await user.click(within(d).getByRole("button", { name: button }));
     const confirm = await screen.findByRole("dialog", { name: title });
     expect(within(confirm).getByText("The case is already closed, so this only records your decision. The photographer is not told. This cannot be undone.")).toBeInTheDocument();
@@ -232,14 +234,14 @@ it("the confirm of an appeal on a closed case says it only records the decision"
   }
 });
 
-// RV-4.3: a won appeal also ends a Copied case's payout hold (RelevanceAppealService.decide).
-it("the Won confirm says a won appeal ends a copied case's payout hold", async () => {
+// RV-4.3: an accepted appeal also ends a Copied case's payout hold (RelevanceAppealService.decide).
+it("the Accept confirm says an accepted appeal ends a copied case's payout hold", async () => {
   const user = userEvent.setup();
   mount();
   const d = await drawer();
   await user.click(await within(d).findByRole("button", { name: "Open the samples" }));
-  await user.click(await within(d).findByRole("button", { name: "Won" }));
-  const confirm = await screen.findByRole("dialog", { name: "Appeal won" });
+  await user.click(await within(d).findByRole("button", { name: "Accept appeal…" }));
+  const confirm = await screen.findByRole("dialog", { name: "Accept this appeal?" });
   expect(confirm.textContent).toContain("A Copied case's payout hold ends; payouts resume once the photographer has no other hold.");
 });
 

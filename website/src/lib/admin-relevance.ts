@@ -236,7 +236,7 @@ export const RELEVANCE_ACTIONS: Record<RelevanceCaseAction, { label: string; tit
     label: "Hold payouts",
     title: "Hold payouts",
     // An appeal needs a hiding case (RelevanceAppealService.file), so before a hide only End hold lifts it.
-    confirm: "Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, a won appeal lifts it too. Works only while the relevance mode is auto-hide.",
+    confirm: "Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, an accepted appeal lifts it too. Works only while the relevance mode is auto-hide.",
     confirmLabel: "Confirm hold payouts",
     done: "Payouts held",
     failed: "Could not hold the payouts — check the case before retrying.",
@@ -341,8 +341,8 @@ export interface RelevanceAppealRow {
 /** Open appeals first, then the decided ones. */
 export const APPEAL_SECTIONS: readonly { status: RelevanceAppealStatus; label: string; empty: string }[] = [
   { status: "OPEN", label: "Open", empty: RELEVANCE_TABS.find((t) => t.value === "appeals")!.empty },
-  { status: "WON", label: "Won", empty: "No appeal has been won." },
-  { status: "LOST", label: "Lost", empty: "No appeal has been lost." },
+  { status: "WON", label: "Accepted", empty: "No appeal has been accepted." },
+  { status: "LOST", label: "Rejected", empty: "No appeal has been rejected." },
 ];
 
 export const APPEAL_NOTE_MAX = 1000;
@@ -350,13 +350,13 @@ export const APPEAL_TEXT = {
   reason: "Photographer's reason",
   samples: "Samples",
   openSamples: "Open the samples",
-  openSamplesHint: "Opening the samples records that you looked at them. Won and Lost unlock after that.",
+  openSamplesHint: "Opening the samples records that you looked at them. Then you can decide: accepting puts the photos back on sale, rejecting keeps them off sale.",
   openFailed: "Could not record that you opened the samples. Try again.",
   note: "Note (admins only, optional)",
   noteHint: "The photographer never sees this note.",
-  won: "Won",
-  lost: "Lost",
-  done: { WON: "Appeal won", LOST: "Appeal lost" } as Record<"WON" | "LOST", string>,
+  won: "Accept appeal…",
+  lost: "Reject appeal…",
+  done: { WON: "Appeal accepted", LOST: "Appeal rejected" } as Record<"WON" | "LOST", string>,
   decideFailed: "Could not decide the appeal — check the appeal before retrying.",
   decisionNote: "Decision note",
   filed: "Filed",
@@ -364,14 +364,14 @@ export const APPEAL_TEXT = {
   // The decision is final for the photographer: each confirm says what it does (RelevanceAppealService.decide).
   confirm: {
     WON: {
-      title: "Appeal won",
-      confirmLabel: "Confirm won",
-      text: "Marks the appeal won and tells the photographer. A whole-batch hide becomes a junk-only hide: the full check puts the good photos back on sale as it measures them. A junk-only hide is lifted. A Copied case's payout hold ends; payouts resume once the photographer has no other hold. The case does not count against the photographer. This cannot be undone.",
+      title: "Accept this appeal?",
+      confirmLabel: "Accept appeal",
+      text: "Accepts the appeal and tells the photographer. A whole-batch hide becomes a junk-only hide: the full check puts the good photos back on sale as it measures them. A junk-only hide is lifted. A Copied case's payout hold ends; payouts resume once the photographer has no other hold. The case does not count against the photographer. This cannot be undone.",
     },
     LOST: {
-      title: "Appeal lost",
-      confirmLabel: "Confirm lost",
-      text: "Marks the appeal lost and tells the photographer. The photos stay off sale. A junk dump, wrong event or copied finding is confirmed at once and counts against the photographer. This cannot be undone.",
+      title: "Reject this appeal?",
+      confirmLabel: "Reject appeal",
+      text: "Rejects the appeal and tells the photographer. The photos stay off sale. A junk dump, wrong event or copied finding is confirmed at once and counts against the photographer. This cannot be undone.",
     },
   } as Record<"WON" | "LOST", { title: string; confirmLabel: string; text: string }>,
   // A case closed meanwhile (an admin restored the batch): the server records the decision only, sends no note.

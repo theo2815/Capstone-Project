@@ -71,6 +71,27 @@ it("mixedResponsesRequireIndependentDecisions", async () => {
   expect(body.urgentReason).toBeUndefined();
 });
 
+// FT-11 (C-76): the removal confirm says the erasure is permanent and who is told.
+it("the removal confirm says it cannot be undone and who is told", async () => {
+  const user = userEvent.setup();
+  confirm.mockResolvedValue(false);
+  renderDecision();
+  await decideItem(user, "photo-a1", "REMOVE", "Runner verified");
+  await user.click(screen.getByRole("button", { name: "Authorize removal" }));
+  expect(confirm).toHaveBeenCalledTimes(1);
+  const { title, message, confirmLabel } = confirm.mock.calls[0][0];
+  expect([title, confirmLabel]).toEqual(["Authorize removal?", "Authorize removal"]);
+  cleanup();
+  render(<>{message}</>);
+  const paragraphs = screen.getAllByText((_, el) => el?.tagName === "P").map((el) => el.textContent);
+  expect(paragraphs).toEqual([
+    "The selected photos come off sale, search and buyer downloads, and their files are deleted, usually within a few minutes. This cannot be undone. Buyers keep their receipts and refund access.",
+    "Told automatically: the photographer, a runner who filed this request, and buyers who have an account. Not told: guest buyers, and anyone whose request came through support. Contact those yourself.",
+    "Check each photo first: the face count can miss people in the background.",
+  ]);
+  expect(removalApi.decideRemovalRequest).not.toHaveBeenCalled();
+});
+
 it("overrideRequiresVisibleReason", async () => {
   const user = userEvent.setup();
   vi.mocked(removalApi.decideRemovalRequest).mockResolvedValue({ ...mixedCase, version: 8 });
