@@ -63,7 +63,7 @@ export default function AdminInboxPage() {
   const typeInUrl = typeRaw !== null;
   // ADMIN_QUEUES carries the Flags gate, so a gated-off or unknown type falls back to verifications.
   const active = ADMIN_QUEUES.find((q) => q.inboxType === typeRaw) ?? VERIFICATIONS;
-  // The same total as the rail's "Queues · N open", so the two never disagree.
+  // The same total as the rail's "Queues · N waiting", so the two never disagree.
   const pendingCount = useAdminQueueCounts().total;
   const router = useRouter();
   const { isPending: kpisPending } = useAdminKpisQuery();
@@ -92,7 +92,7 @@ function Header({ pendingCount }: { pendingCount: number | null }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
-        Inbox{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> open</>}
+        Inbox{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> waiting</>}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Inbox.

@@ -131,3 +131,10 @@ it("says what the Inbox is at every width, and what the open queue is for", asyn
     screen.getByText("Photographers asking to be paid. Approving sends no money: you send it yourself, then mark the payout paid."),
   ).toBeTruthy();
 });
+
+it("the kicker counts what is waiting, the same total as the rail", async () => {
+  url.search = "type=disputes";
+  settle({ disputesNeedingAdmin: 2 });
+  await renderPage();
+  expect(screen.getByRole("banner").querySelector("p")).toHaveTextContent(/^Inbox · 2 waiting$/);
+});

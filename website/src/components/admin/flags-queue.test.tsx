@@ -120,7 +120,7 @@ it("a shared ?row= link survives the first load and opens the drawer", async () 
   vi.mocked(api.get).mockImplementation(() => new Promise((yes) => { waiting.push(() => yes({ items: [flag], total: 1 })); }));
   const { container } = mount();
   expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-  expect(screen.queryByText("Queue is clear — no open flags.")).not.toBeInTheDocument();
+  expect(screen.queryByText("No flags waiting. You're caught up.")).not.toBeInTheDocument();
   await act(async () => { waiting.forEach((release) => release()); });
   expect(await screen.findByRole("dialog")).toHaveTextContent("flag-1");
   expect(navigation.replace).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ it("a failed load shows an alert with Retry, never an empty queue", async () => 
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent("Couldn't load flags");
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
-  expect(screen.queryByText("Queue is clear — no open flags.")).not.toBeInTheDocument();
+  expect(screen.queryByText("No flags waiting. You're caught up.")).not.toBeInTheDocument();
   expect(navigation.replace).not.toHaveBeenCalled();
 });
 
@@ -218,4 +218,11 @@ it("the drawer's subtitle, handles and dates are not upper-cased", async () => {
   notUpperCased(within(drawer).getAllByText(/Sep 10 · 2026/));
   notUpperCased(within(drawer).getAllByText(/@photographer/));
   for (const el of within(drawer).getAllByText("@photographer", { selector: "dd" })) expect(el).toHaveClass("break-words");
+});
+
+it("an empty open list says no flags are waiting", async () => {
+  vi.mocked(api.get).mockResolvedValue({ items: [], total: 0 });
+  mount();
+  expect(await screen.findByText("No flags waiting. You're caught up.")).toBeInTheDocument();
+  expect(screen.getByText("Waiting for a decision")).toBeInTheDocument();
 });

@@ -315,3 +315,14 @@ it("the drawer's email wraps in its own case, and its dates are not upper-cased"
   expect(email).toHaveClass("break-all");
   notUpperCased(within(dialog).getAllByText(/^Nov 0\d · 2026$/));
 });
+
+it("an empty Needs review list says the admin is caught up", async () => {
+  get.mockImplementation(async (path: string) => {
+    if (path.startsWith("/admin/seller-details?")) return { items: [], total: 0, offset: 0, limit: 10 };
+    if (path === "/admin/kpis") return { pendingSellerDetails: 0 };
+    if (path.startsWith("/admin/users?")) return { items: [], total: 0, offset: 0, limit: 100 };
+    throw new Error(`unexpected GET ${path}`);
+  });
+  renderQueue();
+  expect(await screen.findByText("No seller details waiting. You're caught up.")).toBeInTheDocument();
+});

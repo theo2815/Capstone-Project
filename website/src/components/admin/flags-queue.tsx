@@ -316,10 +316,10 @@ export function FlagsQueue() {
         id="open"
         number="01"
         title="Open"
-        caption="Awaiting decision"
+        caption="Waiting for a decision"
         totalCount={open.length}
         rows={open}
-        empty="Queue is clear — no open flags."
+        empty="No flags waiting. You're caught up."
         onOpenRow={handleOpenRow}
         actions={cardActions}
         focusedId={focusedId}

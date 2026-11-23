@@ -24,7 +24,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
     number: "01",
     href: ROUTES.ADMIN_INBOX,
     label: "Inbox",
-    body: "Your morning landing: every queue waiting on an admin, one chip at a time.",
+    body: "Everything waiting for an admin, one queue at a time.",
     intro:
       "Everything that is waiting for an admin, one queue at a time. Start with the queue marked by the green dot: it is the first one with work. A number is how many items are waiting for a decision right now.",
     instead: [{ when: "For totals and reports", label: "Overview", href: ROUTES.ADMIN_OVERVIEW }],

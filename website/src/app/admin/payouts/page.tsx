@@ -41,8 +41,8 @@ function Header({
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
         Payouts
-        {pendingCount !== undefined && <> · <span className="tnum">{pendingCount}</span> awaiting review</>}
-        {totalPending !== undefined && <> · <span className="tnum">{formatPrice(totalPending)}</span> total</>}
+        {pendingCount !== undefined && <> · <span className="tnum">{pendingCount}</span> waiting</>}
+        {totalPending !== undefined && <> · <span className="tnum">{formatPrice(totalPending)}</span> to approve</>}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Payouts.

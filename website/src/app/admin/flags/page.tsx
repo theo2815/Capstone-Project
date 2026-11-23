@@ -55,7 +55,7 @@ function Header({
         Flags
         {openCount !== null && hiddenCount !== null && (
           <>
-            {" "}· <span className="tnum">{openCount}</span> open ·{" "}
+            {" "}· <span className="tnum">{openCount}</span> waiting ·{" "}
             <span className="tnum">{hiddenCount}</span> hidden
           </>
         )}

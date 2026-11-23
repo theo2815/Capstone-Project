@@ -54,7 +54,7 @@ const STATUS_TONE: Record<string, AdminStatusPillTone> = { manual_review: "amber
 const FILTERS = [["manual_review", "Needs review"], ["auto_approved", "Auto-approved"], ["all", "All"]] as const;
 type FilterKey = (typeof FILTERS)[number][0];
 const FILTER_COUNT = { manual_review: "waiting", auto_approved: "auto-approved", all: "in all" } as const;
-const FILTER_EMPTY = { manual_review: "No seller details waiting.", auto_approved: "No auto-approved seller details.", all: "No seller details yet." } as const;
+const FILTER_EMPTY = { manual_review: "No seller details waiting. You're caught up.", auto_approved: "No auto-approved seller details.", all: "No seller details yet." } as const;
 const LINK_LIFETIME_MS = 5 * 60_000;
 const REASON_ID = "seller-reject-reason";
 const idLabel = (value: string) => SELLER_ID_TYPES.find((t) => t.value === value)?.label ?? value;

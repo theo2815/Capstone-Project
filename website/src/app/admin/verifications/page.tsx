@@ -29,9 +29,9 @@ function Header({ pendingCount, sellerDetailsCount }: { pendingCount: number | n
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
-        Verifications{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> waiting</>}
+        Verifications{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> profiles waiting</>}
         {sellerDetailsCount !== null && (
-          <> · Seller details · <span className="tnum">{sellerDetailsCount}</span> to review</>
+          <> · Seller details · <span className="tnum">{sellerDetailsCount}</span> waiting</>
         )}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">

@@ -214,7 +214,7 @@ export function AdminRail() {
             size="sm"
             tnum
           >
-            {queueTotal === null ? "Queues" : allClear ? "Queues · all clear" : `Queues · ${queueTotal} open`}
+            {queueTotal === null ? "Queues" : allClear ? "Queues · all clear" : `Queues · ${queueTotal} waiting`}
           </Kicker>
           <ul className="mt-2 space-y-1">
             {queueRoutes.map((route) => (

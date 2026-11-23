@@ -123,7 +123,7 @@ export function EventRequestsQueue() {
       ) : !rows ? null : rows.length === 0 ? (
         <div className="border border-dashed border-line rounded-2xl p-8 md:p-12 text-center">
           <p className="font-display text-2xl md:text-3xl font-medium tracking-tight text-ink">
-            Nothing waiting.
+            No event requests waiting. You&apos;re caught up.
           </p>
           <p className="font-sans text-base text-ink-soft mt-3 max-w-sm mx-auto">
             New photographer events and pricing change requests land here.

@@ -92,3 +92,12 @@ it("shows its guide intro, look-alike links and definitions without hover", () =
   render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
   expectSectionIntro(ROUTES.ADMIN_OVERVIEW);
 });
+
+it("the pending payouts tile says how many are waiting", () => {
+  useAuthStore.getState().setUser(admin);
+  kpis.value = { pendingPayouts: 2 };
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
+  expect(screen.getByText("payouts waiting")).toBeInTheDocument();
+});

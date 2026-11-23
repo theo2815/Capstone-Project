@@ -326,8 +326,8 @@ export function VerificationsQueue() {
         id="open-queue"
         number="01"
         title="Open queue"
-        caption="Awaiting review"
-        trailing={noList ? undefined : `${pending.length} pending`}
+        caption="Waiting for the ID check"
+        trailing={noList ? undefined : `${pending.length} waiting`}
       >
         {pending.length === 0 ? (
           !noList && <QueueEmpty />
@@ -367,13 +367,13 @@ export function VerificationsQueue() {
         id="incomplete"
         number="02"
         title="Incomplete"
-        caption="Settings still missing fields"
-        trailing={noList ? undefined : `${incomplete.length} stuck`}
+        caption="Still filling in their settings. Nothing to do here."
+        trailing={noList ? undefined : `${incomplete.length} not finished`}
         collapsed={incomplete.length === 0}
       >
         {incomplete.length === 0 ? (
           !noList && <p className="font-sans text-sm text-slate-soft">
-            No photographers stuck on incomplete settings right now.
+            No photographers are part-way through their settings.
           </p>
         ) : (
           <>
@@ -859,10 +859,7 @@ function CompletenessFraction({
 function QueueEmpty() {
   return (
     <div className="rounded-2xl border border-dashed border-line p-10 text-center">
-      <p className="font-display text-xl text-ink">Queue is clear.</p>
-      <p className="font-sans text-sm text-slate-soft mt-2">
-        Nice. Check back when a photographer submits for review.
-      </p>
+      <p className="font-display text-xl text-ink">No profiles waiting. You&apos;re caught up.</p>
     </div>
   );
 }

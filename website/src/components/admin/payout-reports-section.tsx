@@ -144,7 +144,9 @@ export function PayoutReportsSection() {
           </div>
         ) : reports.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">
-          No {PAYOUT_REPORT_STATUS_LABEL[status].toLowerCase()} reports.
+          {status === "open"
+            ? "No open reports. You're caught up."
+            : `No ${PAYOUT_REPORT_STATUS_LABEL[status].toLowerCase()} reports.`}
         </p>
       ) : (
         <>

@@ -153,3 +153,10 @@ it("shows its guide intro, look-alike links and definitions without hover", () =
   mount();
   expectSectionIntro(ROUTES.ADMIN_PHOTOGRAPHERS);
 });
+
+it("says so when no photographer is pending", async () => {
+  nav.search = new URLSearchParams("status=pending");
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([]));
+  mount();
+  expect(await screen.findByText("No photographers pending.")).toBeInTheDocument();
+});

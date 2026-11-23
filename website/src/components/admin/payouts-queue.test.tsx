@@ -477,7 +477,7 @@ it("a failed first load shows an alert, not tabs that read nothing to do", async
   failLists = 1; countsMissing = true;
   await mount();
   expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load payouts");
-  expect(screen.queryByText("No payouts pending review.")).not.toBeInTheDocument();
+  expect(screen.queryByText("No payouts waiting. You're caught up.")).not.toBeInTheDocument();
   // The tabs stay so the admin can switch, but none reads a number it does not know.
   expect(within(screen.getByRole("group", { name: "Payout status" })).getByRole("button", { name: "Pending review" })).toBeInTheDocument();
 });
@@ -618,4 +618,11 @@ it("the drawer's subtitle wraps a long handle in its own case, and its dates are
   for (const el of handles) expect(el.className).toMatch(/break-(words|all)/);
   notUpperCased(within(drawer).getAllByText(/Sep 10 · 2026/));
   expect(within(drawer).queryByText(/SEP 10 · 2026/)).toBeNull();
+});
+
+it("an empty Pending review tab says the admin is caught up", async () => {
+  rows = [];
+  await mount();
+  expect(await screen.findByText("No payouts waiting. You're caught up.")).toBeInTheDocument();
+  expect(screen.getByText("Waiting for a decision")).toBeInTheDocument();
 });

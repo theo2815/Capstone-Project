@@ -38,3 +38,7 @@ it("no sibling points at a gated-off page: with Flags off, nothing links to Flag
 it("the Runners tip stays under 72 characters (the palette ranking depends on it)", () => {
   expect(getAdminSectionGuideByHref(ROUTES.ADMIN_RUNNERS)!.body.length).toBeLessThan(72);
 });
+
+it("the Inbox line uses the one phrase for waiting", () => {
+  expect(getAdminSectionGuideByHref(ROUTES.ADMIN_INBOX)!.body).toBe("Everything waiting for an admin, one queue at a time.");
+});

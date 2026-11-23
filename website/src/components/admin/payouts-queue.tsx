@@ -617,7 +617,7 @@ const TAB_STATUSES = Object.fromEntries(PAYOUT_TABS.map((key) => [key,
 // approved + processing share a tab: both are "reviewed, payment in motion"; Closed keeps
 // failed and returned payouts visible next to rejected and cancelled ones.
 const PAYOUT_TAB_SLAB: Record<PayoutTab, { number: string; caption: string; empty: string }> = {
-  pending: { number: "01", caption: "Awaiting first decision", empty: "No payouts pending review." },
+  pending: { number: "01", caption: "Waiting for a decision", empty: "No payouts waiting. You're caught up." },
   "in-progress": { number: "02", caption: "Approved · payment in motion", empty: "No payouts in progress." },
   held: { number: "03", caption: "Paused with reason", empty: "No held payouts." },
   paid: { number: "04", caption: "Settled", empty: "No paid payouts yet." },

@@ -46,7 +46,7 @@ it("Photo removals shows its count, and Payouts adds the open reports", () => {
   expect(within(screen.getByRole("link", { name: /Photo removals/ })).getByLabelText("3 open")).toHaveTextContent("3");
   expect(within(screen.getByRole("link", { name: /Payouts/ })).getByLabelText("3 open")).toHaveTextContent("3");
   expect(within(screen.getByRole("link", { name: /Inbox/ })).getByLabelText("6 open")).toBeInTheDocument();
-  expect(screen.getByText("Queues · 6 open")).toBeInTheDocument();
+  expect(screen.getByText("Queues · 6 waiting")).toBeInTheDocument();
 });
 
 it("Photo Relevance counts the cases that need a person", () => {
@@ -108,7 +108,7 @@ it("the mobile strip opens with Search and the open total, then the queues, a di
   const { container } = render(<AdminMobileStrip />);
   const items = [...container.querySelectorAll("li")];
   expect(items[0]).toHaveTextContent("Search");
-  expect(items[1]).toHaveTextContent("2 open");
+  expect(items[1]).toHaveTextContent("2 waiting");
   const divider = items.findIndex((li) => li.getAttribute("data-divider") !== null);
   expect(items.slice(2, divider).map((li) => li.textContent?.replace(/\d+/g, "").trim()))
     .toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts", "Photo Relevance", "Photo removals"]);

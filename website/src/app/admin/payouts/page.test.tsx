@@ -34,7 +34,7 @@ afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); v
 it("reads awaiting review from the counts route, not from the newest 200 cycles", async () => {
   vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({ pending_review: 3, paid: 257 });
   mount();
-  await vi.waitFor(() => expect(header()).toHaveTextContent("3 awaiting review"));
+  await vi.waitFor(() => expect(header()).toHaveTextContent("3 waiting"));
 });
 
 it("shows the money total only when it sums every payout awaiting review", async () => {
@@ -42,14 +42,14 @@ it("shows the money total only when it sums every payout awaiting review", async
   vi.mocked(adminApi.fetchAdminPayouts).mockResolvedValue(pending(200));
   vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({ pending_review: 260 });
   const view = mount();
-  await vi.waitFor(() => expect(header()).toHaveTextContent("260 awaiting review"));
+  await vi.waitFor(() => expect(header()).toHaveTextContent("260 waiting"));
   // The read stops at 200 rows, so a sum would leave the 60 oldest out.
-  expect(header()).not.toHaveTextContent("total");
+  expect(header()).not.toHaveTextContent("to approve");
   view.unmount(); client.clear();
   vi.mocked(adminApi.fetchAdminPayouts).mockResolvedValue(pending(3));
   vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({ pending_review: 3 });
   mount();
-  await vi.waitFor(() => expect(header()).toHaveTextContent("₱300.00 total"));
+  await vi.waitFor(() => expect(header()).toHaveTextContent("₱300.00 to approve"));
 });
 
 it("shows no awaiting review count when the counts route is missing", async () => {
@@ -59,8 +59,8 @@ it("shows no awaiting review count when the counts route is missing", async () =
   mount();
   await vi.waitFor(() => expect(adminApi.fetchAdminPayoutCounts).toHaveBeenCalled());
   await new Promise((done) => setTimeout(done, 20));
-  expect(header()).not.toHaveTextContent(/awaiting review/);
-  expect(header()).toHaveTextContent("total");
+  expect(header()).not.toHaveTextContent(/\d waiting/);
+  expect(header()).toHaveTextContent("to approve");
 });
 
 it("shows its guide intro, look-alike links and definitions without hover", () => {
