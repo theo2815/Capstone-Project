@@ -53,11 +53,11 @@ export function buildLoginRedirect(currentUrl: string): string {
 //
 //   RUNNER        → /events       (browse races)
 //   PHOTOGRAPHER  → /dashboard    (workspace overview)
-//   ADMIN         → /admin/overview (KPI dashboard)
+//   ADMIN         → /admin/inbox  (today's work; Overview is a report)
 export function roleHome(role: Role): string {
   switch (role) {
     case "ADMIN":
-      return ROUTES.ADMIN_OVERVIEW;
+      return ROUTES.ADMIN_INBOX;
     case "PHOTOGRAPHER":
       return ROUTES.DASHBOARD;
     case "RUNNER":
