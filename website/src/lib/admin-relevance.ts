@@ -380,10 +380,11 @@ export const APPEAL_TEXT = {
 
 // RV-L7 part c: the photographer page's control for a withdrawn consent to automatic actions (legal 1.7).
 export const CONSENT_WITHDRAWAL_TEXT = {
-  title: "Automatic actions",
+  title: "Automatic photo checks",
+  caption: "Use this only when the photographer has emailed to withdraw consent.",
   notWithdrawn: "Consent to automatic hides and payout holds: not withdrawn.",
   record: "Record withdrawal",
-  recordConfirmButton: "Record",
+  recordConfirmButton: "Record withdrawal",
   recordTitle: "Record that this photographer withdrew consent?",
   recordConfirm: 'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are.',
   recording: "Recording…",
@@ -392,7 +393,7 @@ export const CONSENT_WITHDRAWAL_TEXT = {
   withdrawnOn: "Consent withdrawn on",
   withdrawnAfter: "Automatic hides and payout holds are off for this photographer; admins review each case.",
   clear: "Clear withdrawal",
-  clearConfirmButton: "Clear",
+  clearConfirmButton: "Clear withdrawal",
   clearTitle: "Clear the withdrawal?",
   clearConfirm: "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms.",
   clearing: "Clearing…",

@@ -34,7 +34,7 @@ export const RUNNER_SUSPEND_REASONS: ReadonlyArray<{ value: string; label: strin
 const SUSPEND_REASONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "watermark_violation", label: "Watermark or branding violates policy" },
   { value: "fraud_suspected", label: "Suspected fraudulent uploads" },
-  { value: "chargeback_pattern", label: "Chargeback pattern flagged by payments" },
+  { value: "chargeback_pattern", label: "Many payment disputes from buyers" },
   { value: "complaint_volume", label: "Multiple unresolved runner complaints" },
   { value: "compliance_review", label: "Compliance review requested" },
   { value: "other", label: "Other (see note)" },
@@ -86,7 +86,7 @@ export function AdminSuspendModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Suspend account"
-      intro={intro ?? `${photographerName} will be hidden from public listings and unable to upload until you unsuspend. The reason is logged.`}
+      intro={intro ?? `${photographerName} is signed out shortly and cannot sign in until you unsuspend. Their photos come off sale and their public page stops opening; photos already bought can still be downloaded. Payouts are not stopped: hold those on the Payouts page. They are not emailed and cannot sign in to read the reason, so tell them yourself if they should know.`}
       submitLabel="Suspend"
       submitDisabled={!selectedReason}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
@@ -106,7 +106,7 @@ export function AdminSuspendModal({
         value={note}
         onChange={setNote}
         maxLength={280}
-        placeholder="What context should the next reviewer see?"
+        placeholder="Add detail. They can read this once they are unsuspended."
       />
     </AdminFormModal>
   );

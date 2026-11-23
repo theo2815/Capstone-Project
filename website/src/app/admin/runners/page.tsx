@@ -43,13 +43,13 @@ export default function AdminRunnersPage() {
     const ok = await suspend(row.userId, reason);
     if (ok) {
       close();
-      showToast({ kind: "success", message: `Suspended · ${row.name}` });
+      showToast({ kind: "success", message: `${row.name} is suspended. They were not emailed.` });
     }
     return ok;
   }
 
   async function handleUnsuspend(row: AdminUserRow) {
-    if (await unsuspend(row.userId)) showToast({ kind: "success", message: `Unsuspended · ${row.name}` });
+    if (await unsuspend(row.userId)) showToast({ kind: "success", message: `${row.name} can sign in again. They are told in their inbox.` });
   }
 
   async function handleMessage(payload: { subject: string; body: string }) {
@@ -179,7 +179,7 @@ export default function AdminRunnersPage() {
           onSubmit={handleSuspend}
           photographerName={suspendRow.name}
           reasons={RUNNER_SUSPEND_REASONS}
-          intro={`${suspendRow.name} will be signed out and unable to sign in until you unsuspend. They get a message with the reason, and the reason is logged.`}
+          intro={`${suspendRow.name} is signed out shortly and cannot sign in until you unsuspend. The reason is saved for them, but they cannot sign in to read it and QuickPitik does not email them, so tell them yourself if they should know.`}
         />
       )}
       {messageRow && (
@@ -191,6 +191,8 @@ export default function AdminRunnersPage() {
           onClose={close}
           onSubmit={handleMessage}
           photographerName={messageRow.name}
+          subjectPlaceholder="About your refund request"
+          bodyPlaceholder="Hi, this is QuickPitik support."
         />
       )}
     </>

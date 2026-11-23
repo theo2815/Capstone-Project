@@ -101,6 +101,17 @@ it.each([
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(post).toHaveBeenLastCalledWith(`/admin/users/${adminUser.userId}/${endpoint}`, { reason: expect.stringContaining("Keep this reason"), ...(endpoint === "suspend" ? {} : { expectedRevision: 7 }) });
 });
+it("the photographer Suspend dialog says nobody is emailed and payouts are not stopped (FT-12)", async () => {
+  const post = vi.spyOn(api, "post").mockResolvedValue(adminUser); const user = userEvent.setup(); mount();
+  await user.click(screen.getByRole("button", { name: "Suspend…" })); const dialog = screen.getByRole("dialog", { name: "Suspend account" });
+  expect(dialog).toHaveTextContent(`${adminUser.brandName ?? adminUser.name} is signed out shortly and cannot sign in until you unsuspend. Their photos come off sale and their public page stops opening; photos already bought can still be downloaded. Payouts are not stopped: hold those on the Payouts page. They are not emailed and cannot sign in to read the reason, so tell them yourself if they should know.`);
+  expect(within(dialog).getByLabelText("Many payment disputes from buyers")).toBeInTheDocument();
+  expect(within(dialog).getByPlaceholderText("Add detail. They can read this once they are unsuspended.")).toBeInTheDocument();
+  await user.click(within(dialog).getByLabelText("Compliance review requested"));
+  await user.click(within(dialog).getByRole("button", { name: "Suspend" }));
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: `${adminUser.brandName ?? adminUser.name} is suspended. They were not emailed.` }));
+});
 it("awaits unsuspension and locks the action cluster", async () => {
   rows = [{ ...adminUser, suspendedAt: "2026-09-10T00:00:00Z" }];
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValue(request.promise); mount();
@@ -109,7 +120,7 @@ it("awaits unsuspension and locks the action cluster", async () => {
   expect(screen.getAllByRole("button").every((button) => button.hasAttribute("disabled"))).toBe(true);
   expect(post).toHaveBeenCalledTimes(1); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => request.resolve(adminUser));
-  expect(useToastStore.getState().toasts[0].kind).toBe("success");
+  expect(useToastStore.getState().toasts[0]).toMatchObject({ kind: "success", message: `${adminUser.brandName ?? adminUser.name} can sign in again. They are told in their inbox.` });
 });
 it("preserves a deep-linked verification through loading, failure, and retry", async () => {
   navigation.search = `row=${adminUser.userId}`; client.setQueryData(key, []);
