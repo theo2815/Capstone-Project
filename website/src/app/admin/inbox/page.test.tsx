@@ -114,3 +114,9 @@ it("when the URL gains ?type=disputes, the Verifications queue is never mounted 
   expect(screen.getByText("queue:disputes")).toBeTruthy();
   expect(mounts.verifications).toBe(0);
 });
+
+it("the heading is the rail label", async () => {
+  settle({});
+  await renderPage();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Inbox.");
+});

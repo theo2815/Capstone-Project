@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
@@ -22,13 +22,13 @@ function mount(kpis: object, users: Promise<unknown>) {
 
 it("the header counts both queues once they load", async () => {
   const header = mount({ pendingVerifications: 1, pendingSellerDetails: 3 }, Promise.resolve({ items: [adminUser], total: 1 }));
-  await waitFor(() => expect(header).toHaveTextContent("Profiles · 1 waiting · Seller details · 3 to review"));
+  await waitFor(() => expect(header).toHaveTextContent("Verifications · 1 waiting · Seller details · 3 to review"));
 });
 
 it("an older backend without the seller-details count, or a failed list, never shows a 0", async () => {
   const header = mount({ pendingVerifications: 1 }, Promise.reject(new Error("Unavailable")));
   await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining("/admin/kpis"), expect.anything()));
   await new Promise((r) => setTimeout(r, 50));
-  expect(header).toHaveTextContent("Profiles");
+  expect(within(header).getByText("Verifications", { selector: "p" })).toBeInTheDocument();
   expect(header).not.toHaveTextContent(/\d/);
 });

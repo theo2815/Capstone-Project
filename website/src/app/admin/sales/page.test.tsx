@@ -71,3 +71,8 @@ it("reads the cut and the trend length from their values, not fixed copy", () =>
   expect(screen.getByText("25% of every sale")).toBeInTheDocument();
   expect(screen.getByText(/photos sold to date/)).toHaveTextContent("the last 12 weeks");
 });
+
+it("the heading is the rail label", () => {
+  render(<AdminSalesPage />);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Sales.");
+});
