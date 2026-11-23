@@ -42,7 +42,7 @@ export function usePayoutActions() {
     const settle = async (
       label: string,
       operation: () => Promise<AdminPayoutCycle | BulkPayoutResult>,
-      onPartialFailure?: (failedIds: string[]) => void,
+      onPartialFailure?: (failedIds: string[], failed: BulkPayoutResult["results"]) => void,
     ): Promise<boolean> => {
       const session = useAuthStore.getState();
       if (!session.isAuthenticated || session.user?.role !== "ADMIN") return false;
@@ -97,7 +97,8 @@ export function usePayoutActions() {
         if (failed) {
           // Selection is UI state. Let the caller retain only retryable IDs,
           // including first-approval successes that still look pending.
-          onPartialFailure?.(result.results.filter((row) => !row.ok).map((row) => row.id));
+          const failedRows = result.results.filter((row) => !row.ok);
+          onPartialFailure?.(failedRows.map((row) => row.id), failedRows);
           useToastStore.getState().showToast({
             kind: "error", message: `${label}: ${ok} succeeded, ${failed} failed.`,
           });
@@ -106,7 +107,7 @@ export function usePayoutActions() {
       }
       return true;
     };
-    const run = async (ids: string[], action: string, label: string, operation: () => Promise<AdminPayoutCycle | BulkPayoutResult>, onPartialFailure?: (ids: string[]) => void) => {
+    const run = async (ids: string[], action: string, label: string, operation: () => Promise<AdminPayoutCycle | BulkPayoutResult>, onPartialFailure?: (ids: string[], failed: BulkPayoutResult["results"]) => void) => {
       const result = await mutation.run({ targets: ids.map((id) => ({ kind: "payout", id })), action, execute: () => settle(label, operation, onPartialFailure) });
       return result.kind === "completed" && result.value;
     };
@@ -138,7 +139,7 @@ export function usePayoutActions() {
       markProcessing: (id: string) => run([id], "Processing…", "mark payout processing", () => markPayoutProcessing(id)),
       markFailed: (id: string, reason: string) => run([id], "Marking failed…", "mark payout failed", () => markPayoutFailed(id, reason)),
       markReturned: (id: string, reason: string) => run([id], "Marking returned…", "mark payout returned", () => markPayoutReturned(id, reason)),
-      bulkApprove: (ids: string[], onPartialFailure?: (failedIds: string[]) => void) =>
+      bulkApprove: (ids: string[], onPartialFailure?: (failedIds: string[], failed: BulkPayoutResult["results"]) => void) =>
         ids.length ? run(ids, "Approving…", "Approve payouts", () => bulk(ids, "approve"), onPartialFailure) : Promise.resolve(true),
       bulkHold: (ids: string[], reason: string, onPartialFailure?: (failedIds: string[]) => void) =>
         ids.length ? run(ids, "Holding…", "Hold payouts", () => bulk(ids, "hold", reason), onPartialFailure) : Promise.resolve(true),

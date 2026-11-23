@@ -55,11 +55,11 @@ export function AdminPayoutMarkPaidModal({
       title={`Mark paid · ${cycle.id}`}
       intro={
         <>
-          Confirms{" "}
+          Only mark paid after{" "}
           <span className="text-ink tnum">{formatPrice(cycle.amount)}</span>{" "}
-          sent via {payoutMethodLabel(cycle.method)}. The reference is logged
-          on the photographer&apos;s billing page so they can match it against
-          their bank/wallet record.
+          has left your account by {payoutMethodLabel(cycle.method)}. The
+          photographer is told at once, with this reference. After this, the
+          only change you can make is to mark the payout returned.
         </>
       }
       submitLabel="Mark paid"
@@ -75,11 +75,7 @@ export function AdminPayoutMarkPaidModal({
         placeholder="e.g. GC-77B221"
         autoFocus
         inputClassName="tnum"
-        hint={
-          reference.length > 0 && !valid
-            ? "Reference must be at least 4 characters."
-            : undefined
-        }
+        hint="At least 4 characters."
       />
     </AdminFormModal>
   );

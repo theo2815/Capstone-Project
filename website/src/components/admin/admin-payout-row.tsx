@@ -40,8 +40,8 @@ export function payoutStatusTone(status: AdminPayoutStatus): AdminStatusPillTone
   switch (status) {
     case "pending_review":
       return "amber";
+    // FT-16 (C-25): no status is fresh; green would read as finished on a tab of approved rows.
     case "approved":
-      return "fresh";
     case "processing":
     case "held":
       return "ink";
@@ -49,7 +49,7 @@ export function payoutStatusTone(status: AdminPayoutStatus): AdminStatusPillTone
       return "slate";
     case "failed":
     case "returned":
-      return "amber";
+      return "error";
     case "rejected":
     case "cancelled":
       return "muted";

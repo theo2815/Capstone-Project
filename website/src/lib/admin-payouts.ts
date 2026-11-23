@@ -86,8 +86,8 @@ export function payoutActionsBlockedByHold(cycle: Pick<AdminPayoutCycle, "releva
   return cycle.relevanceHold;
 }
 
-export const PAYOUT_HOLD_REASON = "Payouts on hold: open relevance flag";
-export const PAYOUT_UNCONFIRMED_FLAG_NOTE = "Open relevance flag, not yet confirmed";
+export const PAYOUT_HOLD_REASON = "Payouts paused: a photo check on this photographer is still open";
+export const PAYOUT_UNCONFIRMED_FLAG_NOTE = "A photo check on this photographer is open, not yet confirmed";
 
 export const ADMIN_PAYOUT_STATUS_LABEL: Record<AdminPayoutStatus, string> = {
   pending_review: "Pending review",

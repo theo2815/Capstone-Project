@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { payoutCycle } from "@/test/fixtures/admin";
-import { AdminPayoutRow } from "./admin-payout-row";
+import { AdminPayoutRow, payoutStatusTone } from "./admin-payout-row";
 
 afterEach(cleanup);
 
@@ -32,4 +32,14 @@ it("the checkbox and an inline action do not open the row, by click or Enter", a
   expect(props.onToggleSelect).toHaveBeenCalledTimes(1);
   expect(props.onApprove).toHaveBeenCalledTimes(1);
   expect(props.onActivate).not.toHaveBeenCalled();
+});
+
+// FT-16 (C-25): green would read as finished, so no status is fresh; failed and returned are errors.
+it("status tones: Approved is ink, Failed and Returned are error, Paid stays slate", () => {
+  expect(payoutStatusTone("approved")).toBe("ink");
+  expect(payoutStatusTone("failed")).toBe("error");
+  expect(payoutStatusTone("returned")).toBe("error");
+  expect(payoutStatusTone("paid")).toBe("slate");
+  const all = ["pending_review", "approved", "processing", "held", "paid", "failed", "returned", "rejected", "cancelled"] as const;
+  expect(all.map(payoutStatusTone)).not.toContain("fresh");
 });
