@@ -133,10 +133,11 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
       title: "Authorize removal?",
       message: (
         <div className="space-y-3">
-          <p>The selected photos come off sale, search and buyer downloads, and their files are queued for erasure. Buyers keep their receipts and refund access.</p>
+          <p>The selected photos come off sale, search and buyer downloads, and their files are deleted, usually within a few minutes. This cannot be undone. Buyers keep their receipts and refund access.</p>
           <ul className="font-mono tnum text-sm space-y-1">
             {chosen.filter((entry) => entry.decision === "REMOVE").map(({ item }) => <li key={item.id}>{item.photoIdSnapshot}</li>)}
           </ul>
+          <p>Told automatically: the photographer, a runner who filed this request, and buyers who have an account. Not told: guest buyers, and anyone whose request came through support. Contact those yourself.</p>
           <p className="text-sm">Check each photo first: the face count can miss people in the background.</p>
         </div>
       ),

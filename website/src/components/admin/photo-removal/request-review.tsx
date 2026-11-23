@@ -147,6 +147,7 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
   const [method, setMethod] = useState("");
   const [note, setNote] = useState("");
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [askVerify, setAskVerify] = useState(false);
   const [preview, setPreview] = useState<{ items: RemovalPhotoDto[]; index: number } | null>(null);
   // RM7: a manual note is marked invalid only once the admin has left it.
   const [touchedNotes, setTouchedNotes] = useState(new Set<string>());
@@ -328,9 +329,17 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
           <AdminTextarea id="removal-note" label="Verification note" maxLength={2000} value={note} disabled={busy} onChange={setNote} />
           {selected.length > 100 && <p className="text-sm text-warning-text">Select at most <span className="tnum">100</span> photos per verification.</p>}
           <FieldError message={verifyError} id="removal-verify-error" />
-          <button type="button" disabled={!canVerify} onClick={() => void verify()} className={cn(BTN_PRIMARY, BTN_SIZE.md)}>
+          <button type="button" disabled={!canVerify} onClick={() => setAskVerify(true)} className={cn(BTN_PRIMARY, BTN_SIZE.md)}>
             {actions.verify.isPending ? "Verifying…" : `Verify ${plural(selected.length, "photo")}`}
           </button>
+          {/* C-73: verifying hides the photos and asks their owners at once, so it asks first; errors show above the button. */}
+          <AdminConfirmModal open={askVerify} onClose={() => setAskVerify(false)}
+            onConfirm={() => { setAskVerify(false); void verify(); }}
+            title="Hide these photos and ask for a review?" confirmLabel="Hide and ask for review" confirmDisabled={!canVerify}>
+            <p className="font-sans text-sm text-ink-soft">
+              <span className="tnum">{plural(selected.length, "photo")}</span> {selected.length === 1 ? "is" : "are"} hidden from sale and search right away. Each photographer who owns one gets a review request in their inbox and by email, with a deadline to answer. You can put a photo back later with Retain.
+            </p>
+          </AdminConfirmModal>
         </section>
       )}
 

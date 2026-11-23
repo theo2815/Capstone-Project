@@ -35,16 +35,18 @@ export function AdminFlagHideModal({
   onSubmit,
   flagId,
 }: AdminFlagHideModalProps) {
-  const [selectedReason, setSelectedReason] = useState<string>(
-    HIDE_REASONS[0]!.value,
-  );
+  // C-67 (as AX-28 did for the other reason dialogs): no reason starts picked, so a quick Enter never hides with one.
+  const [selectedReason, setSelectedReason] = useState("");
   const [note, setNote] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const noteMissing = selectedReason === "other" && note.trim().length === 0;
 
   useEffect(() => {
-    if (!open) { setNote(""); setSelectedReason(HIDE_REASONS[0]!.value); }
+    if (!open) { setNote(""); setSelectedReason(""); setAttempted(false); }
   }, [open]);
 
   function handleSubmit() {
+    if (noteMissing) { setAttempted(true); return; }
     const label =
       HIDE_REASONS.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
@@ -63,8 +65,9 @@ export function AdminFlagHideModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title={`Hide ${flagId}`}
-      intro="The photo will be hidden from runner-facing search and gallery views. The photographer is notified with the reason and can appeal via support."
+      intro="The photo is hidden from search and galleries. Nobody is told automatically: the reason is saved on the flag for admins. To tell the photographer, send them a message from their page."
       submitLabel="Hide photo"
+      submitDisabled={!selectedReason}
     >
       <AdminFormSection label="Reason">
         <AdminRadioGroup
@@ -76,11 +79,12 @@ export function AdminFlagHideModal({
       </AdminFormSection>
       <AdminTextarea
         id="hide-note"
-        label="Note (optional, max 280)"
+        label={selectedReason === "other" ? "Note (required, max 280)" : "Note (optional, max 280)"}
+        error={attempted && noteMissing ? "Add a note: Other needs one." : null}
         value={note}
         onChange={setNote}
         maxLength={280}
-        placeholder="What context should the photographer see?"
+        placeholder="Anything another admin should know"
       />
     </AdminFormModal>
   );

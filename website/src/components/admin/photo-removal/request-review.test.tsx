@@ -45,6 +45,8 @@ function renderReview() {
 }
 const selectedPhotoIds = () => (screen.queryAllByRole("checkbox") as HTMLInputElement[]).filter((box) => box.checked).map((box) => box.value);
 const confirmation = () => screen.getByRole("region", { name: "Confirm verification" });
+const confirmVerify = async (user: ReturnType<typeof userEvent.setup>) =>
+  user.click(within(await screen.findByRole("dialog", { name: "Hide these photos and ask for a review?" })).getByRole("button", { name: "Hide and ask for review" }));
 const ownerSections = () => within(confirmation()).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent);
 
 async function runMatch(user: ReturnType<typeof userEvent.setup>) {
@@ -84,6 +86,11 @@ it("falsePositiveCanBeExcluded", async () => {
   await user.click(screen.getByRole("checkbox", { name: /photo-fp/ }));
   await fillVerification(user);
   await user.click(screen.getByRole("button", { name: "Verify 1 photo" }));
+  // FT-11 (C-73): the button asks first; only the confirm hides the photos.
+  const ask = await screen.findByRole("dialog", { name: "Hide these photos and ask for a review?" });
+  expect(within(ask).getByText((_, el) => el?.tagName === "P").textContent).toBe("1 photo is hidden from sale and search right away. Each photographer who owns one gets a review request in their inbox and by email, with a deadline to answer. You can put a photo back later with Retain.");
+  expect(removalApi.verifyRemovalRequest).not.toHaveBeenCalled();
+  await user.click(within(ask).getByRole("button", { name: "Hide and ask for review" }));
   await waitFor(() => expect(removalApi.verifyRemovalRequest).toHaveBeenCalledTimes(1));
   const verifyBody = vi.mocked(removalApi.verifyRemovalRequest).mock.calls[0][1];
   expect(verifyBody.selectedPhotos.map((p) => p.photoId)).not.toContain(falsePositive.photo.id);
@@ -164,6 +171,7 @@ it("warns about unassigned owners and requires a note for manual additions", asy
   expect(verify).toBeDisabled();
   await user.type(within(confirmation()).getByLabelText(/Note for photo 1/), "Runner pointed to this frame");
   await user.click(verify);
+  await confirmVerify(user);
   await waitFor(() => expect(removalApi.verifyRemovalRequest).toHaveBeenCalledTimes(1));
   expect(vi.mocked(removalApi.verifyRemovalRequest).mock.calls[0][1].selectedPhotos)
     .toEqual([{ photoId: "photo-orphan", source: "MANUAL", note: "Runner pointed to this frame" }]);
@@ -180,11 +188,13 @@ it("keeps the selection after a failed verify, blocks duplicates and retries the
   await user.click(screen.getByRole("checkbox", { name: /photo-a/ }));
   await fillVerification(user);
   await user.click(screen.getByRole("button", { name: "Verify 1 photo" }));
+  await confirmVerify(user);
   expect(screen.getByRole("button", { name: "Verifying…" })).toBeDisabled();
   await act(async () => { fail(new Error("Gateway timeout")); });
   expect(await screen.findByText("Gateway timeout")).toBeInTheDocument();
   expect(selectedPhotoIds()).toEqual(["photo-a"]);
   await user.click(screen.getByRole("button", { name: "Verify 1 photo" }));
+  await confirmVerify(user);
   await waitFor(() => expect(removalApi.verifyRemovalRequest).toHaveBeenCalledTimes(2));
   const [first, second] = vi.mocked(removalApi.verifyRemovalRequest).mock.calls.map((call) => call[1]);
   expect(second.commandId).toBe(first.commandId);

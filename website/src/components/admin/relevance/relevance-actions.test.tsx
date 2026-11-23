@@ -480,7 +480,7 @@ it("a no-consent Copied case offers Hold payouts until a hold was placed", async
   await user.click(within(d).getByRole("button", { name: "Hold payouts" }));
   expect(api.post).not.toHaveBeenCalled();
   // Before a hide there is nothing to appeal (RelevanceAppealService.file needs a hiding case): only End hold lifts it then.
-  expect(screen.getByText("Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, a won appeal lifts it too. Works only while the relevance mode is auto-hide.")).toBeInTheDocument();
+  expect(screen.getByText("Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, an accepted appeal lifts it too. Works only while the relevance mode is auto-hide.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm hold payouts" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/hold-payouts");
   // The server has not answered: the action is still offered and nothing was said.
