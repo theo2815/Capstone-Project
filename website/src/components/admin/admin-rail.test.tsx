@@ -1,6 +1,7 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AdminKpis } from "@/lib/api-admin";
+import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { AdminRail } from "./admin-rail";
 import { AdminMobileStrip } from "./admin-mobile-strip";
 
@@ -15,7 +16,10 @@ const base: AdminKpis = {
   decisionsThisWeek: 0, openDisputes: 0, openFlags: 0, pendingPayouts: 0, pendingEventRequests: 0,
 };
 
-afterEach(() => { cleanup(); path.value = "/admin/relevance"; kpis.value = null; });
+afterEach(() => {
+  cleanup(); path.value = "/admin/relevance"; kpis.value = null;
+  useAdminPaletteStore.setState({ open: false });
+});
 
 const rowNames = () => screen.getAllByRole("link").map((l) => l.textContent?.replace(/\d+/g, "").trim());
 
@@ -58,13 +62,55 @@ it("an old backend without the new fields shows no badges and no crash", () => {
   expect(screen.getByText("Queues · all clear")).toBeInTheDocument();
 });
 
-it("the mobile strip opens with the open total, then the queues, a divider, then the rest", () => {
+it("the rail's Search button opens the palette, with the shortcut key printed on it", () => {
+  render(<AdminRail />);
+  const search = screen.getByRole("button", { name: "Search the admin" });
+  expect(search).toHaveTextContent("Search");
+  expect(search).toHaveTextContent(/(Ctrl|⌘) K/);
+  fireEvent.click(search);
+  expect(useAdminPaletteStore.getState().open).toBe(true);
+});
+
+it("the rail footer sits outside the scrolling list, so it stays in view", () => {
+  render(<AdminRail />);
+  const nav = screen.getByRole("navigation", { name: "Admin sections" });
+  const aside = nav.parentElement!;
+  expect(aside.tagName).toBe("ASIDE");
+  expect(nav.className).toContain("md:overflow-y-auto");
+  expect(aside.className).not.toContain("md:overflow-y-auto");
+  for (const name of ["Search the admin", "Keyboard shortcuts (press ?)", "Hide tips"]) {
+    const control = screen.getByRole("button", { name });
+    expect(nav.contains(control)).toBe(false);
+    expect(aside.contains(control)).toBe(true);
+  }
+});
+
+it("the shortcuts pill says Shortcuts and keeps its ? key", () => {
+  render(<AdminRail />);
+  const pill = screen.getByRole("button", { name: "Keyboard shortcuts (press ?)" });
+  expect(pill).toHaveTextContent("Shortcuts");
+  expect(pill).toHaveTextContent("?");
+  expect(pill).not.toHaveTextContent("⌨");
+});
+
+it("the mobile strip starts with a Search button that opens the palette", () => {
+  kpis.value = { ...base, openDisputes: 2 };
+  const { container } = render(<AdminMobileStrip />);
+  const first = container.querySelector("li")!;
+  const search = within(first).getByRole("button", { name: "Search" });
+  expect(search.className).toContain("min-h-[44px]");
+  fireEvent.click(search);
+  expect(useAdminPaletteStore.getState().open).toBe(true);
+});
+
+it("the mobile strip opens with Search and the open total, then the queues, a divider, then the rest", () => {
   kpis.value = { ...base, openDisputes: 2 };
   const { container } = render(<AdminMobileStrip />);
   const items = [...container.querySelectorAll("li")];
-  expect(items[0]).toHaveTextContent("2 open");
+  expect(items[0]).toHaveTextContent("Search");
+  expect(items[1]).toHaveTextContent("2 open");
   const divider = items.findIndex((li) => li.getAttribute("data-divider") !== null);
-  expect(items.slice(1, divider).map((li) => li.textContent?.replace(/\d+/g, "").trim()))
+  expect(items.slice(2, divider).map((li) => li.textContent?.replace(/\d+/g, "").trim()))
     .toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts", "Photo Relevance", "Photo removals"]);
   expect(items[divider + 1]).toHaveTextContent("Events");
   for (const link of screen.getAllByRole("link")) expect(link.className).toContain("min-h-[44px]");

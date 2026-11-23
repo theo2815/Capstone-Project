@@ -15,11 +15,8 @@ export function KeyboardHintPill() {
       aria-label="Keyboard shortcuts (press ?)"
       className="hidden md:inline-flex items-center gap-2 rounded-full border border-line bg-bone hover:border-ink transition-colors px-3 py-1.5 group"
     >
-      <span
-        aria-hidden="true"
-        className="font-mono text-[14px] text-slate group-hover:text-ink transition-colors"
-      >
-        ⌨
+      <span className="font-mono text-[14px] text-slate group-hover:text-ink transition-colors">
+        Shortcuts
       </span>
       <kbd className="font-mono text-[12px] text-ink rounded border border-line bg-bone-deep px-1.5 py-0.5">
         ?
