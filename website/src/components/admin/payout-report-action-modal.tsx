@@ -34,7 +34,7 @@ const COPY: Record<
         ? `Reply lands in @${handle}'s inbox. Use this to confirm the report was received and what you're investigating next.`
         : "Reply lands in the photographer's inbox. Use this to confirm the report was received and what you're investigating next.",
     label: "Reply (sent to photographer)",
-    placeholder: "We're verifying with the bank — will resolve within 24h.",
+    placeholder: "What you are checking, and when you will write again",
     submit: "Send acknowledgement",
     minLength: 10,
   },
@@ -42,10 +42,10 @@ const COPY: Record<
     title: (id) => `Resolve · ${id}`,
     intro: (handle) =>
       handle
-        ? `Closes the report and notifies @${handle}. Note should explain what happened and how it was fixed (e.g. transfer reference).`
-        : "Closes the report and notifies the photographer. Note should explain what happened and how it was fixed (e.g. transfer reference).",
+        ? `Closes the report and sends your note to @${handle}. Say what happened and how it was fixed, with the transfer reference. This is final: a resolved report cannot be reopened.`
+        : "Closes the report and sends your note to the photographer. Say what happened and how it was fixed, with the transfer reference. This is final: a resolved report cannot be reopened.",
     label: "Resolution note (sent to photographer)",
-    placeholder: "GCash retry succeeded · ref MY-32C887R · funds posted today.",
+    placeholder: "What happened and how it was fixed, with the transfer reference",
     submit: "Resolve report",
     minLength: 10,
   },
@@ -90,15 +90,21 @@ export function PayoutReportActionModal({
       submitLabel={config.submit}
       submitDisabled={!valid}
     >
-      <AdminTextarea
-        id={`report-action-${mode}-note`}
-        label={config.label}
-        value={note}
-        onChange={setNote}
-        maxLength={500}
-        placeholder={config.placeholder}
-        rows={5}
-      />
+      <section className="space-y-2">
+        <AdminTextarea
+          id={`report-action-${mode}-note`}
+          label={config.label}
+          value={note}
+          onChange={setNote}
+          maxLength={500}
+          placeholder={config.placeholder}
+          rows={5}
+          describedBy={`report-action-${mode}-note-hint`}
+        />
+        <p id={`report-action-${mode}-note-hint`} className="font-sans text-sm text-slate-soft">
+          At least 10 characters.
+        </p>
+      </section>
     </AdminFormModal>
   );
 }

@@ -99,7 +99,7 @@ export function PayoutReportsSection() {
     setReportRowId("");
     showToast({
       kind: "success",
-      message: `Acknowledged · ${openReport.id}`,
+      message: "Reply sent. The report is now under Acknowledged.",
     });
   }
 
@@ -111,7 +111,7 @@ export function PayoutReportsSection() {
     setReportRowId("");
     showToast({
       kind: "success",
-      message: `Resolved · ${openReport.id}`,
+      message: "Report resolved. The photographer was sent your note.",
     });
   }
 
@@ -133,6 +133,9 @@ export function PayoutReportsSection() {
         value={status}
         onChange={setStatus}
       />
+      <p className="font-sans text-sm text-slate-soft mt-3">
+        Open: not answered yet. Acknowledged: you replied and are still working on it. Resolved: closed.
+      </p>
       <div className="mt-6">
       {list.isLoading ? <p role="status">Loading reports…</p> :
         list.error && reports.length === 0 ? (
