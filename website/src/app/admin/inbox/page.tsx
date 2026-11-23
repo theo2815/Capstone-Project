@@ -1,7 +1,15 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { ADMIN_QUEUES, useAdminQueueCounts, type AdminQueueKey } from "@/lib/admin-queues";
+import { useEffect, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  ADMIN_QUEUES,
+  useAdminAttentionTarget,
+  useAdminQueueCounts,
+  type AdminQueueKey,
+} from "@/lib/admin-queues";
+import { useAdminKpisQuery } from "@/hooks/use-admin-data";
+import { ROUTES } from "@/lib/constants";
 
 import { AdminKpiStrip } from "@/components/admin/admin-kpi-strip";
 import { AdminInboxFilterChips } from "@/components/admin/admin-inbox-filter-chips";
@@ -17,7 +25,7 @@ import { SellerDetailsQueue } from "@/components/admin/seller-details-queue";
 import { RemovalRequestList } from "@/components/admin/photo-removal/request-list";
 import { RelevanceCases } from "@/components/admin/relevance/relevance-cases";
 import { Kicker } from "@/components/ui/kicker";
-import { useUrlState } from "@/hooks/use-url-state";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // One body per queue (a new ADMIN_QUEUES key fails to compile until it has one);
 // each list reads its own URL params as on its full page.
@@ -34,28 +42,43 @@ const CONTENT: Record<AdminQueueKey, ReactNode> = {
 };
 
 // Phase 2 admin redesign — daily landing with chip-driven queue switch.
-// Default is verifications (fixed); ?type=<inboxType> swaps
-// the body without unmounting the KPI strip or header, so deep links work.
+// With no ?type, the Inbox waits for the KPI counts, then writes the first
+// queue with work into the URL (Verifications when nothing waits or the
+// counts failed); once ?type is in the URL a later count change never moves
+// the admin. ?type=<inboxType> swaps the body without unmounting the KPI
+// strip or header, so deep links work.
 //
 // /admin redirects here. The dedicated pages (/admin/disputes etc.)
 // still exist as focus-mode entries reachable from the rail and render
 // the same lifted queue body under their own header.
 
+const VERIFICATIONS = ADMIN_QUEUES.find((q) => q.key === "verifications")!;
+
 export default function AdminInboxPage() {
-  const [activeRaw] = useUrlState<string>("type", "verifications");
+  // Read straight from the URL (not useUrlState, whose copy lags one render) so the
+  // queue written by the replace below mounts first, with no Verifications flash.
+  const typeRaw = useSearchParams().get("type");
+  const typeInUrl = typeRaw !== null;
   // ADMIN_QUEUES carries the Flags gate, so a gated-off or unknown type falls back to verifications.
-  const active =
-    ADMIN_QUEUES.find((q) => q.inboxType === activeRaw) ??
-    ADMIN_QUEUES.find((q) => q.key === "verifications")!;
+  const active = ADMIN_QUEUES.find((q) => q.inboxType === typeRaw) ?? VERIFICATIONS;
   // The same total as the rail's "Queues · N open", so the two never disagree.
   const pendingCount = useAdminQueueCounts().total;
+  const router = useRouter();
+  const { isPending: kpisPending } = useAdminKpisQuery();
+  const attention = useAdminAttentionTarget();
+
+  useEffect(() => {
+    if (typeInUrl || kpisPending) return;
+    const first = ADMIN_QUEUES.find((q) => q.key === attention?.key) ?? VERIFICATIONS;
+    router.replace(`${ROUTES.ADMIN_INBOX}?type=${first.inboxType}`, { scroll: false });
+  }, [typeInUrl, kpisPending, attention?.key, router]);
 
   return (
     <>
       <Header pendingCount={pendingCount} />
       <AdminKpiStrip />
-      <AdminInboxFilterChips value={active.inboxType} />
-      {CONTENT[active.key]}
+      <AdminInboxFilterChips value={typeInUrl ? active.inboxType : ""} />
+      {typeInUrl ? CONTENT[active.key] : <Skeleton className="h-72 w-full rounded-2xl mt-8 md:mt-10" />}
     </>
   );
 }
