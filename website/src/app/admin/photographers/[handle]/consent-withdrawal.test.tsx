@@ -152,7 +152,7 @@ it("the other admin actions are locked while the withdrawal call runs", async ()
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Record withdrawal" }));
   const panel = screen.getByRole("complementary", { name: "Admin actions" });
   const buttons = within(panel).getAllByRole("button");
-  expect(buttons.map((b) => b.textContent)).toEqual(expect.arrayContaining(["Reject…", "Suspend…", "Reset verification…", "Send message…"]));
+  expect(buttons.map((b) => b.textContent)).toEqual(expect.arrayContaining(["Send back…", "Suspend…", "Reset verification…", "Send message…"]));
   expect(buttons.filter((b) => !b.hasAttribute("disabled")).map((b) => b.textContent)).toEqual([]);
   await act(async () => request.resolve({ photographerId: adminUser.userId, consentWithdrawnAt: WITHDRAWN_AT }));
   await waitFor(() => expect(within(panel).getByRole("button", { name: "Suspend…" })).toBeEnabled());

@@ -46,3 +46,13 @@ describe("AdminRejectModal (AX-28)", () => {
     expect(submit()).toBeEnabled();
   });
 });
+
+// FT-13 (C-03): the intro says what happens to the profile (wording rows W13.3, W13.15).
+it("FT-13: the send-back and reset intros say what state the profile is in afterwards", async () => {
+  const { AdminResetVerificationModal } = await import("./admin-reset-verification-modal");
+  setup();
+  expect(screen.getByRole("dialog")).toHaveTextContent("Ana gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.");
+  cleanup();
+  render(<AdminResetVerificationModal open onClose={() => {}} onSubmit={async () => true} photographerName="Ana" />);
+  expect(screen.getByRole("dialog")).toHaveTextContent("Ana goes back to Incomplete and gets your reason in their inbox. Until they send their profile again and you approve it, they cannot upload and their public page does not open. Photos already sold keep working.");
+});
