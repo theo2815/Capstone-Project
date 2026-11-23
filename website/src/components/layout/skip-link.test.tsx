@@ -16,6 +16,22 @@ it("is the first thing a keyboard user reaches and moves focus to the page's mai
   expect(document.activeElement).toBe(document.querySelector("main"));
 });
 
+// First-time admin audit R-03: the admin shell's <main> wraps the header and
+// the rail too, so the link must land on the content marked id="main".
+it("prefers the element marked id=main over an outer main that also holds the nav", () => {
+  render(
+    <>
+      <SkipLink />
+      <main>
+        <nav><button type="button">Inbox</button></nav>
+        <div id="main"><button type="button">Verifications</button></div>
+      </main>
+    </>,
+  );
+  fireEvent.click(screen.getByRole("link", { name: "Skip to content" }));
+  expect(document.activeElement).toBe(document.getElementById("main"));
+});
+
 it("does nothing harmful on a page without a main element", () => {
   render(<SkipLink />);
   fireEvent.click(screen.getByRole("link", { name: "Skip to content" }));
