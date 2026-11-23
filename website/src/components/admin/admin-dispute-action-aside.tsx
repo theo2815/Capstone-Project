@@ -9,7 +9,7 @@ import { AdminResolveDisputeModal } from "./admin-resolve-dispute-modal";
 import { AdminRefundConfirmModal } from "./admin-refund-confirm-modal";
 import { AdminDenyDisputeModal } from "./admin-deny-dispute-modal";
 import { AdminEscalateModal } from "./admin-escalate-modal";
-import { AdminRefundPanel } from "./admin-refund-panel";
+import { AdminRefundPanel, RefundPaymentReference } from "./admin-refund-panel";
 import { Kicker } from "@/components/ui/kicker";
 import {
   BTN_DANGER,
@@ -80,7 +80,13 @@ export function AdminDisputeActionAside({
   // An escalated dispute is still the admin's to decide; only Escalate is for open ones.
   // (An approved refund that is still parked also has status "escalated", but its attention differs.)
   const isEscalated = dispute.attention === "escalated";
-  const isOpen = dispute.status === "open" || isEscalated;
+  // A failed refund can be approved again or denied, even on a dispute that was escalated first (F4).
+  const refundFailed = dispute.attention === "refund_problem" && dispute.refundStatus === "failed";
+  // Only a parked refund shows the refund panel; the other refund problems show the payment and the next step.
+  const refundProblem = dispute.attention === "refund_problem" && dispute.refundStatus !== "manual_review";
+  // A stuck refund is still in flight: the server refuses every decision until PayMongo answers (F4).
+  const refundStuck = refundProblem && !refundFailed;
+  const isOpen = (dispute.status === "open" || isEscalated || refundFailed) && !refundStuck;
 
   function handleContinueResolve(args: PendingResolve) {
     if (submitting) return;
@@ -109,8 +115,10 @@ export function AdminDisputeActionAside({
     showToast({
       kind: refunded ? "success" : "info",
       message: refunded
-        ? `Refunded · ${confirmed.id} · ${formatPrice(confirmed.refundAmount!)}`
-        : `Refund requested · ${confirmed.id}`,
+        ? `Refunded ${formatPrice(confirmed.refundAmount!)} · ${confirmed.id}`
+        : dispute.orderSnapshot.paymentMethod === "qrph"
+          ? "Refund approved. Next, send the runner the refund link."
+          : "Refund approved. PayMongo is sending it, and the dispute closes when it is confirmed.",
     });
   }
 
@@ -158,7 +166,8 @@ export function AdminDisputeActionAside({
       </button>
     </>
   );
-  const escalateBtn = isOpen && !isEscalated && (
+  // The server escalates open disputes only.
+  const escalateBtn = dispute.status === "open" && !refundStuck && (
     <button
       type="button"
       onClick={() => setEscalateOpen(true)}
@@ -188,8 +197,18 @@ export function AdminDisputeActionAside({
           <p className="font-sans text-sm text-slate-soft">A full refund can be approved now.</p>
         )}
         {!body && escalateBtn}
+        {refundProblem && (
+          <div className="space-y-3 font-sans text-sm text-ink-soft">
+            <RefundPaymentReference dispute={dispute} disabled={submitting} />
+            <p>
+              {refundFailed
+                ? "The refund failed. You can approve the refund again, or deny the dispute."
+                : "PayMongo has not confirmed this refund yet. QuickPitik keeps checking by itself. Look up the payment in PayMongo if it stays like this."}
+            </p>
+          </div>
+        )}
         {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={setPanelDialogOpen} />}
-        {!isOpen && dispute.refundStatus !== "manual_review" && (
+        {!isOpen && !refundProblem && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
             This dispute is closed. No further actions are available.
           </p>
@@ -244,7 +263,7 @@ export function AdminDisputeActionAside({
         onClose={() => setEscalateOpen(false)}
         onSubmit={handleEscalate}
         targetLabel={`Escalate ${dispute.id}`}
-        body="Push this dispute to the next review tier when you can't decide yet. You can still approve or deny it afterwards."
+        body="This marks the dispute as escalated and tells the runner and the photographer it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards."
       />
     </aside>
     {body}

@@ -42,3 +42,7 @@ it("the Runners tip stays under 72 characters (the palette ranking depends on it
 it("the Inbox line uses the one phrase for waiting", () => {
   expect(getAdminSectionGuideByHref(ROUTES.ADMIN_INBOX)!.body).toBe("Everything waiting for an admin, one queue at a time.");
 });
+
+it("the Disputes line says to decide before a dispute is overdue (FT-18)", () => {
+  expect(getAdminSectionGuideByHref(ROUTES.ADMIN_DISPUTES)!.body).toBe("Refund requests and complaints from runners. Decide each one before it is overdue.");
+});

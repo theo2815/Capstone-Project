@@ -35,8 +35,7 @@ export function RefundRun({ onOpen }: { onOpen: (id: string) => void }) {
   return (
     <div className="space-y-6">
       <p className="font-sans text-sm text-slate">
-        Every approved QR Ph refund that still needs paying. Work through them in one PayMongo session: copy the
-        payment ID, make the refund, paste its link, then mark each one refunded once it is claimed.
+        Every approved QR Ph refund that still needs paying. Work through them in one PayMongo session.
       </p>
 
       {items.length === 0 ? (
@@ -52,6 +51,7 @@ export function RefundRun({ onOpen }: { onOpen: (id: string) => void }) {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="font-display text-lg font-medium text-ink truncate">@{d.runnerHandle}</h3>
+                      <p className="font-mono text-[13px] text-slate tnum">{d.id}</p>
                       <p className="font-sans text-sm text-slate truncate">{d.eventName ?? "Event archived"}</p>
                       <p className="font-mono tnum text-sm text-ink mt-1">
                         {amount != null ? formatPrice(amount) : `Order total ${formatPrice(d.orderSnapshot.total)}`}
@@ -63,7 +63,7 @@ export function RefundRun({ onOpen }: { onOpen: (id: string) => void }) {
                       onClick={() => onOpen(d.id)}
                       className={cn(BTN_GHOST, BTN_SIZE.sm, "shrink-0")}
                     >
-                      Open
+                      Open dispute
                     </button>
                   </div>
                   {(attention || d.dueAt || d.linkExpiringSoon) && (

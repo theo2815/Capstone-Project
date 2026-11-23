@@ -120,7 +120,7 @@ export function AdminResolveDisputeModal({
       pendingLabel="Resolving…"
       onClose={onClose}
       onSubmit={handleSubmit}
-      title={`Resolve ${disputeId}`}
+      title={`Approve refund · ${disputeId}`}
       escDisabled={escDisabled}
       intro={
         <>
@@ -137,7 +137,7 @@ export function AdminResolveDisputeModal({
               : <>Order total <span className="tnum">{formatPrice(orderTotal)}</span>. Item charge unavailable; retry when order details load.</>}
         </>
       }
-      submitLabel="Continue"
+      submitLabel="Review refund"
       submitDisabled={continueDisabled}
     >
       {blocked && (
@@ -181,6 +181,11 @@ export function AdminResolveDisputeModal({
               : [{ value: "refund_partial", label: <>Partial refund — enter amount below.</> }]),
           ]}
         />
+        {fullOnly && (
+          <p className="mt-2 font-sans text-sm text-slate-soft">
+            This payment was made by QR Ph, so only a full refund is possible.
+          </p>
+        )}
       </AdminFormSection>
 
       {resolution === "refund_partial" && (

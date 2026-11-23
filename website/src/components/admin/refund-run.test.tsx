@@ -114,3 +114,12 @@ it("Load more appends the next refunds", async () => {
   expect(await screen.findByText("@runner-2")).toBeInTheDocument();
   expect(screen.getByText("@runner-1")).toBeInTheDocument();
 });
+
+// FT-18 (C-45, C-48): the steps moved into each panel; the card names its dispute and what Open opens.
+it("keeps a short lead line, shows each dispute id and says Open dispute", async () => {
+  seed([parked(1)]);
+  wrap(<RefundRun onOpen={vi.fn()} />);
+  expect(await screen.findByText("Every approved QR Ph refund that still needs paying. Work through them in one PayMongo session.")).toBeInTheDocument();
+  expect(screen.getByText("dispute-1")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open dispute dispute-1" })).toHaveTextContent(/^Open dispute$/);
+});

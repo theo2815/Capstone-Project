@@ -123,8 +123,59 @@ describe("manual refund panel", () => {
     expect(send).toBeDisabled();
     await user.type(screen.getByLabelText("Refund link"), "  https://pay.example/r/1  ");
     await user.click(send);
+    await user.click(within(screen.getByRole("dialog", { name: "Send this refund link to @runner?" })).getByRole("button", { name: "Send link" }));
     expect(post).toHaveBeenCalledWith(`/admin/disputes/${parked.id}/refund-link`, { url: "https://pay.example/r/1" });
     expect(lastToast()?.kind).toBe("success");
+  });
+
+  // FT-18 (C-45): the four steps sit in the panel itself, so the drawer shows them too.
+  it("lists the four refund steps in order", () => {
+    renderAside(parked);
+    const steps = within(screen.getByRole("list", { name: "Refund steps" })).getAllByRole("listitem").map((li) => li.textContent);
+    expect(steps).toEqual([
+      "Copy the payment ID.",
+      "In PayMongo, find the payment and make the refund.",
+      "Paste the refund link here and send it to the runner.",
+      "When PayMongo shows the refund as claimed, mark it refunded.",
+    ]);
+  });
+
+  it("the link field says where the link comes from", () => {
+    renderAside(parked);
+    expect(screen.getByLabelText("Refund link")).toHaveAccessibleDescription("Paste the refund link from PayMongo.");
+  });
+
+  // FT-18 (C-46): a money link to a customer gets a second look first.
+  it("Send to runner asks first and sends only after Send link", async () => {
+    const user = userEvent.setup();
+    const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" });
+    renderAside(parked);
+    await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
+    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    const dialog = screen.getByRole("dialog", { name: "Send this refund link to @runner?" });
+    expect(dialog).toHaveTextContent("They get it by email, and in their QuickPitik inbox if they have an account. If you send another link later, it replaces this one.");
+    expect(post).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Send link" }));
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "Send this refund link to @runner?" })).not.toBeInTheDocument();
+  });
+
+  it("a refused send shows the server's words, keeps the link and sends once per click", async () => {
+    const user = userEvent.setup();
+    let refuse!: (e: Error) => void;
+    const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, no) => { refuse = no; }));
+    renderAside(parked);
+    await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
+    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    const dialog = screen.getByRole("dialog", { name: "Send this refund link to @runner?" });
+    const send = within(dialog).getByRole("button", { name: "Send link" });
+    await user.click(send);
+    await user.click(send);
+    expect(post).toHaveBeenCalledTimes(1);
+    await act(async () => { refuse(new ApiError([{ code: "VALIDATION_ERROR", message: "That link is not a PayMongo refund link." }], 400)); });
+    expect(lastToast()).toMatchObject({ kind: "error", message: "That link is not a PayMongo refund link." });
+    expect(screen.getByRole("dialog", { name: "Send this refund link to @runner?" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Refund link")).toHaveValue("https://pay.example/r/1");
   });
 
   it("draws the link field as a boxed admin input, not a bare underline", () => {
@@ -138,6 +189,7 @@ describe("manual refund panel", () => {
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
     await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(screen.getByLabelText("Refund link")).toHaveValue("https://pay.example/r/1");
     expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error"]);
   });
@@ -252,6 +304,7 @@ describe("manual refund panel", () => {
     const view = renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
     await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send link" }));
     view.rerender(
       <QueryClientProvider client={client}>
         <AdminDisputeActionAside dispute={sent} runnerHandle={sent.runnerHandle} />
@@ -392,9 +445,10 @@ describe("manual refund panel", () => {
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
     await user.click(screen.getByRole("button", { name: "Send to runner" }));
-    expect(screen.getByRole("button", { name: "Copy payment ID" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Mark refunded" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Send/ })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Send link" }));
+    expect(screen.getByRole("button", { name: "Copy payment ID", hidden: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark refunded", hidden: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send to runner", hidden: true })).toBeDisabled();
     await act(async () => { release({ ...parked, refundLinkUrl: "https://pay.example/r/1" }); });
   });
 
@@ -418,5 +472,14 @@ describe("refund confirm modal copy", () => {
   it("keeps the usual text for other payment methods", () => {
     render(<AdminRefundConfirmModal {...base} paymentMethod="gcash" />);
     expect(screen.getByRole("dialog")).toHaveTextContent("The refund goes to the original payment method when the provider confirms it.");
+  });
+  // FT-18 (C-47): who is told and what cannot be undone, and the word for the wait.
+  it("says the runner is told and that a finished refund cannot be undone", () => {
+    render(<AdminRefundConfirmModal {...base} paymentMethod="gcash" />);
+    expect(screen.getByText("The runner is told. A finished refund cannot be undone: the sale is taken back from the photographer's earnings and, on a full refund, the runner's download of this photo ends.")).toBeInTheDocument();
+  });
+  it("reads Refunding… while the refund is sent", () => {
+    render(<AdminRefundConfirmModal {...base} paymentMethod="gcash" submitting />);
+    expect(screen.getByRole("button", { name: "Refunding…" })).toBeDisabled();
   });
 });

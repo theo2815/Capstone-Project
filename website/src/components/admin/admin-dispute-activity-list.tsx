@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   DISPUTE_RESOLUTION_LABEL,
@@ -40,12 +39,12 @@ export function AdminDisputeActivityList({ activity }: AdminDisputeActivityListP
     <>
     <ul className="space-y-3">
       {(showAll ? rows : rows.slice(0, FIRST_ROWS)).map((entry) => (
-        <li
-          key={entry.id}
-          className="flex items-start justify-between gap-4 border-b border-line pb-3"
-        >
-          <div className="min-w-0 flex-1">
-            <p className="font-sans text-sm text-slate-soft tnum break-words">
+        <li key={entry.id} className="border-b border-line pb-3">
+          <div className="min-w-0">
+            <p className={`font-sans text-sm ${decisionTone(entry.decision)}`}>
+              {DECISION_LABEL[entry.decision]}
+            </p>
+            <p className="font-sans text-sm text-slate-soft tnum break-words mt-1">
               {sentenceCaseDate(formatSalesDate(entry.decidedAt))}
               {entry.resolution &&
                 ` · ${DISPUTE_RESOLUTION_LABEL[entry.resolution]}`}
@@ -58,11 +57,6 @@ export function AdminDisputeActivityList({ activity }: AdminDisputeActivityListP
               </p>
             )}
           </div>
-          <span
-            className={`font-mono uppercase ${KICKER_SIZE_CLASS.sm} shrink-0 mt-1 ${decisionTone(entry.decision)}`}
-          >
-            {DECISION_LABEL[entry.decision]}
-          </span>
         </li>
       ))}
     </ul>

@@ -62,3 +62,11 @@ it("reads the activity time as typed, not in capitals", () => {
   render(<AdminDisputeActivityList activity={[{ id: "a1", decidedAt: "2026-10-28T02:00:00Z", decision: "escalated", resolution: null, refundAmount: null, reason: null }]} />);
   expect(screen.getByText("Oct 28, 2026, 10:00 am").closest(".uppercase")).toBeNull();
 });
+
+// FT-18 (C-43): the decision reads as a sentence on its own line, above the date.
+it("sets the decision label in sentence case above the date", () => {
+  render(<AdminDisputeActivityList activity={[{ id: "a1", decidedAt: "2026-10-28T02:00:00Z", decision: "refund_sent_to_manual_review", resolution: null, refundAmount: null, reason: null }]} />);
+  const label = screen.getByText("Refund approved, waiting for PayMongo");
+  for (const cls of ["uppercase", "font-mono", "shrink-0"]) expect(label).not.toHaveClass(cls);
+  expect(label.compareDocumentPosition(screen.getByText("Oct 28, 2026, 10:00 am")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AdminTextInput, AdminTextarea } from "@/components/admin/admin-form-fields";
-import { AdminFormModal } from "@/components/admin/admin-form-modal";
+import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form-modal";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useDisputeActions } from "@/hooks/use-admin-disputes";
 import { useToast } from "@/hooks/use-toast";
@@ -21,6 +21,49 @@ const sm = BTN_SIZE.sm;
 // browser pre-checks the reference so an obvious slip never leaves the page.
 const REFUND_REF_PATTERN = /^ref_[A-Za-z0-9_-]+$/;
 const REFUND_REF_MESSAGE = "Paste the refund reference from the PayMongo dashboard.";
+
+// What to search for in PayMongo: the payment ID with Copy, or the checkout reference with the order facts.
+// Shared with the dispute drawer, which shows it for a refund that went wrong.
+export function RefundPaymentReference({ dispute, disabled = false }: { dispute: Dispute; disabled?: boolean }) {
+  const { showToast } = useToast();
+
+  async function handleCopy(text: string, label: string) {
+    const ok = await copyToClipboard(text);
+    showToast(ok
+      ? { kind: "success", message: `${label} copied` }
+      : { kind: "error", message: `Could not copy. Select the ${label.toLowerCase()} and copy it by hand.` });
+  }
+
+  return dispute.paymentId ? (
+    <div className="space-y-1">
+      <p className="text-ink">Payment ID</p>
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-mono tnum break-all text-ink">{dispute.paymentId}</span>
+        <button type="button" aria-label="Copy payment ID" onClick={() => handleCopy(dispute.paymentId!, "Payment ID")} disabled={disabled} className={`${BTN_GHOST} ${sm}`}>
+          Copy
+        </button>
+      </div>
+    </div>
+  ) : (
+    <p>
+      Search these in PayMongo.{" "}
+      <span className="font-mono tnum break-all text-ink">{dispute.paymentRef ?? "—"}</span>
+      {dispute.paymentRef && (
+        <>
+          {" "}
+          <button type="button" aria-label="Copy checkout reference" onClick={() => handleCopy(dispute.paymentRef!, "Checkout reference")} disabled={disabled} className={`${BTN_GHOST} ${sm}`}>
+            Copy
+          </button>
+        </>
+      )}
+      {" · "}
+      Order total <span className="tnum text-ink">{formatPrice(dispute.orderSnapshot.total)}</span>
+      {" · "}
+      <span data-testid="refund-paid-at" className="tnum">{formatSalesDate(dispute.orderSnapshot.paidAt)}</span>
+    </p>
+  );
+}
+
 export function AdminRefundPanel({
   dispute,
   onConfirmOpenChange,
@@ -39,11 +82,12 @@ export function AdminRefundPanel({
   const [refundRefError, setRefundRefError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [sendOpen, setSendOpen] = useState(false);
   // The cleanup also clears the host flag if the panel unmounts with a dialog open.
   useEffect(() => {
-    onConfirmOpenChange?.(confirmOpen || cancelOpen);
+    onConfirmOpenChange?.(confirmOpen || cancelOpen || sendOpen);
     return () => onConfirmOpenChange?.(false);
-  }, [confirmOpen, cancelOpen, onConfirmOpenChange]);
+  }, [confirmOpen, cancelOpen, sendOpen, onConfirmOpenChange]);
 
   const savedLink = dispute.refundLinkUrl;
   const showField = !savedLink || replacing;
@@ -54,20 +98,20 @@ export function AdminRefundPanel({
 
   const windowClosed = !linkSent && isRefundLinkExpired(dispute.refundWindowClosesAt);
 
-  async function handleCopy(text: string, label: string) {
-    const ok = await copyToClipboard(text);
-    showToast(ok
-      ? { kind: "success", message: `${label} copied` }
-      : { kind: "error", message: `Could not copy. Select the ${label.toLowerCase()} and copy it by hand.` });
-  }
-
-  async function handleSend() {
+  function handleAskSend() {
     if (busy || !trimmed) return;
     if (trimmed === savedLink) {
       showToast({ kind: "info", message: "This link was already sent." });
       return;
     }
+    setSendOpen(true);
+  }
+
+  // A refusal keeps the confirm and the typed link; the hook toasts the server's words.
+  async function handleSend() {
+    if (busy || !trimmed) return;
     if (!(await sendRefundLink(dispute.id, trimmed))) return;
+    setSendOpen(false);
     setUrl("");
     setReplacing(false);
     showToast({ kind: "success", message: `Refund link sent · ${dispute.id}` });
@@ -99,34 +143,14 @@ export function AdminRefundPanel({
 
   return (
     <div className="space-y-4 font-sans text-sm text-ink-soft">
-      {dispute.paymentId ? (
-        <div className="space-y-1">
-          <p className="text-ink">Payment ID</p>
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-mono tnum break-all text-ink">{dispute.paymentId}</span>
-            <button type="button" aria-label="Copy payment ID" onClick={() => handleCopy(dispute.paymentId!, "Payment ID")} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
-              Copy
-            </button>
-          </div>
-        </div>
-      ) : (
-        <p>
-          Search these in PayMongo.{" "}
-          <span className="font-mono tnum break-all text-ink">{dispute.paymentRef ?? "—"}</span>
-          {dispute.paymentRef && (
-            <>
-              {" "}
-              <button type="button" aria-label="Copy checkout reference" onClick={() => handleCopy(dispute.paymentRef!, "Checkout reference")} disabled={busy} className={`${BTN_GHOST} ${sm}`}>
-                Copy
-              </button>
-            </>
-          )}
-          {" · "}
-          Order total <span className="tnum text-ink">{formatPrice(dispute.orderSnapshot.total)}</span>
-          {" · "}
-          <span data-testid="refund-paid-at" className="tnum">{formatSalesDate(dispute.orderSnapshot.paidAt)}</span>
-        </p>
-      )}
+      <ol aria-label="Refund steps" className="list-decimal space-y-1 pl-5">
+        <li>Copy the payment ID.</li>
+        <li>In PayMongo, find the payment and make the refund.</li>
+        <li>Paste the refund link here and send it to the runner.</li>
+        <li>When PayMongo shows the refund as claimed, mark it refunded.</li>
+      </ol>
+
+      <RefundPaymentReference dispute={dispute} disabled={busy} />
 
       {dispute.refundWindowClosesAt && dispute.refundCancelsAt && (
         linkSent ? (
@@ -156,16 +180,14 @@ export function AdminRefundPanel({
 
       {showField ? (
         <div className="space-y-2">
-          <label htmlFor={`refund-link-${dispute.id}`} className="block text-ink">Refund link</label>
-          <input
+          <AdminTextInput
             id={`refund-link-${dispute.id}`}
-            type="text"
+            label="Refund link"
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            disabled={busy}
-            className="w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh disabled:opacity-50 disabled:cursor-not-allowed"
+            onChange={setUrl}
+            hint="Paste the refund link from PayMongo."
           />
-          <button type="button" onClick={handleSend} disabled={busy || !trimmed} className={`${BTN_SECONDARY} ${sm} w-full`}>
+          <button type="button" onClick={handleAskSend} disabled={busy || !trimmed} className={`${BTN_SECONDARY} ${sm} w-full`}>
             Send to runner
           </button>
         </div>
@@ -197,6 +219,21 @@ export function AdminRefundPanel({
           Cancel refund…
         </button>
       )}
+
+      <AdminConfirmModal
+        open={sendOpen}
+        submitting={busy}
+        pendingLabel="Sending link…"
+        onClose={() => setSendOpen(false)}
+        onConfirm={handleSend}
+        title={`Send this refund link to @${dispute.runnerHandle}?`}
+        confirmLabel="Send link"
+      >
+        <p className="font-sans text-sm text-ink-soft">
+          They get it by email, and in their QuickPitik inbox if they have an account. If you send another link later,
+          it replaces this one.
+        </p>
+      </AdminConfirmModal>
 
       <AdminFormModal
         tone="danger"

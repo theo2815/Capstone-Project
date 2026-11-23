@@ -34,7 +34,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
     number: "02",
     href: ROUTES.ADMIN_DISPUTES,
     label: "Disputes",
-    body: "Refund requests and complaints from runners. Resolve before they escalate.",
+    body: "Refund requests and complaints from runners. Decide each one before it is overdue.",
     intro:
       "Refund requests and complaints from runners about photos they bought. Read the facts on each one, then approve the refund or deny it with a reason the runner will read.",
     instead: [{ when: "For a report about a race or a photographer", label: "Flags", href: ROUTES.ADMIN_FLAGS }],
