@@ -16,6 +16,7 @@ import {
   APPEAL_NOTE_MAX,
   APPEAL_SECTIONS,
   APPEAL_TEXT,
+  WAITING_FOR_YOU,
   verdictLabel,
   type RelevanceAppealRow,
 } from "@/lib/admin-relevance";
@@ -74,8 +75,13 @@ function AppealRow({ appeal, onOpen }: { appeal: RelevanceAppealRow; onOpen: () 
       className="w-full text-left rounded-2xl border border-line bg-surface p-4 md:p-5 transition-colors hover:bg-bone-deep/50">
       <span className="flex flex-wrap items-center gap-2">
         <AdminStatusPill label={verdictLabel(appeal.verdict)} tone="slate" />
+        {appeal.status === "OPEN" && <AdminStatusPill label={WAITING_FOR_YOU} tone="amber" />}
       </span>
       <span className="mt-3 block font-display text-base md:text-lg font-bold text-ink">{appeal.eventName ?? "—"}</span>
+      {/* FT-20 (C-55, W20.12): the first line of the photographer's own words, as plain text. */}
+      {appeal.status === "OPEN" && (
+        <span className="mt-1 block font-sans text-sm text-ink-soft line-clamp-1 break-words">{appeal.reason.split("\n")[0]}</span>
+      )}
       <span className="mt-1 block font-sans text-sm text-slate-soft tnum">
         {who(appeal)} · {APPEAL_TEXT.filed} {sentenceCaseDate(formatLongDate(appeal.createdAt))}
         {appeal.decidedAt && ` · ${APPEAL_TEXT.decided} ${sentenceCaseDate(formatLongDate(appeal.decidedAt))}`}

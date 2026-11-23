@@ -14,7 +14,9 @@ import { useUrlState } from "@/hooks/use-url-state";
 import {
   CONSEQUENCES_TEXT,
   RELEVANCE_TABS,
+  WAITING_FOR_YOU,
   caseActions,
+  caseStateLabel,
   isReleasable,
   isWouldHave,
   type RelevanceCaseAction,
@@ -32,11 +34,11 @@ const PAGE_INCREMENT = 50;
 const kicker = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 
 // The cases and their actions. The tab (`?tab=`) and the open case (`?row=`) live in the URL, so a link opens the same view.
-// defaultTab: the Inbox opens on "Can't tell", the cases its badge counts; the full page opens on "Hidden".
-export function RelevanceCases({ defaultTab = "hidden" }: { defaultTab?: RelevanceTab }) {
+// defaultTab: both the Inbox and the full page open on "Can't tell", the cases a person must decide (FT-20).
+export function RelevanceCases({ defaultTab = "cant_tell" }: { defaultTab?: RelevanceTab }) {
   const [tab, setTab] = useUrlState<RelevanceTab>("tab", defaultTab, { parse: parseRelevanceTab });
   const [rowId, setRowId] = useUrlState<string>("row", "");
-  // RV-4.3: "Repeat cases" lives on the All tab only (`?repeat=1`).
+  // RV-4.3: "Photographers with repeat cases" lives on the All tab only (`?repeat=1`).
   const [repeatParam, setRepeatParam] = useUrlState<string>("repeat", "");
   const repeat = tab === "all" && repeatParam === "1";
   const appeals = tab === "appeals";
@@ -161,6 +163,7 @@ export function RelevanceCases({ defaultTab = "hidden" }: { defaultTab?: Relevan
 }
 
 function CaseRow({ row, onOpen }: { row: RelevanceCaseRow; onOpen: () => void }) {
+  const state = caseStateLabel(row);
   return (
     <button
       type="button"
@@ -170,6 +173,7 @@ function CaseRow({ row, onOpen }: { row: RelevanceCaseRow; onOpen: () => void })
       <span className="flex flex-wrap items-center gap-2">
         <AdminStatusPill label={verdictLabel(row.verdict)} tone="slate" />
         {isWouldHave(row) && <AdminStatusPill label="Would have hidden" tone="amber" />}
+        {state && <AdminStatusPill label={state} tone={state === WAITING_FOR_YOU ? "amber" : state === "Hidden now" ? "ink" : "muted"} />}
       </span>
       <span className="mt-3 block font-display text-base md:text-lg font-bold text-ink">{row.eventName}</span>
       <span className="mt-1 block font-sans text-sm text-slate-soft tnum">

@@ -13,11 +13,14 @@ import {
   CLOSED_RESTORE_CONFIRM,
   CONSEQUENCES_TEXT,
   HIDDEN_PHOTOS_EMPTY,
+  HIDE_PROGRESS,
   NO_CONSENT_HIDE_CONFIRM,
   PHOTO_RESTORED,
   PHOTO_RESTORE_FAILED,
   PHOTO_STILL_HIDDEN,
   RELEVANCE_ACTIONS,
+  RESTORE_GUIDE,
+  batchCountLine,
   heldByLabel,
   isNoConsent,
   isReleasable,
@@ -76,8 +79,17 @@ export function RelevanceCaseActions({
 
   // A re-read can offer a different set of actions; a confirm for one no longer offered closes.
   const open = confirming && kinds.includes(confirming) && RELEVANCE_ACTIONS[confirming];
+  // FT-20 (C-54): a hide always takes the whole batch; a restore prints the count only for a current whole-batch hide,
+  // because a junk-only or closed case does not put back every photo of the batch.
+  const showCount = confirming === "hide_batch"
+    || (confirming === "restore" && detail.stage === "APPLIED" && row.action === "HIDE_ALL" && row.appliedMode !== "RECORD_ONLY");
+  // The guidance fits a current case judged on junk; a Copied batch can be real race photos and still be a copy.
+  const showGuide = kinds.includes("restore") && detail.stage === "APPLIED" && row.verdict !== "COPIED";
   return (
     <>
+      {showGuide && (
+        <p className="basis-full font-sans text-sm text-ink-soft">{RESTORE_GUIDE}</p>
+      )}
       {kinds.includes("end_hold") && (
         <p className="basis-full sm:basis-auto sm:flex-1 font-sans text-sm text-ink-soft">{CONSEQUENCES_TEXT.endHoldHint}</p>
       )}
@@ -101,6 +113,12 @@ export function RelevanceCaseActions({
               : confirming === "restore" && detail.stage === "CLOSED" ? CLOSED_RESTORE_CONFIRM : open.confirm}
           </p>
           <p className="font-sans text-sm text-ink">{row.eventName}</p>
+          {showCount && (
+            <p className="font-sans text-sm text-ink tnum">
+              {batchCountLine(row.batchPhotos, row.photographerHandle ? `@${row.photographerHandle}` : row.photographerName)}
+            </p>
+          )}
+          {confirming === "hide_batch" && <p className="font-sans text-sm text-ink-soft">{HIDE_PROGRESS}</p>}
         </AdminConfirmModal>
       )}
     </>

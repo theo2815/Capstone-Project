@@ -73,7 +73,7 @@ it("a URL with both tab and row selects that tab and opens that case", async () 
   fixtures.search = "tab=all&row=c1";
   mount();
   expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: "Hidden or recorded" })).toHaveAttribute("aria-pressed", "false");
   const drawer = await screen.findByRole("dialog");
   expect(within(drawer).getByText("Case · c1")).toBeInTheDocument();
   expect(await within(drawer).findByRole("heading", { name: "Cebu City Marathon 2003" })).toBeInTheDocument();
@@ -89,8 +89,9 @@ it("a record-only case is labelled would have hidden and shows no action", async
   expect(await within(drawer).findByText(/Would have hidden: Hide the whole batch/)).toBeInTheDocument();
   expect(within(drawer).getByText(/Record-only: nothing was hidden/)).toBeInTheDocument();
   // Enlarge only shows a photo; it is not an action on the case.
-  expect(within(drawer).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent).filter((n) => !n?.startsWith("Enlarge"))).toEqual(["Close"]);
-  // Server codes read as words: the evidence gets a label, and the stage (always APPLIED here) is not shown.
+  expect(within(drawer).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent).filter((n) => !n?.startsWith("Enlarge") && !n?.startsWith("Technical details"))).toEqual(["Close"]);
+  // Server codes read as words: the evidence gets a label (under Technical details, FT-20), and the stage (always APPLIED here) is not shown.
+  await userEvent.setup().click(within(drawer).getByRole("button", { name: /Technical details/ }));
   expect(within(drawer).getByText("Evidence used: Junk share")).toBeInTheDocument();
   expect(within(drawer).queryByText("APPLIED")).not.toBeInTheDocument();
   // A clean sample whose cut-offs are unset is "not judged", and a sample with no preview says it is gone.
@@ -98,7 +99,7 @@ it("a record-only case is labelled would have hidden and shows no action", async
   expect(within(drawer).getByRole("img", { name: /no longer available/ })).toBeInTheDocument();
 });
 
-it("a case shows the model's reason and the note when code overrode it", async () => {
+it("a case shows the checker's reason and the note when code overrode it", async () => {
   const overridden = { ...row, verdict: "CANT_TELL", verdictNote: "CONTRADICTS", action: "NONE", wouldHave: false };
   list = async () => ({ items: [overridden], total: 1, offset: 0, limit: 50 });
   one = async () => detail(overridden, { modelVerdict: "JUNK_DUMP", adminReason: "Nearly every photo is a lens cap shot." });
@@ -106,8 +107,8 @@ it("a case shows the model's reason and the note when code overrode it", async (
   mount();
   const drawer = await screen.findByRole("dialog");
   expect(await within(drawer).findByText("Nearly every photo is a lens cap shot.")).toBeInTheDocument();
-  expect(within(drawer).getByText(/The model said Junk dump; code stored Can't tell/)).toBeInTheDocument();
-  expect(within(drawer).getByText("The model's verdict contradicts the measured numbers or the copy rule.")).toBeInTheDocument();
+  expect(within(drawer).getByText("The checker first said Junk dump. The saved verdict is Can't tell.")).toBeInTheDocument();
+  expect(within(drawer).getByText("The checker's verdict contradicts the measured numbers or the copy rule.")).toBeInTheDocument();
   expect(within(drawer).queryByText(/Would have hidden/)).not.toBeInTheDocument();
 });
 
@@ -134,6 +135,7 @@ it("an unknown verdict from the server renders as text, not a crash", async () =
   const drawer = await screen.findByRole("dialog");
   expect(await within(drawer).findByText("NEW_NOTE")).toBeInTheDocument();
   expect(within(drawer).getAllByText("NEW_VERDICT").length).toBeGreaterThan(0);
+  await userEvent.setup().click(within(drawer).getByRole("button", { name: /Technical details/ }));
   expect(within(drawer).getByText("NEW_BAND")).toBeInTheDocument();
 });
 
@@ -144,7 +146,7 @@ it("a tab shows loading, failed with retry, empty, and Showing S of T with Load 
   mount();
   expect(screen.getByRole("status", { name: "Loading cases" })).toHaveAttribute("aria-busy", "true");
   release({ items: [], total: 0, offset: 0, limit: 50 });
-  expect(await screen.findByText("No batch is hidden, or would have been hidden.")).toBeInTheDocument();
+  expect(await screen.findByText("No batch is waiting for you. You're caught up.")).toBeInTheDocument();
   cleanup();
   client.clear();
   list = async () => { throw new Error("down"); };
@@ -169,7 +171,7 @@ it("the Appeals tab says appeals arrive with the photographer side", async () =>
   expect(await screen.findByText("No open appeals. You're caught up.")).toBeInTheDocument();
 });
 
-// RV-4.3: "Repeat cases" on the All tab keeps only cases whose photographer has a repeat case (the server filters).
+// RV-4.3: "Photographers with repeat cases" on the All tab keeps only cases whose photographer has a repeat case (the server filters).
 it("the All tab filters to repeat cases", async () => {
   const user = userEvent.setup();
   fixtures.search = "tab=all";
@@ -177,7 +179,7 @@ it("the All tab filters to repeat cases", async () => {
   await screen.findByRole("button", { name: /Cebu City Marathon 2003/ });
   const urls = () => vi.mocked(api.get).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith("/admin/relevance/cases?"));
   expect(urls().every((u) => !u.includes("repeat"))).toBe(true);
-  const toggle = screen.getByRole("button", { name: "Repeat cases" });
+  const toggle = screen.getByRole("button", { name: "Photographers with repeat cases" });
   expect(toggle).toHaveAttribute("aria-pressed", "false");
   await user.click(toggle);
   expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/relevance?tab=all&repeat=1", { scroll: false });
@@ -188,7 +190,7 @@ it("the All tab filters to repeat cases", async () => {
   list = async () => ({ items: [], total: 0, offset: 0, limit: 50 });
   mount();
   expect(await screen.findByText("No photographer has a repeat case.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Repeat cases" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Photographers with repeat cases" })).toHaveAttribute("aria-pressed", "true");
   expect(urls().at(-1)).toContain("repeat=true");
   // The other tabs have no such filter and never send it.
   cleanup();
@@ -196,7 +198,7 @@ it("the All tab filters to repeat cases", async () => {
   fixtures.search = "tab=hidden&repeat=1";
   mount();
   await screen.findByText("No batch is hidden, or would have been hidden.");
-  expect(screen.queryByRole("button", { name: "Repeat cases" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Photographers with repeat cases" })).not.toBeInTheDocument();
   expect(urls().at(-1)).not.toContain("repeat");
 });
 
@@ -204,8 +206,8 @@ it("the All tab filters to repeat cases", async () => {
 it("the tabs carry the queue counts from /admin/kpis", async () => {
   kpis = async () => ({ relevanceHidden: 7, relevanceCantTell: 2, relevanceAppealsOpen: 3 });
   mount();
-  expect(await screen.findByRole("button", { name: "Hidden 7", pressed: true })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Can't tell 2" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Hidden or recorded 7" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Can't tell 2", pressed: true })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Appeals 3" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
 });
@@ -213,8 +215,8 @@ it("the tabs carry the queue counts from /admin/kpis", async () => {
 it("an older backend without the counts shows the tabs without numbers", async () => {
   mount();
   await screen.findByRole("button", { name: /Cebu City Marathon 2003/ });
-  expect(screen.getByRole("button", { name: "Hidden", pressed: true })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Can't tell" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hidden or recorded" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Can't tell", pressed: true })).toBeInTheDocument();
 });
 
 it("Escape on an enlarged sample closes the photo and keeps the case open", async () => {
@@ -240,4 +242,52 @@ it("a case row's values are not upper-cased", async () => {
   mount();
   const card = await screen.findByRole("button", { name: /^(?!Enlarge).*Cebu City Marathon 2003/ });
   expect(within(card).getByText(/420 photos · 81% junk · Feb 14 · 2003/).closest(".uppercase")).toBeNull();
+});
+
+// FT-20 (C-49, W20.1): every row says whether its batch is off sale now, only recorded, or waiting for a person.
+it("each row says whether its batch is hidden now, recorded only or waiting for you", async () => {
+  const hiddenNow = { ...row, caseId: "h1", eventName: "Hidden Race", appliedMode: "AUTO_HIDE", wouldHave: false };
+  const waiting = { ...row, caseId: "w1", eventName: "Waiting Race", verdict: "CANT_TELL", action: "NONE", appliedMode: "AUTO_HIDE", wouldHave: false };
+  const fits = { ...row, caseId: "f1", eventName: "Fine Race", verdict: "FITS", action: "NONE", appliedMode: "AUTO_HIDE", wouldHave: false };
+  list = async () => ({ items: [hiddenNow, row, waiting, fits], total: 4, offset: 0, limit: 50 });
+  fixtures.search = "tab=all";
+  mount();
+  const card = async (name: string) => screen.findByRole("button", { name: new RegExp(name) });
+  expect(within(await card("Hidden Race")).getByText("Hidden now")).toBeInTheDocument();
+  const recorded = await card("Cebu City Marathon 2003");
+  expect(within(recorded).getByText("Recorded only")).toBeInTheDocument();
+  expect(within(recorded).getByText("Would have hidden")).toBeInTheDocument();
+  expect(within(await card("Waiting Race")).getByText("Waiting for you")).toBeInTheDocument();
+  expect(within(await card("Fine Race")).queryByText(/Hidden now|Recorded only|Waiting for you/)).toBeNull();
+});
+
+// FT-20 (C-50, W20.3): the work tab comes first and the page opens on it; the URL values stay.
+it("the first tab is Can't tell and the page opens on it", async () => {
+  mount();
+  const tabs = within(screen.getByRole("group", { name: "Photo Relevance views" })).getAllByRole("button").map((b) => b.textContent);
+  expect(tabs).toEqual(["Can't tell", "Appeals", "Hidden or recorded", "All"]);
+  expect(screen.getByRole("button", { name: "Can't tell" })).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining("tab=cant_tell"), expect.anything()));
+});
+
+// FT-20 (C-49, C-51, W20.2, W20.4 to W20.7): the drawer explains the verdict and keeps the technical parts folded away.
+it("the drawer explains the verdict and Technical details is closed by default", async () => {
+  const user = userEvent.setup();
+  const overridden = { ...row, verdict: "CANT_TELL", verdictNote: "BAD_JSON", action: "NONE", wouldHave: false };
+  list = async () => ({ items: [overridden], total: 1, offset: 0, limit: 50 });
+  one = async () => detail(overridden, { modelVerdict: "JUNK_DUMP" });
+  fixtures.search = "row=c1";
+  mount();
+  const drawer = await screen.findByRole("dialog");
+  expect(await within(drawer).findByText("Can't tell: the checker could not decide. A person must.")).toBeInTheDocument();
+  expect(within(drawer).getByText("The checker first said Junk dump. The saved verdict is Can't tell.")).toBeInTheDocument();
+  expect(within(drawer).getByText("The checker's answer could not be read.")).toBeInTheDocument();
+  expect(within(drawer).getByText("The checker's reason · admins only")).toBeInTheDocument();
+  const technical = within(drawer).getByRole("button", { name: /Technical details/ });
+  expect(technical).toHaveAttribute("aria-expanded", "false");
+  expect(drawer.textContent).not.toMatch(/JSON|prompt|code stored/);
+  await user.click(technical);
+  expect(within(drawer).getByText("Evidence used: Junk share")).toBeInTheDocument();
+  expect(within(drawer).getByText("Junk band")).toBeInTheDocument();
+  expect(within(drawer).getByText("Summary sent to the model")).toBeInTheDocument();
 });

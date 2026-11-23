@@ -58,7 +58,9 @@ afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); v
 const mount = () => render(<QueryClientProvider client={client}><RelevanceCases /></QueryClientProvider>);
 const toasts = () => useToastStore.getState().toasts.map((t) => t.message);
 const drawer = () => screen.findByRole("dialog", { name: "Cebu City Marathon 2003" });
-const buttons = (el: HTMLElement) => within(el).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent);
+// The Technical details toggle (FT-20) only folds text; it is not an action on the case.
+const buttons = (el: HTMLElement) => within(el).getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)
+  .filter((b) => !b?.startsWith("Technical details"));
 
 it("an auto-hide case shows Restore and Keep hidden", async () => {
   const user = userEvent.setup();
@@ -283,7 +285,7 @@ it("a confirmed case shows its date and the count", async () => {
   expect(field(d, "Cases in the last 6 months")).toBe("1");
   // No live hold: no hold date and no End hold.
   expect(within(d).queryByText("Payouts on hold since")).not.toBeInTheDocument();
-  expect(within(d).queryByRole("button", { name: "End hold" })).not.toBeInTheDocument();
+  expect(within(d).queryByRole("button", { name: "End hold…" })).not.toBeInTheDocument();
   // A case that is not confirmed shows none of it.
   cleanup();
   client.clear();
@@ -308,7 +310,7 @@ it("End hold waits for the server", async () => {
   expect(field(d, "Payouts on hold since")).toBe("FEB 14 · 2003");
   // Beside the button: one hold per Copied case, payouts resume when the last ends.
   expect(within(d).getByText("One photographer can have several holds, one per Copied case. Payouts resume only when the last one ends.")).toBeInTheDocument();
-  await user.click(within(d).getByRole("button", { name: "End hold" }));
+  await user.click(within(d).getByRole("button", { name: "End hold…" }));
   expect(api.post).not.toHaveBeenCalled();
   // AdminFlagService tells the photographer only once no other Photo Relevance hold is open.
   expect(screen.getByText("Ends the payout hold this case placed. The case itself stays as it is. The photographer is told their payout hold was lifted only when no other Photo Relevance hold is left.")).toBeInTheDocument();
@@ -316,12 +318,12 @@ it("End hold waits for the server", async () => {
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/end-hold");
   // The server has not answered: the hold still shows and nothing was said.
   expect(field(d, "Payouts on hold since")).toBe("FEB 14 · 2003");
-  expect(within(d).getByRole("button", { name: "End hold" })).toBeInTheDocument();
+  expect(within(d).getByRole("button", { name: "End hold…" })).toBeInTheDocument();
   expect(toasts()).toEqual([]);
   one = async () => held({ payoutHoldAt: null });
   release(copied);
   await waitFor(() => expect(within(d).queryByText("Payouts on hold since")).not.toBeInTheDocument());
-  expect(within(d).queryByRole("button", { name: "End hold" })).not.toBeInTheDocument();
+  expect(within(d).queryByRole("button", { name: "End hold…" })).not.toBeInTheDocument();
   expect(toasts()).toEqual(["Hold ended: Cebu City Marathon 2003"]);
 });
 
@@ -333,7 +335,7 @@ it("two End hold confirms in one tick send one request", async () => {
   post = () => new Promise(() => {});
   mount();
   const d = await drawer();
-  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  await user.click(await within(d).findByRole("button", { name: "End hold…" }));
   const ok = await screen.findByRole("button", { name: "Confirm end hold" });
   act(() => { ok.click(); ok.click(); });
   await act(async () => {});
@@ -349,7 +351,7 @@ it("a refused End hold shows the server's message", async () => {
   post = async () => { throw new ApiError([{ code: "FLAGS_DISABLED", message }], 403); };
   mount();
   const d = await drawer();
-  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  await user.click(await within(d).findByRole("button", { name: "End hold…" }));
   await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
   await waitFor(() => expect(toasts()).toEqual([message]));
   // Nothing changed: the confirm stays open and the hold still shows.
@@ -461,7 +463,7 @@ it("a no-consent case with its own note still offers the no-consent actions", as
   const d = await drawer();
   await within(d).findByRole("button", { name: "Hide batch…" });
   expect(actionButtons(d)).toEqual(["Hide batch…"]);
-  expect(within(d).getByText("Words read off the photos seemed to tell the model what to answer.")).toBeInTheDocument();
+  expect(within(d).getByText("Words read off the photos seemed to tell the checker what to answer.")).toBeInTheDocument();
   expect(within(d).getByText("The photographer has not accepted the Terms that allow automatic hiding.")).toBeInTheDocument();
   await user.click(within(d).getByRole("button", { name: "Hide batch…" }));
   expect(screen.getByText(NO_CONSENT_HIDE)).toBeInTheDocument();
@@ -475,21 +477,21 @@ it("a no-consent Copied case offers Hold payouts until a hold was placed", async
   post = () => new Promise((r) => { release = r; });
   mount();
   const d = await drawer();
-  await within(d).findByRole("button", { name: "Hold payouts" });
-  expect(actionButtons(d)).toEqual(["Hide batch…", "Hold payouts"]);
-  await user.click(within(d).getByRole("button", { name: "Hold payouts" }));
+  await within(d).findByRole("button", { name: "Hold payouts…" });
+  expect(actionButtons(d)).toEqual(["Hide batch…", "Hold payouts…"]);
+  await user.click(within(d).getByRole("button", { name: "Hold payouts…" }));
   expect(api.post).not.toHaveBeenCalled();
   // Before a hide there is nothing to appeal (RelevanceAppealService.file needs a hiding case): only End hold lifts it then.
   expect(screen.getByText("Places the payout hold an automatic Copied case would have placed. The photographer is told their payouts are on hold. End hold lifts it; once the batch is hidden, an accepted appeal lifts it too. Works only while the relevance mode is auto-hide.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Confirm hold payouts" }));
   expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/hold-payouts");
   // The server has not answered: the action is still offered and nothing was said.
-  expect(within(d).getByRole("button", { name: "Hold payouts" })).toBeInTheDocument();
+  expect(within(d).getByRole("button", { name: "Hold payouts…" })).toBeInTheDocument();
   expect(toasts()).toEqual([]);
   one = async () => detail(noConsent("COPIED"), "APPLIED", { payoutHoldPlaced: true, payoutHoldAt: "2003-02-14T04:00:00Z" });
   release(noConsent("COPIED"));
-  await within(d).findByRole("button", { name: "End hold" });
-  expect(actionButtons(d)).toEqual(["Hide batch…", "End hold"]);
+  await within(d).findByRole("button", { name: "End hold…" });
+  expect(actionButtons(d)).toEqual(["Hide batch…", "End hold…"]);
   expect(toasts()).toEqual(["Payouts held: Cebu City Marathon 2003"]);
   // A hold placed once and ended is not offered again.
   cleanup();
@@ -507,8 +509,8 @@ it("a no-consent Copied case an admin hid still offers Hold payouts", async () =
   holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
   mount();
   const d = await drawer();
-  await within(d).findByRole("button", { name: "Hold payouts" });
-  expect(actionButtons(d).filter((b) => !b?.startsWith("Restore photo"))).toEqual(["Restore batch…", "Keep hidden…", "Hold payouts"]);
+  await within(d).findByRole("button", { name: "Hold payouts…" });
+  expect(actionButtons(d).filter((b) => !b?.startsWith("Restore photo"))).toEqual(["Restore batch…", "Keep hidden…", "Hold payouts…"]);
   // An automatic Copied case holds payouts by itself: no Hold payouts there.
   cleanup();
   client.clear();
@@ -516,7 +518,7 @@ it("a no-consent Copied case an admin hid still offers Hold payouts", async () =
   mount();
   const auto = await drawer();
   await within(auto).findByRole("button", { name: "Restore batch…" });
-  expect(within(auto).queryByRole("button", { name: "Hold payouts" })).not.toBeInTheDocument();
+  expect(within(auto).queryByRole("button", { name: "Hold payouts…" })).not.toBeInTheDocument();
 });
 
 it("a refused Hold payouts shows the server's message", async () => {
@@ -526,7 +528,7 @@ it("a refused Hold payouts shows the server's message", async () => {
   post = async () => { throw new ApiError([{ code: "RELEVANCE_ACTIONS_OFF", message: "Holding payouts needs the relevance mode auto-hide" }], 409); };
   mount();
   const d = await drawer();
-  await user.click(await within(d).findByRole("button", { name: "Hold payouts" }));
+  await user.click(await within(d).findByRole("button", { name: "Hold payouts…" }));
   await user.click(screen.getByRole("button", { name: "Confirm hold payouts" }));
   await waitFor(() => expect(toasts()).toEqual(["Holding payouts needs the relevance mode auto-hide"]));
   expect(screen.getByRole("button", { name: "Confirm hold payouts" })).toBeEnabled();
@@ -540,7 +542,58 @@ it("a failed End hold with no server message says what to do next", async () => 
   post = async () => { throw new Error("down"); };
   mount();
   const d = await drawer();
-  await user.click(await within(d).findByRole("button", { name: "End hold" }));
+  await user.click(await within(d).findByRole("button", { name: "End hold…" }));
   await user.click(screen.getByRole("button", { name: "Confirm end hold" }));
   await waitFor(() => expect(toasts()).toEqual(["Could not end the hold. The case was read again: if the payout hold still shows, press End hold again."]));
+});
+
+// FT-20 (C-54, W20.9): a whole-batch hide or restore prints how many photos, and from whom.
+it("Hide batch and a whole-batch Restore print the photo count; a junk-only Restore does not", async () => {
+  const user = userEvent.setup();
+  const count = "420 photos in this batch, from @juanshots.";
+  const progress = "You can follow the progress under Held photos.";
+  mount();
+  await user.click(await within(await drawer()).findByRole("button", { name: "Hide batch…" }));
+  expect(screen.getByText(count)).toBeInTheDocument();
+  expect(screen.getByText(progress)).toBeInTheDocument();
+  cleanup();
+  client.clear();
+  rows = [autoHide];
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  mount();
+  await user.click(await within(await drawer()).findByRole("button", { name: "Restore batch…" }));
+  expect(screen.getByText(count)).toBeInTheDocument();
+  expect(screen.queryByText(progress)).not.toBeInTheDocument();
+  cleanup();
+  client.clear();
+  rows = [{ ...autoHide, verdict: "MIXED", action: "HIDE_JUNK" }];
+  mount();
+  await user.click(await within(await drawer()).findByRole("button", { name: "Restore batch…" }));
+  expect(screen.queryByText(count)).not.toBeInTheDocument();
+});
+
+// FT-20 (C-52, W20.8): where a restore is offered, one line says how to decide.
+it("a case that can be restored says to look at the junk samples first", async () => {
+  const guide = "Look at the junk samples first. If most are real photos of this race, restore the batch.";
+  rows = [autoHide];
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Restore batch…" });
+  expect(within(d).getByText(guide)).toBeInTheDocument();
+  cleanup();
+  client.clear();
+  rows = [cantTell];
+  mount();
+  const other = await drawer();
+  await within(other).findByRole("button", { name: "Hide batch…" });
+  expect(within(other).queryByText(guide)).not.toBeInTheDocument();
+  // A Copied batch can be real race photos and still be a copy: no guidance there.
+  cleanup();
+  client.clear();
+  rows = [copied];
+  mount();
+  const copy = await drawer();
+  await within(copy).findByRole("button", { name: "Restore batch…" });
+  expect(within(copy).queryByText(guide)).not.toBeInTheDocument();
 });
