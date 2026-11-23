@@ -4,6 +4,7 @@ import Link from "next/link";
 import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { useEffect, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
+import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill, type AdminStatusPillTone } from "@/components/admin/admin-status-pill";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
@@ -34,7 +35,7 @@ const KICKER = `font-mono uppercase ${KICKER_SIZE_CLASS.sm}`;
 const STATUS_LABEL: Record<string, string> = { manual_review: "Needs review", auto_approved: "Auto-approved", approved: "Approved", rejected: "Rejected" };
 const REASON_LABEL: Record<string, string> = {
   PASSED: "Passed",
-  LIVENESS_LOW: "Live check score below the bar",
+  LIVENESS_LOW: "Live check score below the pass mark",
   FACE_MISMATCH: "Live face does not match the ID photo",
   NO_FACE_ON_ID: "No face found on the ID photo",
   AI_DISABLED: "Automatic checks were off",
@@ -64,7 +65,15 @@ const StatusPill = ({ reviewState, className }: { reviewState: string; className
 );
 // The photographer detail page shows the same seller-details status (AX-27).
 export const SellerStatusPill = StatusPill;
-const score = (value: number | null) => (value === null ? "Not run" : `${value.toFixed(1)}%`);
+// The pass mark is the server's (FT-29); an older backend sends none, so the bare score shows.
+const score = (value: number | null, passMark?: number | null) =>
+  value === null ? "Not run" : passMark == null ? `${value.toFixed(1)}%` : `${value.toFixed(1)}% (needs ${passMark}%)`;
+// C-10: the row names why a human is needed; these three never are the reason.
+const NOT_A_ROW_REASON = new Set(["PASSED", "AI_DISABLED", "ID_FORMAT_UNCHECKED"]);
+const rowReason = (codes: string[]) => {
+  const code = codes.find((c) => REASON_LABEL[c] && !NOT_A_ROW_REASON.has(c));
+  return code ? REASON_LABEL[code] : null;
+};
 
 // SC-2b: admins review photographers' seller details (ID photos, a selfie
 // holding the ID) on the verifications page, separate from verification itself.
@@ -103,7 +112,9 @@ export function SellerDetailsQueue() {
       ) : (
         <>
           <ul className="space-y-3">
-            {rows.map((row) => (
+            {rows.map((row) => {
+              const reason = row.reviewState === "manual_review" ? rowReason(row.reasonCodes ?? []) : null;
+              return (
               <li key={row.userId}>
                 <button type="button" onClick={() => setOpenId(row.userId)}
                   className="w-full flex items-center justify-between gap-4 border-b border-line pb-3 text-left hover:bg-bone-deep/50">
@@ -112,11 +123,13 @@ export function SellerDetailsQueue() {
                     <span className="block font-sans text-sm text-slate-soft mt-1">
                       {idLabel(row.idType)} · <span className="tnum">{sentenceCaseDate(formatLongDate(row.submittedAt, true))}</span>
                     </span>
+                    {reason && <span className="block font-sans text-sm text-ink mt-1">{reason}</span>}
                   </span>
                   <StatusPill reviewState={row.reviewState} className="shrink-0" />
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
           <LoadMoreButton shown={rows.length} total={total} increment={PAGE_SIZE.ADMIN_INCREMENT}
             isLoading={list.isFetching} onLoadMore={() => setPaging({ key, limit: limit + PAGE_SIZE.ADMIN_INCREMENT })} />
@@ -137,6 +150,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<{ label: string; src: string } | null>(null);
+  const [confirmReject, setConfirmReject] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const data = record.data;
   const expiresAt = record.dataUpdatedAt + LINK_LIFETIME_MS;
@@ -147,7 +161,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
     return () => clearTimeout(timer);
   }, [record.dataUpdatedAt, expiresAt]);
 
-  const decide = async (kind: "approve" | "reject") => {
+  const decide = async (kind: "approve" | "reject", confirmed = false) => {
     if (!data) return;
     setActionError(null);
     const trimmed = reason.trim();
@@ -157,6 +171,11 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
       const box = document.getElementById(REASON_ID);
       box?.scrollIntoView({ block: "center" });
       box?.focus();
+      return;
+    }
+    // C-12: rejecting a seller who is already approved pauses a working photographer, so it asks first.
+    if (kind === "reject" && !confirmed && (data.reviewState === "approved" || data.reviewState === "auto_approved")) {
+      setConfirmReject(true);
       return;
     }
     const isCurrent = captureAuthSession();
@@ -171,13 +190,16 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
       setActionError(error instanceof ApiError && error.status === 409
         ? "These details changed. Reload before deciding."
         : error instanceof ApiError ? error.message : "Couldn't save the decision. Try again.");
+    } finally {
+      // A failure shows in the drawer, with the typed reason kept.
+      setConfirmReject(false);
     }
   };
 
   const canApprove = data?.reviewState === "manual_review";
   const canReject = canApprove || data?.reviewState === "auto_approved" || data?.reviewState === "approved";
   return (
-    <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending || !!zoom}
+    <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending || !!zoom || confirmReject}
       kicker="Seller details" title={data?.legalName ?? "Seller details"}
       rightHeader={data && <StatusPill reviewState={data.reviewState} />}
       subtitle={data && <p className="font-mono text-[13px] text-slate break-all">{data.email}</p>}
@@ -213,6 +235,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
           <Checklist />
           {canReject && (
             <div className="flex flex-col gap-2">
+              <p className="font-sans text-sm text-ink">Approve: the ID check is passed. If their profile is complete it goes live and they are told. Reject: they are told your reason and their new uploads pause until they send details again. A rejection cannot be undone here.</p>
               <AdminTextarea id={REASON_ID} label="Reason for rejecting" required maxLength={500} value={reason} error={reasonError}
                 onChange={(next) => { setReason(next); setReasonError(null); }} />
               <p className="font-sans text-sm text-slate-soft">Sent to the photographer. Their new uploads pause until they send new details.</p>
@@ -225,6 +248,10 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
         {/* eslint-disable-next-line @next/next/no-img-element -- signed storage URL outside Next image-domain config. */}
         {zoom && <img src={zoom.src} alt={zoom.label} draggable={false} className="max-w-none" />}
       </Modal>
+      <AdminConfirmModal open={confirmReject} submitting={isPending} onClose={() => setConfirmReject(false)}
+        onConfirm={() => void decide("reject", true)} title="Reject an approved ID check?" confirmLabel="Reject" tone="danger">
+        <p className="font-sans text-sm text-ink-soft">This photographer is already approved. Rejecting pauses their new uploads until they send details again, and they are told your reason. This cannot be undone here.</p>
+      </AdminConfirmModal>
     </AdminDetailDrawer>
   );
 }
@@ -237,8 +264,8 @@ function Details({ data, payoutNames }: { data: AdminSellerDetails; payoutNames:
     ["Phone", data.phone],
     ["Payout account names", payoutNames === null ? "Loading…" : typeof payoutNames === "string" ? payoutNames : payoutNames.join(", ") || "No payout accounts"],
     ["Submitted", sentenceCaseDate(formatLongDate(data.submittedAt))],
-    ["Live check score", score(data.livenessConfidence)],
-    ["Face match score", score(data.faceSimilarity)],
+    ["Live check score", score(data.livenessConfidence, data.livenessPassMark)],
+    ["Face match score", score(data.faceSimilarity, data.faceMatchPassMark)],
     ["Reasons", data.reasonCodes.length > 0
       ? data.reasonCodes.map((code) => REASON_LABEL[code] ?? code).join("; ")
       : data.autoCheckedAt ? "None" : "Sent before automatic checks"],
@@ -328,8 +355,8 @@ function Checklist() {
       <ul className="mt-3 list-disc space-y-2 pl-5">
         <li>The ID is not expired, and the photos show a real card (not a screen) with no edited-looking text or pasted-on photo.</li>
         <li>The live selfie and the photo holding the ID show the person on the ID photo, and the held card is the same card.</li>
-        <li>PhilSys National ID: scan the QR code in the back photo with PSA&apos;s PhilSys Check (verify.philsys.gov.ph). It should say &quot;Verified&quot; and show the same photo.</li>
-        <li>PRC ID: look the licence up at verification.prc.gov.ph.</li>
+        <li>PhilSys National ID: scan the QR code in the back photo with PSA&apos;s PhilSys Check (<a href="https://verify.philsys.gov.ph" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">verify.philsys.gov.ph</a>). It should say &quot;Verified&quot; and show the same photo.</li>
+        <li>PRC ID: look the licence up at <a href="https://verification.prc.gov.ph" target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">verification.prc.gov.ph</a>.</li>
       </ul>
     </section>
   );

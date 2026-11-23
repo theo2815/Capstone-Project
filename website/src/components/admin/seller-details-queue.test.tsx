@@ -178,7 +178,7 @@ it("shows both scores and the reasons; an unknown reason code renders raw", asyn
   const dialog = await openRecord();
   expect(await within(dialog).findByText("81.3%")).toBeInTheDocument();
   expect(within(dialog).getByText("99.6%")).toBeInTheDocument();
-  expect(within(dialog).getByText("Live check score below the bar; SOMETHING_NEW")).toBeInTheDocument();
+  expect(within(dialog).getByText("Live check score below the pass mark; SOMETHING_NEW")).toBeInTheDocument();
   expect(within(dialog).getByText("ID number on file")).toBeInTheDocument();
 });
 
@@ -250,9 +250,74 @@ it("opens a record once and shows its photos, the payout names and the checklist
   expect(await within(dialog).findByText("Juan D. Cruz")).toBeInTheDocument();
   expect(within(dialog).getByText(/live selfie and the photo holding the ID show the person on the ID photo/)).toBeInTheDocument();
   expect(within(dialog).queryByText(/typed legal name, the name on the ID and the payout account names match/)).not.toBeInTheDocument();
-  expect(within(dialog).getByText(/verify\.philsys\.gov\.ph/)).toBeInTheDocument();
-  expect(within(dialog).getByText(/verification\.prc\.gov\.ph/)).toBeInTheDocument();
+  // FT-14 (C-14): the two checklist addresses are links that open in a new tab.
+  for (const [name, href] of [["verify.philsys.gov.ph", "https://verify.philsys.gov.ph"], ["verification.prc.gov.ph", "https://verification.prc.gov.ph"]]) {
+    const link = within(dialog).getByRole("link", { name });
+    expect(link).toHaveAttribute("href", href);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  }
   expect(recordCalls()).toBe(1);
+});
+
+// FT-14 (C-12, C-13, C-10): what Approve and Reject do, the approved-record confirm, the pass marks, the row reason.
+it("the drawer says what Approve and Reject do before the click", async () => {
+  const dialog = await openRecord();
+  expect(await within(dialog).findByText("Approve: the ID check is passed. If their profile is complete it goes live and they are told. Reject: they are told your reason and their new uploads pause until they send details again. A rejection cannot be undone here.")).toBeInTheDocument();
+});
+
+it("rejecting an approved record asks first and sends nothing until confirmed", async () => {
+  const post = vi.spyOn(api, "post").mockResolvedValue({ ...AUTO_RECORD, status: "rejected", reviewState: "rejected", files: null });
+  nav.set("sd=auto_approved");
+  const dialog = await openRecord(/Maria Santos/);
+  fireEvent.change(await within(dialog).findByLabelText(/Reason for rejecting/), { target: { value: "The ID photo is edited." } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+  const confirm = await screen.findByRole("dialog", { name: "Reject an approved ID check?" });
+  expect(within(confirm).getByText("This photographer is already approved. Rejecting pauses their new uploads until they send details again, and they are told your reason. This cannot be undone here.")).toBeInTheDocument();
+  expect(post).not.toHaveBeenCalled();
+  fireEvent.click(within(confirm).getByRole("button", { name: "Reject" }));
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/seller-details/u2/reject", { revision: 1, reason: "The ID photo is edited." }));
+});
+
+it("rejecting a record that needs review stays one click once a reason is typed", async () => {
+  const post = vi.spyOn(api, "post").mockResolvedValue({ ...RECORD, status: "rejected", reviewState: "rejected", files: null });
+  const dialog = await openRecord();
+  fireEvent.change(await within(dialog).findByLabelText(/Reason for rejecting/), { target: { value: "The ID is expired." } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("dialog", { name: "Reject an approved ID check?" })).not.toBeInTheDocument();
+});
+
+it("scores show their pass mark when the backend sends it, and the bare score when it does not", async () => {
+  const base = get.getMockImplementation()!;
+  const serve = (extra: object) => get.mockImplementation(async (path: string) => path === "/admin/seller-details/u1" ? { ...RECORD, livenessConfidence: 72.4, faceSimilarity: 99.6, ...extra } : base(path));
+  serve({ livenessPassMark: 95, faceMatchPassMark: 99 });
+  const first = await openRecord();
+  expect(await within(first).findByText("72.4% (needs 95%)")).toBeInTheDocument();
+  expect(within(first).getByText("99.6% (needs 99%)")).toBeInTheDocument();
+  cleanup();
+  serve({});
+  const dialog = await openRecord();
+  expect(await within(dialog).findByText("72.4%")).toBeInTheDocument();
+  expect(within(dialog).queryByText(/needs/)).not.toBeInTheDocument();
+  expect(within(dialog).queryByText(/undefined/)).not.toBeInTheDocument();
+});
+
+it("a needs-review row shows its first real reason; an auto-approved row shows none", async () => {
+  const base = get.getMockImplementation()!;
+  get.mockImplementation(async (path: string) => {
+    if (!path.startsWith("/admin/seller-details?")) return base(path);
+    const items = [
+      { ...row("u1", "manual_review", "Juan Dela Cruz"), reasonCodes: ["PASSED", "AI_DISABLED", "FACE_MISMATCH", "LIVENESS_LOW"] },
+      { ...row("u2", "auto_approved", "Maria Santos"), reasonCodes: ["FACE_MISMATCH"] },
+    ];
+    return { items, total: 2, offset: 0, limit: 10 };
+  });
+  renderQueue();
+  const juan = await screen.findByRole("button", { name: /Juan Dela Cruz/ });
+  expect(within(juan).getByText("Live face does not match the ID photo")).toBeInTheDocument();
+  expect(within(juan).queryByText(/Live check score/)).not.toBeInTheDocument();
+  expect(within(screen.getByRole("button", { name: /Maria Santos/ })).queryByText(/Live face/)).not.toBeInTheDocument();
 });
 
 it("approves with the record's revision", async () => {
