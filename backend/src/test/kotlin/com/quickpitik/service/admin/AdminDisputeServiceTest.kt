@@ -440,6 +440,7 @@ class AdminDisputeServiceTest {
             Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
             Mockito.eq("") ?: "",
             Mockito.eq("") ?: "",
+            Mockito.isNull<UUID>(),
             Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
         ))
             .thenReturn(PageImpl(listOf(first, second)))
@@ -582,7 +583,7 @@ class AdminDisputeServiceTest {
     }
 
     private fun unresolved(vararg disputes: Dispute) {
-        Mockito.`when`(disputeRepository.pageForAdmin(listOf("open", "escalated"), "", "", Pageable.unpaged()))
+        Mockito.`when`(disputeRepository.pageForAdmin(listOf("open", "escalated"), "", "", null, Pageable.unpaged()))
             .thenReturn(PageImpl(disputes.toList()))
         Mockito.`when`(orderRepository.findAllById(Mockito.anyIterable())).thenReturn(listOf(qrph))
     }
@@ -635,6 +636,7 @@ class AdminDisputeServiceTest {
             Mockito.anyCollection() ?: emptyList(),
             Mockito.anyString() ?: "",
             Mockito.anyString() ?: "",
+            Mockito.isNull<UUID>(),
             Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
         )).thenReturn(PageImpl(emptyList()))
 
@@ -644,6 +646,31 @@ class AdminDisputeServiceTest {
             Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
             Mockito.eq("pay_AbC123") ?: "",
             Mockito.eq("pay\\_AbC123") ?: "",
+            Mockito.isNull<UUID>(),
+            Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
+        )
+    }
+
+    // FU-2 (O6): `runner` reaches the query on the paged list and on the attention views.
+    @Test
+    fun `list passes the runner filter to the query on every view`() {
+        val runner = UUID.randomUUID()
+        Mockito.`when`(disputeRepository.pageForAdmin(
+            Mockito.anyCollection() ?: emptyList(),
+            Mockito.anyString() ?: "",
+            Mockito.anyString() ?: "",
+            Mockito.any(UUID::class.java),
+            Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
+        )).thenReturn(PageImpl(emptyList()))
+
+        service.list(null, null, null, PaginationParams.of(0, 10), runner)
+        service.list("needs_me", null, null, PaginationParams.of(0, 10), runner)
+
+        Mockito.verify(disputeRepository, Mockito.times(2)).pageForAdmin(
+            Mockito.anyCollection() ?: emptyList(),
+            Mockito.anyString() ?: "",
+            Mockito.anyString() ?: "",
+            Mockito.eq(runner) ?: runner,
             Mockito.any(Pageable::class.java) ?: Pageable.unpaged(),
         )
     }
@@ -735,6 +762,7 @@ class AdminDisputeServiceTest {
             Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
             Mockito.eq("") ?: "",
             Mockito.eq("") ?: "",
+            Mockito.isNull<UUID>(),
             Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
         )).thenReturn(PageImpl(listOf(dispute)))
         Mockito.`when`(orderRepository.findAllById(setOf(order.id))).thenReturn(listOf(order))
@@ -820,6 +848,7 @@ class AdminDisputeServiceTest {
             Mockito.eq(listOf("open", "escalated", "resolved", "denied", "withdrawn")) ?: emptyList(),
             Mockito.eq("") ?: "",
             Mockito.eq("") ?: "",
+            Mockito.isNull<UUID>(),
             Mockito.any(Pageable::class.java) ?: OffsetLimitPageable(PaginationParams.of(0, 10)),
         )).thenReturn(PageImpl(disputes.toList()))
     }

@@ -47,6 +47,8 @@ data class AdminPayoutCycleDto(
     // large cycle the FE shows "1 of 2 approvals" until secondApprovedBy is set.
     val approvedBy: String? = null,
     val secondApprovedBy: String? = null,
+    // FU-2: true when this payout needs two different admins (the approve path's own rule), before or after a first approval.
+    val needsTwoApprovals: Boolean = false,
     val provider: String = "manual",
     val payoutAccount: AdminPayoutAccountSnapshotDto,
     // PE-2.2: the photographer's open relevance flag, confirmed or not, and whether

@@ -45,7 +45,7 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
     private val all = listOf("open", "escalated", "resolved", "denied", "withdrawn")
 
     private fun search(q: String, statuses: List<String> = all) =
-        disputes.pageForAdmin(statuses, q, escapeLike(q), PageRequest.of(0, 50))
+        disputes.pageForAdmin(statuses, q, escapeLike(q), null, PageRequest.of(0, 50))
 
     private fun assertFinds(q: String, vararg expected: Fixture) {
         val page = search(q)
@@ -72,7 +72,7 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
         val a = fixture()
         val b = fixture(status = DisputeStatus.DENIED)
 
-        val page = disputes.pageForAdmin(all, "", "", Pageable.unpaged())
+        val page = disputes.pageForAdmin(all, "", "", null, Pageable.unpaged())
 
         assertTrue(page.content.map { it.id }.containsAll(listOf(a.dispute.id, b.dispute.id)))
         assertEquals(disputes.count(), page.totalElements)
@@ -141,7 +141,7 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
     fun `a dispute whose runner was deleted is still listed and searchable by order id`() {
         val f = fixture(deletedRunner = true)
 
-        assertTrue(f.dispute.id in disputes.pageForAdmin(all, "", "", Pageable.unpaged()).content.map { it.id })
+        assertTrue(f.dispute.id in disputes.pageForAdmin(all, "", "", null, Pageable.unpaged()).content.map { it.id })
         assertFinds(f.order.id.toString(), f)
     }
 
@@ -168,6 +168,26 @@ class DisputeAdminQueryIntegrationTest : PostgresIntegrationTest() {
         assertTrue(sibling.id in found.map { it.id })
         assertTrue(found.none { it.orderId == other.order.id })
         assertTrue(payments.findAllByProviderAndProviderRefIn("card", listOf(a.checkoutRef)).isEmpty())
+    }
+
+    // FU-2 (O6): `runner` keeps only that runner's disputes, with no substring match on email.
+    @Test
+    fun `the runner filter returns only that runner's disputes`() {
+        val mine = fixture()
+        val closed = fixture(status = DisputeStatus.DENIED)
+        val other = fixture()
+        fixture(deletedRunner = true)
+        val me = mine.runner!!.id
+        val refiled = disputes.saveAndFlush(
+            Dispute(orderId = closed.order.id, photoId = closed.dispute.photoId, runnerId = me,
+                reasonWire = "other", statusWire = DisputeStatus.RESOLVED.wire),
+        )
+
+        val page = disputes.pageForAdmin(all, "", "", me, Pageable.unpaged())
+
+        assertEquals(setOf(mine.dispute.id, refiled.id), page.content.mapTo(mutableSetOf()) { it.id })
+        assertEquals(2, page.totalElements)
+        assertTrue(other.dispute.id !in disputes.pageForAdmin(all, "", "", me, PageRequest.of(0, 50)).content.map { it.id })
     }
 
     // DW-6: the runner's other requests, counted per dispute row and status.

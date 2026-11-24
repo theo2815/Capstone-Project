@@ -17,8 +17,7 @@ import com.quickpitik.exception.ApiException
 import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.ValidationException
-import com.quickpitik.entity.REFUND_LINK_SENT
-import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
+import com.quickpitik.entity.RUNNER_HIDDEN_DISPUTE_DECISIONS
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.DisputeRepository
 import com.quickpitik.repository.OrderItemRepository
@@ -250,7 +249,7 @@ class RefundService(
 
         val latestNote = adminDecisionLogRepository
             .findByTargetDisputeIdInOrderByDecidedAtDesc(listOf(dispute.id))
-            .firstOrNull { it.decision != REFUND_SENT_TO_MANUAL_REVIEW && it.decision != REFUND_LINK_SENT }
+            .firstOrNull { it.decision !in RUNNER_HIDDEN_DISPUTE_DECISIONS }
             ?.reason
 
         return RunnerDisputeDto(

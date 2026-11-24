@@ -192,9 +192,10 @@ class AdminPayoutService(
 
     // Payouts >= the configured threshold need a second, distinct admin — but
     // only once >= 2 admins exist, so a lone admin can still run the business.
-    private fun requiresTwoPerson(cycle: PayoutCycle): Boolean {
+    // A list passes the admin count it read once for the page.
+    private fun requiresTwoPerson(cycle: PayoutCycle, adminCount: () -> Long = { userRepository.countByRole(Role.ADMIN) }): Boolean {
         if (cycle.amountPhp < platformProperties.payoutTwoPersonThresholdPhp) return false
-        return userRepository.countByRole(Role.ADMIN) >= 2
+        return adminCount() >= 2
     }
 
     fun hold(adminId: UUID, payoutId: String, reason: String): AdminPayoutCycleDto {
@@ -772,6 +773,7 @@ class AdminPayoutService(
         val relevanceFlagsByUser = flagRepository
             .findOpenByUserTargetsAndReason(photographerIds, SystemFlagReason.BATCH_RELEVANCE_LOW.wire)
             .groupBy { it.targetId }
+        val adminCount by lazy { userRepository.countByRole(Role.ADMIN) }
         return cycles.map { cycle ->
             val candidates = accountsByUser[cycle.photographerId].orEmpty()
             hydrateOne(
@@ -780,6 +782,7 @@ class AdminPayoutService(
                 settings = settingsById[cycle.photographerId],
                 account = candidates.firstOrNull { it.isPrimary } ?: candidates.firstOrNull(),
                 relevanceFlag = pickRelevanceFlag(relevanceFlagsByUser[cycle.photographerId].orEmpty()),
+                needsTwoApprovals = requiresTwoPerson(cycle) { adminCount },
             )
         }
     }
@@ -795,6 +798,7 @@ class AdminPayoutService(
                 listOf(cycle.photographerId), SystemFlagReason.BATCH_RELEVANCE_LOW.wire,
             ),
         ),
+        needsTwoApprovals: Boolean = requiresTwoPerson(cycle),
     ): AdminPayoutCycleDto {
         return AdminPayoutCycleDto(
             id = cycle.id,
@@ -816,6 +820,7 @@ class AdminPayoutService(
             failedReason = cycle.failedReason,
             approvedBy = cycle.approvedBy?.toString(),
             secondApprovedBy = cycle.secondApprovedBy?.toString(),
+            needsTwoApprovals = needsTwoApprovals,
             provider = cycle.provider,
             payoutAccount = snapshotAccount(cycle, account),
             relevanceFlagId = relevanceFlag?.id,

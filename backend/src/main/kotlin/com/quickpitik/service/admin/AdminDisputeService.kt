@@ -110,6 +110,7 @@ class AdminDisputeService(
         statusFilter: String?,
         query: String?,
         params: PaginationParams,
+        runner: UUID? = null,
     ): PaginatedResponse<AdminDisputeDto> {
         val viewWire = view?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
         val statusWire = statusFilter?.takeIf { it.isNotBlank() }?.let { parseStatus(it).wire }
@@ -118,8 +119,8 @@ class AdminDisputeService(
         }
         val q = query?.trim()?.take(100) ?: ""
         val keep: (DisputeQueueState) -> Boolean = when (viewWire) {
-            null, "all" -> return sqlPage(statusWire?.let { listOf(it) } ?: ALL_STATUS_WIRES, q, params)
-            "closed" -> return sqlPage(CLOSED_STATUS_WIRES, q, params)
+            null, "all" -> return sqlPage(statusWire?.let { listOf(it) } ?: ALL_STATUS_WIRES, q, params, runner)
+            "closed" -> return sqlPage(CLOSED_STATUS_WIRES, q, params, runner)
             "needs_me" -> { s -> s.attention.needsAdmin }
             "overdue" -> { s -> s.attention.needsAdmin && s.overdue }
             "refund_run" -> { s -> s.attention in PARKED_QRPH_ATTENTIONS }
@@ -129,7 +130,7 @@ class AdminDisputeService(
             )
         }
         val now = OffsetDateTime.now(clock)
-        val sorted = unresolvedWithState(q, now)
+        val sorted = unresolvedWithState(q, now, runner)
             .filter { keep(it.second) }
             .sortedWith(compareBy({ it.second.dueAt }, { it.first.openedAt }, { it.first.id }))
         val page = sorted.drop(params.offset).take(params.limit).map { it.first }
@@ -139,19 +140,19 @@ class AdminDisputeService(
     // The badge's numbers: the same load and classify as the `needs_me` view.
     @Transactional(readOnly = true)
     fun queueCounts(): DisputeQueueCounts {
-        val states = unresolvedWithState("", OffsetDateTime.now(clock)).map { it.second }.filter { it.attention.needsAdmin }
+        val states = unresolvedWithState("", OffsetDateTime.now(clock), null).map { it.second }.filter { it.attention.needsAdmin }
         return DisputeQueueCounts(needsAdmin = states.size.toLong(), overdue = states.count { it.overdue }.toLong())
     }
 
-    private fun sqlPage(statusWires: List<String>, q: String, params: PaginationParams): PaginatedResponse<AdminDisputeDto> {
-        val page = disputeRepository.pageForAdmin(statusWires, q, escapeLike(q), OffsetLimitPageable(params))
+    private fun sqlPage(statusWires: List<String>, q: String, params: PaginationParams, runner: UUID?): PaginatedResponse<AdminDisputeDto> {
+        val page = disputeRepository.pageForAdmin(statusWires, q, escapeLike(q), runner, OffsetLimitPageable(params))
         if (page.isEmpty) return PaginatedResponse.empty(params)
         return PaginatedResponse.of(hydrateMany(page.content), page.totalElements, params)
     }
 
     // shortcut: sorts unresolved disputes in memory; fine while open plus escalated stay in the low thousands (DW-0.2 count); upgrade to a stored due_at column with the photo-removal sweep recipe if it grows
-    private fun unresolvedWithState(q: String, now: OffsetDateTime): List<Pair<Dispute, DisputeQueueState>> {
-        val disputes = disputeRepository.pageForAdmin(UNRESOLVED_STATUS_WIRES, q, escapeLike(q), Pageable.unpaged()).content
+    private fun unresolvedWithState(q: String, now: OffsetDateTime, runner: UUID?): List<Pair<Dispute, DisputeQueueState>> {
+        val disputes = disputeRepository.pageForAdmin(UNRESOLVED_STATUS_WIRES, q, escapeLike(q), runner, Pageable.unpaged()).content
         if (disputes.isEmpty()) return emptyList()
         val ordersById = orderRepository.findAllById(disputes.mapTo(mutableSetOf()) { it.orderId }).associateBy { it.id }
         return disputes.map { it to queueState(it, ordersById[it.orderId], paymongoProperties, disputeQueueProperties, now) }
@@ -197,8 +198,8 @@ class AdminDisputeService(
 
     /**
      * `reason` is **runner-facing**, deliberately. It is interpolated into the
-     * inbox message below, and every dispute decision's reason also reaches
-     * the runner as `RunnerDisputeDto.resolutionNote` on /me/orders (see
+     * inbox message below, and every dispute decision's reason but the escalate
+     * note (FU-2) also reaches the runner as `RunnerDisputeDto.resolutionNote` on /me/orders (see
      * `OrderService.hydrateDisputesByOrderId`), which the website renders in
      * the refund timeline. Admins should write it as an explanation to the
      * customer, not as an internal note.

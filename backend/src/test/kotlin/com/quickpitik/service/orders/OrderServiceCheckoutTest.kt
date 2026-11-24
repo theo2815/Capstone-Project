@@ -208,13 +208,44 @@ class OrderServiceCheckoutTest {
             listOf(
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_LINK_SENT),
                 AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = REFUND_SENT_TO_MANUAL_REVIEW),
-                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "escalated", reason = "X"),
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = dispute.id, decision = "resolved", reason = "X"),
             ),
         )
 
         val note = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.single().resolutionNote
 
         assertEquals("X", note)
+    }
+
+    @Test
+    fun `the runner's dispute note leaves out the escalate note, and a later deny note still shows`() {
+        val userId = UUID.randomUUID()
+        val order = Order(
+            userId = userId,
+            eventId = eventId,
+            recipientEmail = email,
+            paymentMethodWire = PaymentMethod.GCASH.wire,
+            status = OrderStatus.FULFILLED,
+            totalPhp = BigDecimal("125.00"),
+        )
+        val escalated = Dispute(orderId = order.id, photoId = photo.id, runnerId = userId, reasonWire = "other")
+        val denied = Dispute(orderId = order.id, photoId = UUID.randomUUID(), runnerId = userId, reasonWire = "other")
+        Mockito.`when`(orderRepository.findByUserIdOrderByPaidAtDescCreatedAtDesc(anyArg(), anyArg()))
+            .thenReturn(org.springframework.data.domain.PageImpl(listOf(order)))
+        Mockito.`when`(orderItemRepository.findByIdOrderIdIn(anyArg())).thenReturn(emptyList())
+        Mockito.`when`(disputeRepository.findByOrderIdIn(anyArg())).thenReturn(listOf(escalated, denied))
+        Mockito.`when`(decisionLogRepository.findByTargetDisputeIdInOrderByDecidedAtDesc(anyArg())).thenReturn(
+            listOf(
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = denied.id, decision = "denied", reason = "Deny note"),
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = escalated.id, decision = "escalated", reason = "Internal"),
+                AdminDecisionLog(adminId = UUID.randomUUID(), targetDisputeId = denied.id, decision = "escalated", reason = "Internal"),
+            ),
+        )
+
+        val notes = service.listForUser(userId, PaginationParams(0, 20)).items.single().disputes.associate { it.id to it.resolutionNote }
+
+        assertNull(notes[escalated.id])
+        assertEquals("Deny note", notes[denied.id])
     }
 
     @Test

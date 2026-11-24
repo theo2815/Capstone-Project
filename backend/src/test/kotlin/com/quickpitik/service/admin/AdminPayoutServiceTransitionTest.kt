@@ -475,6 +475,39 @@ class AdminPayoutServiceTransitionTest {
         given(PayoutCycleStatus.PENDING, amount = "15000")
         val dto = service().approve(adminId, cycleId)
         assertEquals("approved", dto.status)
+        assertFalse(dto.needsTwoApprovals)
+    }
+
+    // FU-2 (O5): needsTwoApprovals is the approve path's own rule, before or after a first approval.
+    private fun listNeedsTwo(admins: Long): List<Boolean> {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(admins)
+        fun c(id: String, amount: String, approvedBy: UUID? = null) =
+            PayoutCycle(id = id, photographerId = UUID.randomUUID(), weekOf = LocalDate.of(2026, 9, 1), methodWire = "gcash")
+                .also { it.amountPhp = BigDecimal(amount); it.approvedBy = approvedBy }
+        Mockito.`when`(payoutCycleRepository.pageForAdmin(anyArg(), anyArg(), anyArg())).thenReturn(
+            org.springframework.data.domain.PageImpl(
+                listOf(c("PAY-BIG", "15000"), c("PAY-SMALL", "9999.99"), c("PAY-BIG-FIRST", "10000", approvedBy = adminId)),
+            ),
+        )
+        return service().list(null, null, com.quickpitik.common.PaginationParams.of(0, 20)).items.map { it.needsTwoApprovals }
+    }
+
+    @Test
+    fun `the list says which payouts need two admins, counting the admins once per page`() {
+        assertEquals(listOf(true, false, true), listNeedsTwo(admins = 2))
+        Mockito.verify(userRepository, Mockito.times(1)).countByRole(Role.ADMIN)
+    }
+
+    @Test
+    fun `with one admin no payout needs two approvals`() {
+        assertEquals(listOf(false, false, false), listNeedsTwo(admins = 1))
+    }
+
+    @Test
+    fun `a first approval of a large payout still says it needs two admins`() {
+        Mockito.`when`(userRepository.countByRole(Role.ADMIN)).thenReturn(2L)
+        given(PayoutCycleStatus.PENDING, amount = "15000")
+        assertTrue(service().approve(adminId, cycleId).needsTwoApprovals)
     }
 
     @Test

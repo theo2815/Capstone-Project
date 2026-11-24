@@ -277,6 +277,23 @@ class AdminDisputesControllerTest {
     }
 
     @Test
+    fun `runner reaches the service as an id, and a bad id is a 400`() {
+        signIn(Role.ADMIN)
+        val runner = UUID.randomUUID()
+        val params = PaginationParams.of(null, null)
+        Mockito.`when`(service.list(null, null, null, params, runner))
+            .thenReturn(PaginatedResponse.of(listOf(dto()), 1, params))
+
+        mvc.perform(get("/api/v1/admin/disputes").param("runner", runner.toString()))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.items[0].id").value(disputeId.toString()))
+        mvc.perform(get("/api/v1/admin/disputes").param("runner", "ana@x.com"))
+            .andExpect(status().isBadRequest)
+
+        Mockito.verify(service).list(null, null, null, params, runner)
+    }
+
+    @Test
     fun `the deny reasons are served to admins, not runners`() {
         for (role in listOf(Role.RUNNER, Role.PHOTOGRAPHER)) {
             signIn(role)
