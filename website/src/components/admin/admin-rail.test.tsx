@@ -4,9 +4,12 @@ import type { AdminKpis } from "@/lib/api-admin";
 import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { AdminRail } from "./admin-rail";
 import { AdminMobileStrip } from "./admin-mobile-strip";
+import { AdminShell } from "./admin-shell";
 
 const path = vi.hoisted(() => ({ value: "/admin/relevance" }));
 vi.mock("next/navigation", () => ({ usePathname: () => path.value }));
+vi.mock("@/components/layout/site-header", () => ({ SiteHeader: () => null }));
+vi.mock("@/components/admin/admin-shell-keyboard", () => ({ AdminShellKeyboard: () => null }));
 
 const kpis = vi.hoisted(() => ({ value: null as AdminKpis | null }));
 vi.mock("@/hooks/use-admin-data", () => ({ useAdminKpis: () => kpis.value }));
@@ -76,8 +79,8 @@ it("the rail footer sits outside the scrolling list, so it stays in view", () =>
   const nav = screen.getByRole("navigation", { name: "Admin sections" });
   const aside = nav.parentElement!;
   expect(aside.tagName).toBe("ASIDE");
-  expect(nav.className).toContain("md:overflow-y-auto");
-  expect(aside.className).not.toContain("md:overflow-y-auto");
+  expect(nav.className).toContain("lg:overflow-y-auto");
+  expect(aside.className).not.toContain("lg:overflow-y-auto");
   for (const name of ["Search the admin", "Keyboard shortcuts (press ?)", "Hide tips"]) {
     const control = screen.getByRole("button", { name });
     expect(nav.contains(control)).toBe(false);
@@ -114,4 +117,22 @@ it("the mobile strip opens with Search and the open total, then the queues, a di
     .toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts", "Photo Relevance", "Photo removals"]);
   expect(items[divider + 1]).toHaveTextContent("Events");
   for (const link of screen.getAllByRole("link")) expect(link.className).toContain("min-h-[44px]");
+});
+
+// FT-40 (R-13): tablets (768 to 1023 px) get the phone strip, so the rail only shows from lg.
+it("the strip shows below lg and the rail from lg, so a tablet is not squeezed beside the rail", () => {
+  const { container } = render(<AdminShell>page</AdminShell>);
+  const strip = screen.getByRole("button", { name: "Search" }).closest("nav")!.parentElement!.parentElement!;
+  expect(strip.className).toContain("lg:hidden");
+  expect(strip.className).not.toContain("md:hidden");
+  const rail = container.querySelector("aside")!;
+  expect(rail.className).toContain("lg:flex");
+  expect(rail.className).not.toMatch(/(^|\s)md:/);
+  expect(screen.getByRole("button", { name: "Keyboard shortcuts (press ?)" }).className).toContain("lg:inline-flex");
+});
+
+// FT-40 (R-10): "Hide tips" was a 20 px target.
+it("Hide tips has a 44 px hit area", () => {
+  render(<AdminRail />);
+  expect(screen.getByRole("button", { name: "Hide tips" }).className).toContain("min-h-11");
 });

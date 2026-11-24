@@ -110,14 +110,17 @@ export function AdminPayoutRow({
       )}
     >
       {selectable ? (
-        <input
-          type="checkbox"
-          aria-label={`Select payout ${cycle.id}`}
-          checked={selected}
-          disabled={submitting}
-          onChange={onToggleSelect}
-          className="relative z-10 mt-1 @5xl:mt-0 accent-ink shrink-0 size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        />
+        // The label gives the 16 px checkbox a 44 px hit area; the negative margin keeps the 1rem column.
+        <label className="relative z-10 -mx-3.5 -my-1.5 flex size-11 shrink-0 cursor-pointer items-center justify-center">
+          <input
+            type="checkbox"
+            aria-label={`Select payout ${cycle.id}`}
+            checked={selected}
+            disabled={submitting}
+            onChange={onToggleSelect}
+            className="accent-ink size-4 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </label>
       ) : (
         <span aria-hidden="true" className="hidden @5xl:block" />
       )}

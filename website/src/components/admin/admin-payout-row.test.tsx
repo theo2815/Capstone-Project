@@ -34,6 +34,13 @@ it("the checkbox and an inline action do not open the row, by click or Enter", a
   expect(props.onActivate).not.toHaveBeenCalled();
 });
 
+// FT-40 (C-23): the 16 px checkbox sits in a 44 px label, like the Verifications rows.
+it("the row checkbox has a 44 px hit area", () => {
+  renderRow();
+  const label = screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }).closest("label");
+  expect(label?.className).toContain("size-11");
+});
+
 // FT-16 (C-25): green would read as finished, so no status is fresh; failed and returned are errors.
 it("status tones: Approved is ink, Failed and Returned are error, Paid stays slate", () => {
   expect(payoutStatusTone("approved")).toBe("ink");
