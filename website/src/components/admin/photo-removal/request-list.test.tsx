@@ -137,6 +137,15 @@ it("a case row's date is in sentence case", async () => {
   expect(await screen.findByText(/photos · Oct 08 · 2026/)).toBeInTheDocument();
 });
 
+// FU-14: below 768 px the event name takes the whole first line; count, date and pills wrap below it.
+it("a case row keeps the event name on its own line on phones", async () => {
+  vi.mocked(removalApi.listAdminRemovalRequests).mockResolvedValue({ items: [{ ...openCase, items: [] }], total: 1, offset: 0, limit: 20 });
+  render(<QueryClientProvider client={client}><RemovalRequestList /></QueryClientProvider>);
+  const nameBlock = (await screen.findByText(openCase.event.name)).parentElement!;
+  expect(nameBlock).toHaveClass("basis-full", "md:basis-0", "grow");
+  expect(nameBlock.closest("a")).toHaveClass("flex-wrap");
+});
+
 it("the Inbox list says no requests are waiting", async () => {
   vi.mocked(removalApi.listAdminRemovalRequests).mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
   nav.set("status=OPEN&needs=0");
