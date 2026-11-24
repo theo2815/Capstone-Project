@@ -6,6 +6,8 @@ import { useAdminUserDetail } from "@/hooks/use-admin-users";
 import { useAdminDecisions } from "@/hooks/use-admin-decisions";
 import type { RecentAdminDecision } from "@/lib/api-admin";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { cn } from "@/lib/utils";
 
 interface AdminDecisionsTimelineProps {
   /** Cap on entries rendered. Defaults to 10 (Overview compact view). */
@@ -29,7 +31,7 @@ export function AdminDecisionsTimeline({
   if (!userId && !recent) return <p className="font-sans text-sm text-slate-soft">Decision history is available on each <Link className="underline" href="/admin/photographers">photographer’s profile</Link>.</p>;
   const query = userId ? userQuery : recentQuery;
   if (query.isPending) return <p role="status">Loading decisions…</p>;
-  if (query.isError) return <p role="alert">Couldn&apos;t load decisions. <button onClick={() => void query.refetch()}>Try again</button></p>;
+  if (query.isError) return <p role="alert">Couldn&apos;t load decisions. <button type="button" onClick={() => void query.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button></p>;
 
   const rows: TimelineRow[] = userId
     ? (userQuery.data?.decisionLog ?? []).slice(0, limit).map((entry, i) => ({
@@ -158,5 +160,5 @@ function formatDecidedAt(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-  return `${month} ${day} · ${time}`;
+  return `${month} ${day} · ${d.getFullYear()} · ${time}`;
 }

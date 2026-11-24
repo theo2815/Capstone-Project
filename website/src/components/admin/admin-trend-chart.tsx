@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatLongDate } from "@/lib/format";
+import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export interface DailyMetric {
@@ -47,6 +47,16 @@ export function AdminTrendChart({
     formatValue
       ? formatValue(amount)
       : `${amount.toLocaleString()} ${unitLabel}`;
+  // "{value} {unit}" and a sentence-case day, for the busiest line and each bar's name.
+  const withUnit = (amount: number) =>
+    formatValue ? `${formatValue(amount)} ${unitLabel}` : renderValue(amount);
+  // A caller's own label (Sales' "WK OF NOV 16") is kept; sentence case would lower its month.
+  const dayLabel = (date: string) =>
+    formatLabel ? formatLabel(date) : sentenceCaseDate(renderLabel(date));
+  const peak = data.reduce<DailyMetric | null>(
+    (best, d) => (d.amount > (best?.amount ?? 0) ? d : best),
+    null,
+  );
 
   return (
     <div>
@@ -70,9 +80,7 @@ export function AdminTrendChart({
           </tbody>
         </table>
       </div>
-      {/* Bars are for the eye only; the table above is their text version. */}
       <div
-        aria-hidden="true"
         className="flex items-end gap-1 h-20 md:h-24 bg-bone-deep rounded-md p-1.5"
         onMouseLeave={() => setActiveIndex(null)}
       >
@@ -80,10 +88,14 @@ export function AdminTrendChart({
           const pct = (point.amount / max) * 100;
           const isActive = activeIndex === i;
           return (
-            <span
+            <button
+              type="button"
               key={point.date}
+              aria-label={`${dayLabel(point.date)}: ${withUnit(point.amount)}`}
               onMouseEnter={() => setActiveIndex(i)}
-              className="flex-1 h-full flex items-end rounded-sm"
+              onFocus={() => setActiveIndex(i)}
+              onClick={() => setActiveIndex(i)}
+              className="flex-1 h-full flex items-end rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh"
             >
               <span
                 style={{
@@ -96,7 +108,7 @@ export function AdminTrendChart({
                   isActive ? "bg-ink" : "bg-ink-soft",
                 )}
               />
-            </span>
+            </button>
           );
         })}
       </div>
@@ -118,6 +130,11 @@ export function AdminTrendChart({
           )
         )}
       </div>
+      {peak && (
+        <p className="mt-2 font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] uppercase tnum text-slate">
+          Busiest: {withUnit(peak.amount)} on {dayLabel(peak.date)}.
+        </p>
+      )}
     </div>
   );
 }

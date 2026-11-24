@@ -101,3 +101,39 @@ it("the pending payouts tile says how many are waiting", () => {
   render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
   expect(screen.getByText("payouts waiting")).toBeInTheDocument();
 });
+
+const renderWithKpis = (value: object) => {
+  useAuthStore.getState().setUser(admin);
+  kpis.value = value;
+  vi.spyOn(api, "get").mockResolvedValue({ items: [], total: 0, offset: 0, limit: 20 });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><AdminOverviewPage /></QueryClientProvider>);
+};
+const tile = (kicker: string) => screen.getByText(kicker).closest("a")!;
+
+it("the payouts tile counts what the Inbox counts and opens Payouts", () => {
+  renderWithKpis({ payoutsAwaitingReview: 2, pendingPayouts: 5 });
+  expect(tile("Payouts waiting").textContent).toContain("2");
+  expect(tile("Payouts waiting").textContent).not.toContain("5");
+  expect(tile("Payouts waiting").getAttribute("href")).toBe("/admin/payouts");
+});
+
+it("an older backend without the Inbox payout count still shows the payouts tile", () => {
+  renderWithKpis({ pendingPayouts: 5 });
+  expect(tile("Payouts waiting").textContent).toContain("5");
+});
+
+it("every tile says it is a total right now or names its window", () => {
+  renderWithKpis({ approvedPhotographers: 4, suspended: 1, decisionsThisWeek: 3 });
+  expect(screen.getByText("Totals right now. The last tile counts this week.")).toBeInTheDocument();
+  expect(tile("Approved photographers").textContent).toContain("approved to upload");
+  expect(tile("Suspended accounts").textContent).toContain("photographers and runners");
+  expect(tile("Suspended accounts").getAttribute("href")).toBe("/admin/photographers?status=suspended");
+  expect(tile("This week's decisions").textContent).toContain("actions logged since Monday");
+  expect(tile("Pending verifications").getAttribute("href")).toBe("/admin/inbox?type=verifications");
+});
+
+it("one decision this week reads in the singular", () => {
+  renderWithKpis({ decisionsThisWeek: 1 });
+  expect(tile("This week's decisions").textContent).toContain("action logged since Monday");
+});
