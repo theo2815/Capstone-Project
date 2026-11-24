@@ -22,6 +22,9 @@ data class AdminSellerDetailsRowDto(
     val livenessConfidence: BigDecimal?,
     val faceSimilarity: BigDecimal?,
     val autoCheckedAt: OffsetDateTime?,
+    // The configured pass marks (0-100) the two scores are judged against (FT-29).
+    val livenessPassMark: Double? = null,
+    val faceMatchPassMark: Double? = null,
 )
 
 // E4 links, each valid for five minutes; null when that file was not sent.
@@ -62,6 +65,9 @@ data class AdminSellerDetailsDto(
     val livenessConfidence: BigDecimal?,
     val faceSimilarity: BigDecimal?,
     val autoCheckedAt: OffsetDateTime?,
+    // The configured pass marks (0-100) the two scores are judged against (FT-29).
+    val livenessPassMark: Double? = null,
+    val faceMatchPassMark: Double? = null,
     val biometricConsentAt: OffsetDateTime?,
     // Only whether a number was given: the raw number is never stored and its hash never leaves the server.
     val hasIdNumber: Boolean,
@@ -72,7 +78,7 @@ data class AdminSellerDetailsDto(
     val linksExpireAt: OffsetDateTime? = null,
 )
 
-fun SellerDetails.toAdminRowDto(email: String) = AdminSellerDetailsRowDto(
+fun SellerDetails.toAdminRowDto(email: String, livenessPassMark: Double? = null, faceMatchPassMark: Double? = null) = AdminSellerDetailsRowDto(
     userId = userId,
     email = email,
     legalName = legalName,
@@ -85,6 +91,8 @@ fun SellerDetails.toAdminRowDto(email: String) = AdminSellerDetailsRowDto(
     livenessConfidence = livenessConfidence,
     faceSimilarity = faceSimilarity,
     autoCheckedAt = autoCheckedAt,
+    livenessPassMark = livenessPassMark,
+    faceMatchPassMark = faceMatchPassMark,
 )
 
 fun SellerDetails.toAdminDto(
@@ -92,6 +100,8 @@ fun SellerDetails.toAdminDto(
     repeatMatches: List<RepeatMatchDto> = emptyList(),
     files: SellerDetailsFilesDto? = null,
     linksExpireAt: OffsetDateTime? = null,
+    livenessPassMark: Double? = null,
+    faceMatchPassMark: Double? = null,
 ) =
     AdminSellerDetailsDto(
         userId = userId,
@@ -113,6 +123,8 @@ fun SellerDetails.toAdminDto(
         livenessConfidence = livenessConfidence,
         faceSimilarity = faceSimilarity,
         autoCheckedAt = autoCheckedAt,
+        livenessPassMark = livenessPassMark,
+        faceMatchPassMark = faceMatchPassMark,
         biometricConsentAt = biometricConsentAt,
         hasIdNumber = idNumberHmac != null,
         repeatMatches = repeatMatches,

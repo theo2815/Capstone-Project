@@ -722,6 +722,23 @@ class SellerDetailsServiceTest {
     }
 
     @Test
+    fun `the admin list and view carry the configured pass marks, read from the identity properties`() {
+        val row = withRecord(SellerDetailsStatus.AUTO_APPROVED)
+        Mockito.`when`(repository.findForAdmin(Mockito.eq(SellerDetailsStatus.AUTO_APPROVED) ?: SellerDetailsStatus.AUTO_APPROVED, anyArg()))
+            .thenReturn(PageImpl(listOf(row)))
+        // Not the defaults (95, 99), so the marks are proved read, not typed.
+        val service = service(IdentityProperties(livenessMinConfidence = 87.5, faceMinSimilarity = 91.0))
+
+        val item = service.adminList("auto_approved", PaginationParams.of(0, 20)).items.single()
+        val dto = service.adminView(adminId, userId)
+
+        assertEquals(87.5, item.livenessPassMark)
+        assertEquals(91.0, item.faceMatchPassMark)
+        assertEquals(87.5, dto.livenessPassMark)
+        assertEquals(91.0, dto.faceMatchPassMark)
+    }
+
+    @Test
     fun `the admin view of a photographer with no record answers 404 and logs nothing`() {
         assertFailsWith<NotFoundException> { service().adminView(adminId, userId) }
         assertTrue(decisions().isEmpty())
