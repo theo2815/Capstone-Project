@@ -91,6 +91,25 @@ class AdminPayoutFlagQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(mapOf("pending" to 1L, "paid" to 1L), counts)
     }
 
+    // FU-2 (O4): the payout search also matches the photographer's email, as a substring.
+    @Test
+    fun `payout search finds the photographer by email, and the counts follow`() {
+        val t = UUID.randomUUID().toString().take(8)
+        val owner = users.saveAndFlush(
+            User(email = "fu2.ana-$t@test.local", passwordHash = "test-only-unused", name = "Fu2 owner", role = Role.PHOTOGRAPHER),
+        )
+        val other = user(Role.PHOTOGRAPHER, "Fu2 other $t")
+        val mine = payout("FU2-$t-1", owner.id, PayoutCycleStatus.PENDING)
+        payout("FU2-$t-2", other.id, PayoutCycleStatus.PENDING)
+
+        fun find(term: String) =
+            cycles.pageForAdmin(PayoutCycleStatus.entries.map { it.wire }, term, PageRequest.of(0, 50)).content.map { it.id }.toSet()
+
+        assertEquals(setOf(mine), find("fu2.ana-$t@test.local"))
+        assertEquals(setOf(mine), find("ana-$t@"))
+        assertEquals(mapOf("pending" to 1L), cycles.countByStatusForAdmin("ana-$t@").associate { it.status to it.total })
+    }
+
     @Test
     fun `flag search finds photographer handle, reporter name and handle, and the exact flag id`() {
         val t = UUID.randomUUID().toString().take(8)

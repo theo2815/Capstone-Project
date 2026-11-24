@@ -41,8 +41,9 @@ class AdminDisputesController(
         @RequestParam(required = false) q: String?,
         @RequestParam(required = false) offset: Int?,
         @RequestParam(required = false) limit: Int?,
+        @RequestParam(required = false) runner: UUID?,
     ): PaginatedResponse<AdminDisputeDto> =
-        adminDisputeService.list(view, status, q, PaginationParams.of(offset, limit))
+        adminDisputeService.list(view, status, q, PaginationParams.of(offset, limit), runner)
 
     @GetMapping("/deny-reasons")
     fun denyReasons(): PaginatedResponse<DisputeDenyReasonDto> = adminDisputeService.denyReasons()

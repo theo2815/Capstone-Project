@@ -52,8 +52,7 @@ import com.quickpitik.exception.ConflictException
 import com.quickpitik.exception.NotFoundException
 import com.quickpitik.exception.UnauthorizedException
 import com.quickpitik.exception.ValidationException
-import com.quickpitik.entity.REFUND_LINK_SENT
-import com.quickpitik.entity.REFUND_SENT_TO_MANUAL_REVIEW
+import com.quickpitik.entity.RUNNER_HIDDEN_DISPUTE_DECISIONS
 import com.quickpitik.entity.claimableRefundLinkUrl
 import com.quickpitik.repository.AdminDecisionLogRepository
 import com.quickpitik.repository.CartItemRepository
@@ -943,7 +942,7 @@ class OrderService(
             .findByTargetDisputeIdInOrderByDecidedAtDesc(disputes.map { it.id })
             .groupBy { it.targetDisputeId }
             .mapNotNull { (id, rows) ->
-                id?.let { it to rows.firstOrNull { row -> row.decision != REFUND_SENT_TO_MANUAL_REVIEW && row.decision != REFUND_LINK_SENT }?.reason }
+                id?.let { it to rows.firstOrNull { row -> row.decision !in RUNNER_HIDDEN_DISPUTE_DECISIONS }?.reason }
             }
             .toMap()
         return disputes.map { dispute ->

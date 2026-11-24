@@ -91,22 +91,24 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
     // LOWER(CONCAT(...)) is typed bytea by Postgres). Names, e-mails, the handle and the event
     // name match as case-insensitive "contains" on `qLike` (q through escapeLike); ids and
     // PayMongo ids match `q` exactly, since a pay_ id holds an underscore.
-    // EXISTS keeps one row per dispute however many payments or joins match.
+    // EXISTS keeps one row per dispute however many payments or joins match. `runnerId` (FU-2), when
+    // given, keeps only that runner's disputes, an exact id match.
     @Query(
         """
         SELECT d FROM Dispute d
-        WHERE d.statusWire IN :statusWires AND ($ADMIN_SEARCH)
+        WHERE d.statusWire IN :statusWires AND ($ADMIN_SEARCH) AND (:runnerId IS NULL OR d.runnerId = :runnerId)
         ORDER BY d.openedAt DESC, d.id ASC
         """,
         countQuery = """
         SELECT COUNT(d) FROM Dispute d
-        WHERE d.statusWire IN :statusWires AND ($ADMIN_SEARCH)
+        WHERE d.statusWire IN :statusWires AND ($ADMIN_SEARCH) AND (:runnerId IS NULL OR d.runnerId = :runnerId)
         """,
     )
     fun pageForAdmin(
         @Param("statusWires") statusWires: Collection<String>,
         @Param("q") q: String,
         @Param("qLike") qLike: String,
+        @Param("runnerId") runnerId: UUID?,
         pageable: Pageable,
     ): Page<Dispute>
 

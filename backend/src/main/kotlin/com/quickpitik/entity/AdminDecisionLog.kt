@@ -19,6 +19,10 @@ const val REFUND_LINK_SENT = "refund_link_sent"
 // A parked QR Ph refund was cancelled by the hourly job because PayMongo's refund window closed. Not an admin decision.
 const val REFUND_CANCELLED = "refund_cancelled"
 
+// Decisions whose reason is never the runner's dispute note: the manual review and link-sent hand-offs, and the
+// escalate note, which is for admins (FU-2). The runner sees a deny or refund note only.
+val RUNNER_HIDDEN_DISPUTE_DECISIONS = setOf(REFUND_SENT_TO_MANUAL_REVIEW, REFUND_LINK_SENT, "escalated")
+
 // Append-only audit trail of every ADMIN write action. group_id is nullable
 // per Q-A4 — bulk endpoints (POST /admin/payouts/bulk) share one UUID across
 // every per-target row so the dashboard kpi `decisionsThisWeek` count can
