@@ -114,7 +114,9 @@ export function AdminPayoutHoldModal({
         onChange={setNote}
         maxLength={280}
         placeholder="What context should the photographer see?"
+        hint="Seen by: the photographer, exactly as written."
       />
+      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

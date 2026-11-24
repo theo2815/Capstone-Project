@@ -12,6 +12,16 @@ function setup(onSubmit = vi.fn<(reason: string) => Promise<boolean>>(async () =
 describe("AdminResetVerificationModal (AX-28)", () => {
   afterEach(cleanup);
 
+  // FT-33 (C-59, C-31; W33.1, W33.2): the note names who reads it, and the off button says why.
+  it("names who reads the note and says why the button is off until a reason is picked", async () => {
+    const user = userEvent.setup();
+    setup();
+    expect(screen.getByRole("textbox")).toHaveAccessibleDescription("Seen by: the photographer.");
+    expect(screen.getByText("Choose a reason to continue.")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("radio")[0]!);
+    expect(screen.queryByText("Choose a reason to continue.")).not.toBeInTheDocument();
+  });
+
   it("opens with no reason checked and Reset verification disabled", () => {
     const { submit } = setup();
     for (const radio of screen.getAllByRole("radio")) expect(radio).not.toBeChecked();

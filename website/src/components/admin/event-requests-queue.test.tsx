@@ -45,6 +45,7 @@ it.each(["pending", "change_pending"] as const)("retains %s rejection input thro
   await user.click(screen.getByRole("button", { name: label }));
   const dialog = screen.getByRole("dialog"); const reason = within(dialog).getByLabelText("Reason (max 500)");
   expect(dialog).toHaveTextContent(/sees your reason in their inbox. Write what they should change./);
+  expect(reason).toHaveAccessibleDescription("Seen by: the photographer."); // FT-33 (W33.1)
   await user.type(reason, "Please clarify pricing"); await user.click(within(dialog).getByRole("button", { name: label }));
   expect(reason).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   expect(within(dialog).getByRole("button", { name: reviewStatus === "pending" ? "Sending back…" : "Declining…" })).toBeDisabled();

@@ -242,6 +242,8 @@ interface TextareaProps {
   required?: boolean;
   /** Id of a plain hint shown outside the field, read out with it. */
   describedBy?: string;
+  /** Calm line under the field (who reads it), read out with it. */
+  hint?: ReactNode;
   disabled?: boolean;
 }
 export function AdminTextarea({
@@ -256,8 +258,10 @@ export function AdminTextarea({
   error,
   required,
   describedBy,
+  hint,
   disabled,
 }: TextareaProps) {
+  const hintId = hint ? `${id}-hint` : undefined;
   return (
     <div className="space-y-2">
       <AdminFieldLabel htmlFor={id} required={required}>{label}</AdminFieldLabel>
@@ -271,8 +275,9 @@ export function AdminTextarea({
         required={required}
         disabled={disabled}
         aria-invalid={error ? true : undefined}
-        aria-describedby={[describedBy, error && `${id}-error`].filter(Boolean).join(" ") || undefined}
+        aria-describedby={[describedBy, hintId, error && `${id}-error`].filter(Boolean).join(" ") || undefined}
       />
+      {hint && <p id={hintId} className="font-sans text-sm text-slate">{hint}</p>}
       <FieldError id={`${id}-error`} message={error} density="tight" />
       {showCounter && (
         <AdminFieldCounter>

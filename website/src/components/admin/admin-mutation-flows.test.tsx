@@ -410,4 +410,5 @@ it("the Escalate dialog says who is told and that the dispute stays in this queu
   expect(dialog).toHaveTextContent("This marks the dispute as escalated and tells the runner and the photographer it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards.");
   const note = within(dialog).getByLabelText("Note for other admins (optional, max 280)");
   expect(note).toHaveAttribute("placeholder", "What still needs checking?");
+  expect(note).toHaveAccessibleDescription("Seen by: admins only."); // FT-33 (W33.1)
 });

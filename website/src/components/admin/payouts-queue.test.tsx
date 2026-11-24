@@ -224,6 +224,8 @@ it.each([
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: trigger }));
   const form = screen.getAllByRole("dialog").find((dialog) => within(dialog).queryByRole("textbox"))!;
   const input = within(form).getByRole("textbox");
+  // FT-33 (W33.1): the reason field names who reads it; Mark paid has no reason field.
+  if (action !== "mark-paid") expect(input).toHaveAccessibleDescription(action === "hold" ? "Seen by: the photographer, exactly as written." : "Seen by: the photographer.");
   if (action === "hold") await user.click(within(form).getAllByRole("radio")[0]!);
   await user.type(input, "Reference or note retained");
   await user.click(within(form).getByRole("button", { name: submitLabel }));

@@ -107,7 +107,9 @@ export function AdminSuspendModal({
         onChange={setNote}
         maxLength={280}
         placeholder="Add detail. They can read this once they are unsuspended."
+        hint="Seen by: the suspended person, once they can sign in again."
       />
+      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

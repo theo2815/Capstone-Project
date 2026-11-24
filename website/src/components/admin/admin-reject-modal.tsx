@@ -91,7 +91,9 @@ export function AdminRejectModal({
         onChange={setNote}
         maxLength={280}
         placeholder="What would help them fix it faster?"
+        hint="Seen by: the photographer."
       />
+      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

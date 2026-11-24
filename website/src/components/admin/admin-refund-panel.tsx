@@ -254,6 +254,7 @@ export function AdminRefundPanel({
           value={cancelReason}
           onChange={setCancelReason}
           maxLength={500}
+          hint="Seen by: the runner."
         />
       </AdminFormModal>
 

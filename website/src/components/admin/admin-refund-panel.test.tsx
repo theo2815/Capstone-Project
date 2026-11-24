@@ -277,6 +277,7 @@ describe("manual refund panel", () => {
       const dialog = screen.getByRole("dialog", { name: "Cancel refund" });
       const submit = within(dialog).getByRole("button", { name: "Cancel refund" });
       expect(submit).toBeDisabled();
+      expect(within(dialog).getByLabelText(/Reason/)).toHaveAccessibleDescription("Seen by: the runner."); // FT-33 (W33.1)
       await user.type(within(dialog).getByLabelText(/Reason/), "  PayMongo shows the link unclaimed  ");
       await user.click(submit);
       expect(post).toHaveBeenCalledWith(`/admin/disputes/${sentLink.id}/deny`, { reason: "PayMongo shows the link unclaimed" });
