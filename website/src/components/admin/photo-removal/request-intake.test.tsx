@@ -165,6 +165,11 @@ it("each request field says where its value comes from", async () => {
   expect(screen.getByLabelText("Support reference")).toHaveAccessibleDescription("The ticket or message number from your support inbox.");
   expect(screen.getByLabelText("Requester contact")).toHaveAccessibleDescription("The email or phone number the person wrote from.");
   expect(screen.getByLabelText("Reason")).toHaveAccessibleDescription("What the person asked for, in their own words. Only admins see this.");
+  // FU-13: neutral hints read as plain text, not as warnings.
+  for (const text of ["The ticket or message number from your support inbox.", "What the person asked for, in their own words. Only admins see this."]) {
+    expect(screen.getByText(text)).toHaveClass("text-slate");
+    expect(screen.getByText(text)).not.toHaveClass("text-warning-text");
+  }
 });
 
 it("a bad runner ID shows its error under that field", async () => {

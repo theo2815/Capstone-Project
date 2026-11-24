@@ -186,6 +186,7 @@ it("blocks duplicate submits, keeps input after a failure and retries the same c
   await decideItem(user, "photo-a1", "RETAIN", "Not the runner");
   await user.click(screen.getByRole("button", { name: "Record decision" }));
   expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+  expect(screen.getByLabelText("Reason for photo-a1")).toBeDisabled();
   await act(async () => { fail(new Error("Gateway timeout")); });
   expect(await screen.findByText("Gateway timeout")).toBeInTheDocument();
   expect(screen.queryByText("Decisions recorded.")).not.toBeInTheDocument();

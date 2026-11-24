@@ -72,6 +72,7 @@ export function AdminResetVerificationModal({
       intro={`${photographerName} goes back to Incomplete and gets your reason in their inbox. Until they send their profile again and you approve it, they cannot upload and their public page does not open. Photos already sold keep working.`}
       submitLabel="Reset verification"
       submitDisabled={!selectedReason}
+      submitDescribedBy={selectedReason ? undefined : "reset-verification-reason-needed"}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
     >
       <AdminFormSection label="Reason">
@@ -92,7 +93,7 @@ export function AdminResetVerificationModal({
         placeholder="Anything specific they need to fix before resubmitting?"
         hint="Seen by: the photographer."
       />
-      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
+      {!selectedReason && <p id="reset-verification-reason-needed" className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

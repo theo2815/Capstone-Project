@@ -223,8 +223,10 @@ it("the Hide dialog says why Hide photo is off until a reason is picked", async 
   render(<AdminFlagHideModal open onClose={() => {}} onSubmit={() => {}} flagId="flag-1" />);
   expect(screen.getByRole("button", { name: "Hide photo" })).toBeDisabled();
   expect(screen.getByText("Choose a reason to continue.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hide photo" })).toHaveAccessibleDescription("Choose a reason to continue.");
   await user.click(screen.getByRole("radio", { name: "Violates platform policy" }));
   expect(screen.queryByText("Choose a reason to continue.")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Hide photo" })).not.toHaveAttribute("aria-describedby");
 });
 
 // FU-10 (U10.2, U10.3; FT-11): the Hide dialog says how to undo, who sees the note, and drops a stale note error.

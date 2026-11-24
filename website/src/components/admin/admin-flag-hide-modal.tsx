@@ -68,6 +68,7 @@ export function AdminFlagHideModal({
       intro="The photo is hidden from search and galleries. Nobody is told automatically: the reason is saved on the flag for admins. To tell the photographer, send them a message from their page."
       submitLabel="Hide photo"
       submitDisabled={!selectedReason}
+      submitDescribedBy={selectedReason ? undefined : "flag-hide-reason-needed"}
     >
       <AdminFormSection label="Reason">
         <AdminRadioGroup
@@ -88,7 +89,7 @@ export function AdminFlagHideModal({
         placeholder="Anything another admin should know"
       />
       <p className="font-sans text-sm text-ink-soft">To undo, dismiss or resolve this flag: the photo goes back on sale unless another flag still hides it.</p>
-      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
+      {!selectedReason && <p id="flag-hide-reason-needed" className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

@@ -192,6 +192,7 @@ export function AdminRefundPanel({
             value={url}
             onChange={setUrl}
             hint="Paste the refund link from PayMongo."
+            hintTone="calm"
           />
           <button type="button" onClick={handleAskSend} disabled={busy || !trimmed} className={`${BTN_SECONDARY} ${sm} w-full`}>
             Send to runner…

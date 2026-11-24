@@ -35,6 +35,15 @@ describe("AdminFormModal footer (AX-3)", () => {
     form({ submitting: true, pendingLabel: "Suspending…" });
     expect(screen.getByRole("button", { name: "Suspending…" })).toBeDisabled();
   });
+
+  it("FU-13: a disabled submit is described by the line that says why", () => {
+    render(
+      <AdminFormModal open onClose={() => {}} onSubmit={() => {}} title="Suspend" submitLabel="Suspend" submitDisabled submitDescribedBy="why">
+        <p id="why">Choose a reason to continue.</p>
+      </AdminFormModal>,
+    );
+    expect(screen.getByRole("button", { name: "Suspend" })).toHaveAccessibleDescription("Choose a reason to continue.");
+  });
 });
 
 describe("AdminConfirmModal footer (AX-3)", () => {

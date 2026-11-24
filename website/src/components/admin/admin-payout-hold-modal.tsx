@@ -99,6 +99,7 @@ export function AdminPayoutHoldModal({
       }
       submitLabel={`Hold ${isBulk ? `${payoutIds.length} payouts` : "payout"}`}
       submitDisabled={!selectedReason}
+      submitDescribedBy={selectedReason ? undefined : "payout-hold-reason-needed"}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
     >
       <AdminFormSection label="Reason">
@@ -119,7 +120,7 @@ export function AdminPayoutHoldModal({
         placeholder="What context should the photographer see?"
         hint="Seen by: the photographer, exactly as written."
       />
-      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
+      {!selectedReason && <p id="payout-hold-reason-needed" className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }
