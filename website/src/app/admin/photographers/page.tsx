@@ -6,7 +6,7 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { AdminPhotographerCard } from "@/components/admin/admin-photographer-card";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
-import { useAdminPhotographersPage } from "@/hooks/use-admin-users";
+import { useAdminPhotographerCount, useAdminPhotographersPage } from "@/hooks/use-admin-users";
 import { useAdminKpis } from "@/hooks/use-admin-data";
 import type { AdminUserStatusFilter } from "@/lib/api-admin";
 import { photographerHref } from "@/lib/admin-photographer-view";
@@ -40,11 +40,16 @@ export default function AdminPhotographersPage() {
   const q = (useSearchParams().get("q") ?? "").trim();
   const list = useAdminPhotographersPage(tab.key, q);
   const kpis = useAdminKpis();
-  // The suspended KPI counts runners and admins too, so that tab and Incomplete show no count.
+  // The suspended KPI counts runners and admins too, so the other three tabs count from the list's own total.
   const counts: Partial<Record<AdminUserStatusFilter, number>> = {
     pending: kpis?.pendingVerifications,
     approved: kpis?.approvedPhotographers,
+    incomplete: useAdminPhotographerCount("incomplete"),
+    rejected: useAdminPhotographerCount("rejected"),
+    suspended: useAdminPhotographerCount("suspended"),
   };
+  // Nothing writes Rejected any more; the tab shows only for older rows, or when the URL asks for it.
+  const tabs = TABS.filter((t) => t.key !== "rejected" || tab.key === "rejected" || (counts.rejected ?? 0) > 0);
   // A failed background refresh keeps the loaded list; the error shows only with nothing to show.
   const failed = !!list.error && list.items.length === 0;
   const router = useRouter();
@@ -93,7 +98,7 @@ export default function AdminPhotographersPage() {
 
       <AdminStatusTabs
         label="Photographer status"
-        tabs={TABS.map((t) => ({ key: t.key, label: t.label, count: counts[t.key] }))}
+        tabs={tabs.map((t) => ({ key: t.key, label: t.label, count: counts[t.key] }))}
         value={tab.key}
         onChange={setTab}
       />

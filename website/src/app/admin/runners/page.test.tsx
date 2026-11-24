@@ -50,6 +50,14 @@ it("searches runners on the server with the search in the URL", async () => {
   expect(screen.getByText("Active")).toBeInTheDocument();
 });
 
+it("links each runner to their disputes, searched by their email", async () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([{ ...runner, email: "ana+race@example.test" }]));
+  mount();
+  const row = (await screen.findByText("Ana Runner")).closest("li")!;
+  expect(within(row).getByRole("link", { name: "Their disputes →" }))
+    .toHaveAttribute("href", "/admin/disputes?view=all&q=ana%2Brace%40example.test");
+});
+
 it("suspends the runner whose row opened the shared Suspend modal", async () => {
   vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([{ ...runner, userId: "runner-1", name: "Other Runner" }, runner]));
   vi.mocked(adminApi.suspendUser).mockResolvedValue({ ...runner, suspendedAt: "2026-11-20T00:00:00Z" });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
@@ -136,6 +137,12 @@ export default function AdminRunnersPage() {
                       <p className="font-sans text-sm text-slate-soft mt-1 tnum">
                         Joined {sentenceCaseDate(formatMemberSince(row.createdAt))}
                       </p>
+                      <Link
+                        href={`${ROUTES.ADMIN_DISPUTES}?view=all&q=${encodeURIComponent(row.email)}`}
+                        className="inline-flex min-h-[44px] items-center font-sans text-sm text-ink underline decoration-line-strong underline-offset-4 hover:decoration-fresh"
+                      >
+                        Their disputes →
+                      </Link>
                     </div>
                     <AdminStatusPill label={suspended ? "Suspended" : "Active"} tone={suspended ? "ink" : "slate"} />
                   </div>
