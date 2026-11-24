@@ -69,8 +69,11 @@ const StatusPill = ({ reviewState, className }: { reviewState: string; className
 // The photographer detail page shows the same seller-details status (AX-27).
 export const SellerStatusPill = StatusPill;
 // The pass mark is the server's (FT-29); an older backend sends none, so the bare score shows.
+// FU-15: pass or fail is the raw numbers; a failing score that would round up to its mark shows two decimals, cut down.
+const percent = (value: number, passMark: number) =>
+  value < passMark && Number(value.toFixed(1)) >= passMark ? (Math.floor(value * 100) / 100).toFixed(2) : value.toFixed(1);
 const score = (value: number | null, passMark?: number | null) =>
-  value === null ? "Not run" : passMark == null ? `${value.toFixed(1)}%` : `${value.toFixed(1)}% (needs ${passMark}%)`;
+  value === null ? "Not run" : passMark == null ? `${value.toFixed(1)}%` : `${percent(value, passMark)}% (needs ${passMark}%)`;
 // C-10: the row names why a human is needed; these three never are the reason.
 const NOT_A_ROW_REASON = new Set(["PASSED", "AI_DISABLED", "ID_FORMAT_UNCHECKED"]);
 const rowReason = (codes: string[]) => {
@@ -82,7 +85,8 @@ const rowReason = (codes: string[]) => {
 // holding the ID) on the verifications page, separate from verification itself.
 // AA-I16: manual-review cases first (the server sorts), with the automatic results.
 // keyScope: the second list on its page (Verifications), so J/K/Enter work here only while focus is inside it.
-export function SellerDetailsQueue({ number = "04", keyScope = false }: { number?: string; keyScope?: boolean } = {}) {
+// C-14: the Inbox shows one queue, so its default is no section number; Verifications passes its own.
+export function SellerDetailsQueue({ number = "", keyScope = false }: { number?: string; keyScope?: boolean } = {}) {
   const [rawFilter, setFilter] = useUrlState<string>("sd", "manual_review");
   const key: FilterKey = FILTERS.find(([k]) => k === rawFilter)?.[0] ?? "manual_review";
   const status: AdminSellerFilter = key === "all" ? null : key;
@@ -162,7 +166,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
   const { showToast } = useToast();
   const [reason, setReason] = useState("");
   const [reasonError, setReasonError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{ kind: "approve" | "reject"; message: string } | null>(null);
   const [zoom, setZoom] = useState<{ label: string; src: string } | null>(null);
   const [confirmReject, setConfirmReject] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -201,9 +205,9 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
       onClose();
     } catch (error) {
       if (!isCurrent()) return;
-      setActionError(error instanceof ApiError && error.status === 409
+      setActionError({ kind, message: error instanceof ApiError && error.status === 409
         ? "These details changed. Reload before deciding."
-        : error instanceof ApiError ? error.message : "Couldn't save the decision. Try again.");
+        : error instanceof ApiError ? error.message : "Couldn't save the decision. Try again." });
     } finally {
       // A failure shows in the drawer, with the typed reason kept.
       setConfirmReject(false);
@@ -212,6 +216,13 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
 
   const canApprove = data?.reviewState === "manual_review";
   const canReject = canApprove || data?.reviewState === "auto_approved" || data?.reviewState === "approved";
+  // FU-15: a failed reject shows beside the reason box; a failed approve at the top.
+  const errorBox = actionError && (
+    <div role="alert" className="rounded-xl border border-error/40 bg-error/5 px-5 py-4 font-sans text-sm text-ink">
+      <p>{actionError.message}</p>
+      <button type="button" onClick={() => { setActionError(null); void record.refetch(); }} className="mt-2 underline underline-offset-4">Reload</button>
+    </div>
+  );
   return (
     <AdminDetailDrawer open onClose={() => { if (!isPending) onClose(); }} escDisabled={isPending || !!zoom || confirmReject}
       kicker="Seller details" title={data?.legalName ?? "Seller details"}
@@ -233,12 +244,7 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
         <LoadError what="seller details" onRetry={() => void record.refetch()} className="text-sm text-error" />
       ) : (
         <div className="space-y-10">
-          {actionError && (
-            <div role="alert" className="rounded-xl border border-error/40 bg-error/5 px-5 py-4 font-sans text-sm text-ink">
-              <p>{actionError}</p>
-              <button type="button" onClick={() => { setActionError(null); void record.refetch(); }} className="mt-2 underline underline-offset-4">Reload</button>
-            </div>
-          )}
+          {actionError?.kind === "approve" && errorBox}
           <Details data={data} payoutNames={settings.isError ? "Couldn't load payout accounts" : settings.data?.payouts.map((p) => p.accountName) ?? null} />
           {data.repeatMatches.length > 0 && <RepeatMatches matches={data.repeatMatches} />}
           <Photos data={data} expired={now >= expiresAt} onReload={() => void record.refetch()} reloading={record.isFetching}
@@ -246,9 +252,10 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
           <Checklist />
           {canReject && (
             <div className="flex flex-col gap-2">
-              <p className="font-sans text-sm text-ink">Approve: the ID check is passed. If their profile is complete it goes live and they are told. Reject: they are told your reason and their new uploads pause until they send details again. A rejection cannot be undone here.</p>
+              {canApprove && <p className="font-sans text-sm text-ink">Approve: the ID check is passed. If their profile is complete it goes live and they are told. Reject: they are told your reason and their new uploads pause until they send details again. A rejection cannot be undone here.</p>}
               <AdminTextarea id={REASON_ID} label="Reason for rejecting" required maxLength={500} value={reason} error={reasonError}
                 onChange={(next) => { setReason(next); setReasonError(null); }} />
+              {actionError?.kind === "reject" && errorBox}
               <p className="font-sans text-sm text-slate-soft">Sent to the photographer. Their new uploads pause until they send new details.</p>
             </div>
           )}
