@@ -17,7 +17,7 @@ const TOP_LIMIT = 10;
 // Two-column ranked board for /admin/sales. Photographer side is the server's
 // year-to-date list (GET /admin/sales/top-photographers, same sums as the
 // money tiles). Event side is the server's order sums; a row derived in the
-// browser while the server has no answer carries an Implied badge.
+// browser while the server has no answer carries an Estimate badge.
 export function AdminSalesLeaderboard() {
   const photographersQuery = useAdminTopPhotographersQuery("ytd", TOP_LIMIT);
   const photographers = photographersQuery.data;
@@ -57,7 +57,7 @@ export function AdminSalesLeaderboard() {
       />
       <Column
         title="Top events"
-        caption="By gross merchandise volume"
+        caption="By total sales · all time"
         emptyCopy="No events with photo sales yet."
         rows={events}
         renderRow={(e, rank) => (
@@ -158,7 +158,7 @@ function EventRow({ rank, row }: { rank: number; row: SalesEventRow }) {
               </p>
               {row.implied && (
                 <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
-                  Implied
+                  Estimate
                 </Kicker>
               )}
             </div>

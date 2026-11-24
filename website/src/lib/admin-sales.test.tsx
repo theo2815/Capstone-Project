@@ -143,15 +143,15 @@ it("an event name can shrink to its column, so a long word breaks there instead 
   expect(screen.getByText(serverRow.name)).toHaveClass("min-w-0", "break-words");
 });
 
-it("a browser-derived top event keeps its Implied badge", () => {
+it("a browser-derived top event keeps its Estimate badge", () => {
   render(<AdminSalesLeaderboard />);
-  expect(screen.getByText("Implied")).toBeInTheDocument();
+  expect(screen.getByText("Estimate")).toBeInTheDocument();
 });
 
 it("the weekly trend draws the server weeks, with no Estimate label", () => {
   render(<AdminSalesTrend />);
   expect(screen.getByText("₱3,500.00 total")).toBeInTheDocument();
-  expect(screen.getByText("Weekly GMV · last 2 weeks")).toBeInTheDocument();
+  expect(screen.getByText("Weekly total sales · last 2 weeks")).toBeInTheDocument();
   expect(screen.queryByText("Estimate")).toBeNull();
   expect(screen.queryByText(/Estimated from payout/)).toBeNull();
 });
@@ -193,4 +193,27 @@ it("an event row in either list opens the Events page searched for that event, n
     expect(screen.getByText("Cebu Marathon").closest("a")).toHaveAttribute("href", "/admin/events?q=Cebu%20Marathon");
     unmount();
   }
+});
+
+it("a week with no sales shows a sentence, not an empty grey chart (FT-26)", () => {
+  state.trend = { ...state.trend, data: weeks.map((w) => ({ ...w, gmv: 0 })) };
+  render(<AdminSalesTrend />);
+  expect(screen.getByText("No sales in the last 2 weeks.")).toBeInTheDocument();
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+});
+
+it("Sales by event uses plain names for its columns, sort and estimate badge (FT-26)", () => {
+  render(<AdminSalesEventTable />);
+  expect(screen.getByText("Sort by")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Total sales ↓" })).toBeInTheDocument();
+  expect(screen.getAllByText("Total sales").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getAllByText("Platform cut").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText("Estimate")).toBeInTheDocument();
+  for (const gone of [/GMV/, "Cut", "Implied"]) expect(screen.queryByText(gone)).toBeNull();
+});
+
+it("top events say what they are ranked by and over which period (FT-26)", () => {
+  render(<AdminSalesLeaderboard />);
+  expect(screen.getByText("By total sales · all time")).toBeInTheDocument();
+  expect(screen.queryByText(/gross merchandise/)).toBeNull();
 });
