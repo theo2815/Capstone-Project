@@ -169,6 +169,7 @@ export function DisputesQueue() {
       dispute={openRow}
       runnerHandle={openRow.runnerHandle}
       onDialogOpenChange={setAsideDialogOpen}
+      onDecided={() => setRowId("")}
       className={body ? "mb-10" : ""}
       body={body}
     />

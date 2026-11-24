@@ -27,6 +27,8 @@ interface AdminDisputeActionAsideProps {
   className?: string;
   // Phones: the drawer body goes here, and the buttons move to a row stuck to the bottom of the drawer's scroll after it.
   body?: ReactNode;
+  // Called once the dispute has left the open queue (denied, or refunded in full), so a host drawer can close.
+  onDecided?: () => void;
 }
 
 interface PendingResolve {
@@ -51,6 +53,7 @@ export function AdminDisputeActionAside({
   onDialogOpenChange,
   className = "lg:sticky lg:top-24 mt-12 lg:mt-0",
   body,
+  onDecided,
 }: AdminDisputeActionAsideProps) {
   const { showToast } = useToast();
   const { resolve, denyWithCode, escalate, isPending, pendingAction } = useDisputeActions();
@@ -113,13 +116,15 @@ export function AdminDisputeActionAside({
     setResolveOpen(false);
     const refunded = confirmed.status === "resolved" && confirmed.refundAmount !== null;
     showToast({
-      kind: refunded ? "success" : "info",
+      kind: "success",
       message: refunded
         ? `Refunded ${formatPrice(confirmed.refundAmount!)} · ${confirmed.id}`
         : dispute.orderSnapshot.paymentMethod === "qrph"
           ? "Refund approved. Next, send the runner the refund link."
           : "Refund approved. PayMongo is sending it, and the dispute closes when it is confirmed.",
     });
+    // Not yet resolved (a QR Ph link still to send, or PayMongo still sending): the drawer stays on the next step.
+    if (confirmed.status === "resolved") onDecided?.();
   }
 
   function handleCancelRefund() {
@@ -132,7 +137,8 @@ export function AdminDisputeActionAside({
     const ok = await denyWithCode(dispute.id, reasonCode, note);
     if (!ok) return;
     setDenyOpen(false);
-    showToast({ kind: "info", message: `Denied · ${dispute.id}` });
+    showToast({ kind: "success", message: "Denied. The runner was sent your reason. It is now under Closed." });
+    onDecided?.();
   }
 
   async function handleEscalate(note: string | null) {
@@ -140,7 +146,7 @@ export function AdminDisputeActionAside({
     const ok = await escalate(dispute.id, note);
     if (!ok) return;
     setEscalateOpen(false);
-    showToast({ kind: "info", message: `Escalated · ${dispute.id}` });
+    showToast({ kind: "success", message: "Escalated. It stays under Needs you." });
   }
 
   const approveDeny = isOpen && (
