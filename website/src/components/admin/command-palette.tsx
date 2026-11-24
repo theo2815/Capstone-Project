@@ -304,8 +304,8 @@ function EmptyState() {
     <div className="px-5 py-8">
       <p className="font-sans text-sm text-ink-soft">
         {ADMIN_FLAGS_ENABLED
-          ? "Search anything in admin — pages, pending verifications, disputes, flags, payouts, photographers."
-          : "Search anything in admin — pages, pending verifications, disputes, payouts, photographers."}
+          ? "Search the admin: pages, verifications, disputes, flags, payouts and photographers."
+          : "Search the admin: pages, verifications, disputes, payouts and photographers."}
       </p>
       <Kicker as="p" tone="soft" className="mt-3">
         Picks you make appear here as recents on next open.
@@ -322,7 +322,7 @@ function NoMatches({ query }: { query: string }) {
         <span className="font-mono text-ink">&ldquo;{query}&rdquo;</span>.
       </p>
       <Kicker as="p" tone="soft" className="mt-3">
-        Try a brand name, queue id, runner handle, or page name.
+        Try a photographer&apos;s name, an id, or a page name.
       </Kicker>
     </div>
   );

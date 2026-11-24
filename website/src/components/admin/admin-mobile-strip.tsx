@@ -14,14 +14,14 @@ import { cn } from "@/lib/utils";
 
 // Mobile-only chip strip for /admin/*. The sticky wrapper lives in
 // <AdminShell> so the strip pins under SiteHeader. Renders nothing ≥ lg
-// (parent has `lg:hidden`): tablets get the strip too. Order: Search (opens the palette), the open
-// total, the queue rows, a divider, then the other rows.
+// (parent has `lg:hidden`): tablets get the strip too. Order: Search (opens the palette), then
+// each rail group's name before its rows, with the open total after "Queues" as on the rail.
 export function AdminMobileStrip() {
   const pathname = usePathname();
   const attention = useAdminAttentionTarget();
   const { queueTotal, getCountForHref } = useAdminRouteCounts();
   const queueRoutes = ADMIN_ROUTES.filter((r) => r.group === "queues");
-  const otherRoutes = ADMIN_ROUTES.filter((r) => r.group !== "queues");
+  const otherGroups = [["catalog", "Catalog"], ["reports", "Reports"], ["account", "Account"]] as const;
 
   return (
     <div className="bg-bone/90 backdrop-blur-md border-b border-line">
@@ -36,14 +36,24 @@ export function AdminMobileStrip() {
               Search
             </button>
           </li>
+          <li className="shrink-0">
+            <Kicker tone="soft">Queues</Kicker>
+          </li>
           {queueTotal !== null && (
             <li className="shrink-0 pr-1">
               <Kicker tnum>{queueTotal === 0 ? "All clear" : `${queueTotal} waiting`}</Kicker>
             </li>
           )}
-          {[...queueRoutes, null, ...otherRoutes].map((route) => {
-            if (route === null) {
-              return <li key="divider" data-divider aria-hidden="true" className="shrink-0 w-px h-6 bg-line" />;
+          {[
+            ...queueRoutes,
+            ...otherGroups.flatMap(([group, name]) => [name, ...ADMIN_ROUTES.filter((r) => r.group === group)]),
+          ].map((route) => {
+            if (typeof route === "string") {
+              return (
+                <li key={route} className="shrink-0 pl-2">
+                  <Kicker tone="soft">{route}</Kicker>
+                </li>
+              );
             }
             const isActive = isRouteActive(pathname, route);
             const isAttention =

@@ -106,16 +106,18 @@ it("the mobile strip starts with a Search button that opens the palette", () => 
   expect(useAdminPaletteStore.getState().open).toBe(true);
 });
 
-it("the mobile strip opens with Search and the open total, then the queues, a divider, then the rest", () => {
+// FT-43 (B-08): the strip names its groups like the rail does.
+it("the mobile strip opens with Search, then each group's name before its pills", () => {
   kpis.value = { ...base, openDisputes: 2 };
   const { container } = render(<AdminMobileStrip />);
-  const items = [...container.querySelectorAll("li")];
-  expect(items[0]).toHaveTextContent("Search");
-  expect(items[1]).toHaveTextContent("2 waiting");
-  const divider = items.findIndex((li) => li.getAttribute("data-divider") !== null);
-  expect(items.slice(2, divider).map((li) => li.textContent?.replace(/\d+/g, "").trim()))
-    .toEqual(["Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts", "Photo Relevance", "Photo removals"]);
-  expect(items[divider + 1]).toHaveTextContent("Events");
+  const items = [...container.querySelectorAll("li")].map((li) => li.textContent?.replace(/\d+/g, "").trim());
+  expect(items).toEqual([
+    "Search", "Queues", "waiting",
+    "Inbox", "Disputes", "Flags", "Verifications", "Event requests", "Payouts", "Photo Relevance", "Photo removals",
+    "Catalog", "Events", "Photographers", "Runners",
+    "Reports", "Overview", "Sales",
+    "Account", "Security",
+  ]);
   for (const link of screen.getAllByRole("link")) expect(link.className).toContain("min-h-[44px]");
 });
 

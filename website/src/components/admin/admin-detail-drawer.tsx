@@ -117,10 +117,14 @@ export function AdminDetailDrawer({
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="shrink-0 size-11 rounded-full border border-line text-ink hover:bg-ink hover:text-surface hover:border-ink transition-colors flex items-center justify-center"
+              className="shrink-0 h-11 min-w-11 md:px-4 gap-2 rounded-full border border-line text-ink hover:bg-ink hover:text-surface hover:border-ink transition-colors flex items-center justify-center"
             >
               <span aria-hidden="true" className="text-lg leading-none">
                 ×
+              </span>
+              {/* The phone keeps the × alone (the aria-label names it); from md up the word shows too. */}
+              <span aria-hidden="true" className="hidden md:inline font-sans text-sm">
+                Close
               </span>
             </button>
           </div>
