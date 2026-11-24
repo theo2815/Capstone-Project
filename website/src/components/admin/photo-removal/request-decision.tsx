@@ -9,7 +9,6 @@ import { FieldError } from "@/components/ui/field-error";
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { formatLongDate, formatSalesDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { REMOVAL_INPUT } from "./request-intake";
 import { ReviewCurrentState, groupByOwner } from "./request-review";
 import { RemovalPhotoThumb } from "./removal-photo-thumb";
 import type {
@@ -196,10 +195,7 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
       {singleFace.length > 0 && (
         <div className="space-y-3 rounded-2xl border border-line p-4">
           <p className="text-sm text-slate">Sets Remove on <span className="tnum">{singleFace.length}</span> hidden photo{singleFace.length === 1 ? "" : "s"} showing one face. Photos with other people, or with no face count, are decided one by one.</p>
-          {/* AdminTextInput has no disabled prop; the fieldset locks it while busy. */}
-          <fieldset disabled={busy || reviewRequired} className="min-w-0">
-            <AdminTextInput id="removal-shared-reason" label="Reason for every selected photo" maxLength={2000} value={sharedReason} onChange={setShared} />
-          </fieldset>
+          <AdminTextInput id="removal-shared-reason" label="Reason for every selected photo" maxLength={2000} value={sharedReason} disabled={busy || reviewRequired} onChange={setShared} />
           <button type="button" disabled={busy || reviewRequired} onClick={selectSingleFace} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
             Select all single-face hidden photos
           </button>
@@ -303,20 +299,14 @@ function ItemRow({ item, draft, busy, alt, onChange, onRetry }: {
             {draft.decision && <p id={`decision-effect-${item.id}`} className="text-sm text-slate">{DECISION_EFFECT[draft.decision]}</p>}
           </div>
           {draft.decision && (
-            <div className="space-y-1">
-              <AdminFieldLabel htmlFor={`reason-${item.id}`}>Reason<span className="sr-only"> for {photo}</span></AdminFieldLabel>
-              <input id={`reason-${item.id}`} type="text" maxLength={2000} value={draft.reason} disabled={busy} className={REMOVAL_INPUT}
-                aria-invalid={(touched.reason && !draft.reason.trim()) || undefined} onBlur={() => setTouched((t) => ({ ...t, reason: true }))}
-                onChange={(e) => onChange({ reason: e.target.value })} />
-            </div>
+            <AdminTextInput id={`reason-${item.id}`} label={<>Reason<span className="sr-only"> for {photo}</span></>} maxLength={2000} value={draft.reason} disabled={busy}
+              invalid={touched.reason && !draft.reason.trim()} onBlur={() => setTouched((t) => ({ ...t, reason: true }))}
+              onChange={(reason) => onChange({ reason })} />
           )}
           {draft.decision === "RETAIN_RESTRICTED" && (
-            <div className="space-y-1">
-              <AdminFieldLabel htmlFor={`review-${item.id}`}>Retention review date<span className="sr-only"> for {photo}</span></AdminFieldLabel>
-              <input id={`review-${item.id}`} type="date" min={tomorrow()} value={draft.reviewDate} disabled={busy} className={REMOVAL_INPUT}
-                aria-invalid={(touched.date && !draft.reviewDate) || undefined} onBlur={() => setTouched((t) => ({ ...t, date: true }))}
-                onChange={(e) => onChange({ reviewDate: e.target.value })} />
-            </div>
+            <AdminTextInput id={`review-${item.id}`} label={<>Retention review date<span className="sr-only"> for {photo}</span></>} type="date" min={tomorrow()} value={draft.reviewDate} disabled={busy}
+              invalid={touched.date && !draft.reviewDate} onBlur={() => setTouched((t) => ({ ...t, date: true }))}
+              onChange={(reviewDate) => onChange({ reviewDate })} />
           )}
         </div>
       )}

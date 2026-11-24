@@ -78,6 +78,7 @@ export function AdminRejectModal({
         : `${photographerName} gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.`}
       submitLabel="Send back"
       submitDisabled={!selectedReason}
+      submitDescribedBy={selectedReason ? undefined : "reject-reason-needed"}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
     >
       <AdminFormSection label="Reason">
@@ -98,7 +99,7 @@ export function AdminRejectModal({
         placeholder="What would help them fix it faster?"
         hint="Seen by: the photographer."
       />
-      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
+      {!selectedReason && <p id="reject-reason-needed" className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

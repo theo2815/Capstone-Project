@@ -76,6 +76,7 @@ export function AdminPayoutMarkPaidModal({
         autoFocus
         inputClassName="tnum"
         hint="At least 4 characters."
+        hintTone="calm"
       />
     </AdminFormModal>
   );

@@ -19,7 +19,6 @@ import { validateImageFile } from "@/lib/image-utils";
 import { formatLongDate } from "@/lib/format";
 import { REMOVAL_SOURCE_LABEL, REMOVAL_STATUS_LABEL, removalStepLine } from "@/lib/admin-removal-labels";
 import { cn } from "@/lib/utils";
-import { REMOVAL_INPUT } from "./request-intake";
 import { RemovalPhotoThumb } from "./removal-photo-thumb";
 import type { PhotoRemovalItemDto, PhotoRemovalRequestDto, RemovalMatchResult, RemovalMatchSource, RemovalPhotoDto } from "@/types/photo-removal";
 
@@ -321,11 +320,10 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
                         <p><span className="tnum">{item.photo.photo.bib ? `Bib ${item.photo.photo.bib}` : "No bib"}</span> · {REMOVAL_SOURCE_LABEL[item.source]}</p>
                         {item.source === "MANUAL" && (
                           <>
-                            <label htmlFor={`note-${photoId}`} className="sr-only">Note for {name.toLowerCase()}</label>
-                            <input id={`note-${photoId}`} type="text" maxLength={2000} placeholder="Why this photo is the runner (required)"
-                              aria-invalid={(touchedNotes.has(photoId) && !item.note.trim()) || undefined} value={item.note} disabled={busy} className={REMOVAL_INPUT}
+                            <AdminTextInput id={`note-${photoId}`} label={<span className="sr-only">Note for {name.toLowerCase()}</span>} maxLength={2000} placeholder="Why this photo is the runner (required)"
+                              invalid={touchedNotes.has(photoId) && !item.note.trim()} value={item.note} disabled={busy}
                               onBlur={() => setTouchedNotes((current) => new Set(current).add(photoId))}
-                              onChange={(e) => { const value = e.target.value; setSelection((current) => new Map(current).set(photoId, { ...item, note: value })); }} />
+                              onChange={(value) => setSelection((current) => new Map(current).set(photoId, { ...item, note: value }))} />
                           </>
                         )}
                       </div>
@@ -335,11 +333,8 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
               </ul>
             </div>
           ))}
-          {/* AdminTextInput has no disabled prop; the fieldset locks it while busy. */}
-          <fieldset disabled={busy} className="min-w-0">
-            <AdminTextInput id="removal-method" label="Verification method" maxLength={2000} value={method} onChange={setMethod}
-              placeholder="For example: same bib, same race kit, selfie compared by eye" />
-          </fieldset>
+          <AdminTextInput id="removal-method" label="Verification method" maxLength={2000} value={method} disabled={busy} onChange={setMethod}
+            placeholder="For example: same bib, same race kit, selfie compared by eye" />
           <AdminTextarea id="removal-note" label="Verification note" maxLength={2000} value={note} disabled={busy} onChange={setNote} />
           {selected.length > 100 && <p className="text-sm text-warning-text">Select at most <span className="tnum">100</span> photos per verification.</p>}
           <FieldError message={verifyError} id="removal-verify-error" />
@@ -470,9 +465,7 @@ function CancelCase({ request, disabled }: { request: PhotoRemovalRequestDto; di
   }
   return (
     <section aria-label="Cancel request" className="space-y-3 border-t border-line pt-8">
-      <fieldset disabled={busy} className="min-w-0">
-        <AdminTextInput id="removal-cancel-reason" label="Reason for cancelling" maxLength={2000} value={reason} onChange={setReason} />
-      </fieldset>
+      <AdminTextInput id="removal-cancel-reason" label="Reason for cancelling" maxLength={2000} value={reason} disabled={busy} onChange={setReason} />
       <FieldError message={error} id="removal-cancel-error" />
       <button type="button" disabled={busy || !reason.trim()} onClick={() => void cancel()} className={cn(BTN_DANGER, BTN_SIZE.sm)}>
         {actions.cancel.isPending ? "Cancelling…" : "Cancel request"}

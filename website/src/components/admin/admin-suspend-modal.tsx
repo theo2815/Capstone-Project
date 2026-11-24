@@ -89,6 +89,7 @@ export function AdminSuspendModal({
       intro={intro ?? `${photographerName} is signed out shortly and cannot sign in until you unsuspend. Their photos come off sale and their public page stops opening; photos already bought can still be downloaded. Payouts are not stopped: hold those on the Payouts page. They are not emailed and cannot sign in to read the reason, so tell them yourself if they should know.`}
       submitLabel="Suspend"
       submitDisabled={!selectedReason}
+      submitDescribedBy={selectedReason ? undefined : "suspend-reason-needed"}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
     >
       <AdminFormSection label="Reason">
@@ -109,7 +110,7 @@ export function AdminSuspendModal({
         placeholder="Add detail. They can read this once they are unsuspended."
         hint="Seen by: the suspended person, once they can sign in again."
       />
-      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
+      {!selectedReason && <p id="suspend-reason-needed" className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

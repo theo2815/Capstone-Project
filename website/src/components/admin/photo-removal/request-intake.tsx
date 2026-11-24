@@ -19,8 +19,8 @@ import { cn } from "@/lib/utils";
 // The backend can't read any other shape, and its reply then names no field.
 const RUNNER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUNNER_ID_ERROR = "Runner account ID must be the 36-character account ID, like 1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed. Leave it empty if you don't have it.";
-// The same box as AdminTextInput, for the inputs it cannot carry (a search with a hidden label, a date, a field marked invalid on blur).
-export const REMOVAL_INPUT = "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh";
+// The same box as AdminTextInput, for the event search (a hidden label and an Enter guard).
+const REMOVAL_INPUT = "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh";
 
 // Support intake only: contact and reason live in component state and go
 // straight to the backend; nothing here is written to storage or the URL.
@@ -106,14 +106,14 @@ export function RemovalRequestIntake() {
         <legend className="font-display text-xl font-extrabold text-ink">2. Request</legend>
         <p className="text-sm text-slate">Admin-only. Photographers see a generic privacy reason, never these details.</p>
         <AdminTextInput id="removal-support-reference" label="Support reference" value={draft.supportReference} onChange={set("supportReference")} maxLength={1000}
-          hint="The ticket or message number from your support inbox." />
+          hint="The ticket or message number from your support inbox." hintTone="calm" />
         <AdminTextInput id="removal-requester-contact" label="Requester contact" value={draft.requesterContact} onChange={set("requesterContact")} maxLength={1000}
-          hint="The email or phone number the person wrote from." />
+          hint="The email or phone number the person wrote from." hintTone="calm" />
         <AdminTextInput id="removal-requester-user" label="Runner account ID (optional)" value={draft.requesterUserId} onChange={set("requesterUserId")} maxLength={64}
-          hint="The runner's 36-character account ID, not their email or name." error={error === RUNNER_ID_ERROR ? error : null} />
+          hint="The runner's 36-character account ID, not their email or name." hintTone="calm" error={error === RUNNER_ID_ERROR ? error : null} />
         <div className="space-y-2">
           <AdminTextarea id="removal-reason" label="Reason" maxLength={2000} value={draft.reason} onChange={set("reason")} describedBy="removal-reason-hint" />
-          <AdminFieldHint id="removal-reason-hint">What the person asked for, in their own words. Only admins see this.</AdminFieldHint>
+          <AdminFieldHint id="removal-reason-hint" tone="calm">What the person asked for, in their own words. Only admins see this.</AdminFieldHint>
         </div>
         <AdminTextarea id="removal-admin-note" label="Admin note (optional)" maxLength={2000} value={draft.adminNote} onChange={set("adminNote")} />
       </fieldset>

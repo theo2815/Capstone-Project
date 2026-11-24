@@ -18,6 +18,7 @@ describe("AdminSuspendModal (AX-28)", () => {
     setup();
     expect(screen.getByRole("textbox")).toHaveAccessibleDescription("Seen by: the suspended person, once they can sign in again.");
     expect(screen.getByText("Choose a reason to continue.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Suspend" })).toHaveAccessibleDescription("Choose a reason to continue.");
     await user.click(screen.getAllByRole("radio")[0]!);
     expect(screen.queryByText("Choose a reason to continue.")).not.toBeInTheDocument();
   });

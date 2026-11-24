@@ -36,6 +36,8 @@ interface AdminFormModalProps {
   intro?: ReactNode;
   submitLabel: string;
   submitDisabled?: boolean;
+  /** Id of the line that says why the submit is off, read out with the button. */
+  submitDescribedBy?: string;
   submitting?: boolean;
   pendingLabel?: string;
   cancelLabel?: string;
@@ -57,6 +59,7 @@ export function AdminFormModal({
   intro,
   submitLabel,
   submitDisabled = false,
+  submitDescribedBy,
   submitting = false,
   pendingLabel = "Saving…",
   cancelLabel = "Cancel",
@@ -97,6 +100,7 @@ export function AdminFormModal({
           <button
             type="submit"
             aria-busy={submitting}
+            aria-describedby={submitDescribedBy}
             disabled={submitDisabled || submitting}
             className={actionCls(tone)}
           >

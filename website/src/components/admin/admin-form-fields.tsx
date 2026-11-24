@@ -10,14 +10,18 @@ import { cn } from "@/lib/utils";
 // hint styling can never drift between modals. Quiet Studio canonical:
 // mono uppercase labels at the readability floor, rounded-2xl line input
 // on bg-surface with fresh focus ring, mono tnum counter under each
-// length-capped field, warning-text hint when input is invalid.
+// length-capped field, warning-text hint when input is invalid, and a
+// calm hint for a plain note about the field.
 
 const LABEL_CLS =
   `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft block`;
 const COUNTER_CLS =
   "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate-soft text-right tnum";
-const HINT_CLS =
-  "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-warning-text";
+const HINT_CLS = {
+  warning: "font-mono uppercase tracking-[0.18em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-warning-text",
+  calm: "font-sans text-sm text-slate",
+};
+type HintTone = keyof typeof HINT_CLS;
 const INPUT_BASE =
   "w-full rounded-2xl border border-line bg-surface py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh";
 const INPUT_PADDING_DEFAULT = "px-4";
@@ -46,8 +50,8 @@ export function AdminFieldCounter({ children }: { children: ReactNode }) {
   return <p className={COUNTER_CLS}>{children}</p>;
 }
 
-export function AdminFieldHint({ id, children }: { id?: string; children: ReactNode }) {
-  return <p id={id} className={HINT_CLS}>{children}</p>;
+export function AdminFieldHint({ id, tone = "warning", children }: { id?: string; tone?: HintTone; children: ReactNode }) {
+  return <p id={id} className={HINT_CLS[tone]}>{children}</p>;
 }
 
 interface FormSectionProps {
@@ -116,14 +120,15 @@ interface TextInputProps {
   prefix?: string;
   /** When true, render an `n/maxLength` counter under the input. Requires maxLength. */
   showCounter?: boolean;
-  type?: "text" | "number";
+  type?: "text" | "number" | "date";
   min?: number | string;
   max?: number | string;
   step?: number | string;
   inputMode?: "text" | "numeric" | "decimal" | "none";
   autoFocus?: boolean;
-  /** Optional warning-text hint message rendered under the input. */
+  /** Optional hint under the input: a warning by default, "calm" for a plain note. */
   hint?: ReactNode;
+  hintTone?: HintTone;
   /** Extra classes for the input element itself (e.g. "tnum" on numeric inputs). */
   inputClassName?: string;
   /**
@@ -134,6 +139,10 @@ interface TextInputProps {
   /** Inline error; pass it only after the field was left or a submit was tried. */
   error?: string | null;
   required?: boolean;
+  disabled?: boolean;
+  onBlur?: () => void;
+  /** Marks the field invalid with no message of its own (e.g. left empty). */
+  invalid?: boolean;
 }
 export function AdminTextInput({
   id,
@@ -151,16 +160,22 @@ export function AdminTextInput({
   inputMode,
   autoFocus,
   hint,
+  hintTone,
   inputClassName,
   sanitize,
   error,
   required,
+  disabled,
+  onBlur,
+  invalid,
 }: TextInputProps) {
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const a11y = {
     required,
-    "aria-invalid": error ? true : undefined,
+    disabled,
+    onBlur,
+    "aria-invalid": error || invalid ? true : undefined,
     "aria-describedby": [hintId, errorId].filter(Boolean).join(" ") || undefined,
   };
   const handle = (e: ChangeEvent<HTMLInputElement>) => {
@@ -216,7 +231,7 @@ export function AdminTextInput({
           {...a11y}
         />
       )}
-      {hint && <AdminFieldHint id={hintId}>{hint}</AdminFieldHint>}
+      {hint && <AdminFieldHint id={hintId} tone={hintTone}>{hint}</AdminFieldHint>}
       <FieldError id={`${id}-error`} message={error} density="tight" />
       {showCounter && maxLength != null && (
         <AdminFieldCounter>
@@ -277,7 +292,7 @@ export function AdminTextarea({
         aria-invalid={error ? true : undefined}
         aria-describedby={[describedBy, hintId, error && `${id}-error`].filter(Boolean).join(" ") || undefined}
       />
-      {hint && <p id={hintId} className="font-sans text-sm text-slate">{hint}</p>}
+      {hint && <AdminFieldHint id={hintId} tone="calm">{hint}</AdminFieldHint>}
       <FieldError id={`${id}-error`} message={error} density="tight" />
       {showCounter && (
         <AdminFieldCounter>
