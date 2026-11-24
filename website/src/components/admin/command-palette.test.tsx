@@ -33,3 +33,12 @@ it("expands over the result list and announces the count politely", () => {
   const n = screen.getAllByRole("option").length;
   expect(screen.getByRole("status")).toHaveTextContent(new RegExp(`^${n} results?$`));
 });
+
+// FT-43 (B-06): the hints name only what the palette really finds (no runners, no events).
+it("the empty and no-match hints name only what the palette finds", () => {
+  render(<CommandPalette />);
+  expect(screen.getByText("Search the admin: pages, verifications, disputes, flags, payouts and photographers.")).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("combobox", { name: "Search admin" }), { target: { value: "zzqx" } });
+  expect(screen.getByText("Try a photographer's name, an id, or a page name.")).toBeInTheDocument();
+  expect(screen.queryByText(/runner handle/)).not.toBeInTheDocument();
+});

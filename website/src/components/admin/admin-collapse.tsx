@@ -50,7 +50,7 @@ export function CollapsibleReviewSlab({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        aria-controls={bodyId}
+        aria-controls={open ? bodyId : undefined}
         className={`group w-full flex flex-wrap items-baseline justify-between gap-4 md:gap-6 text-left ${
           open ? "mb-8 md:mb-10" : ""
         }`}
@@ -109,7 +109,7 @@ export function CollapsibleReviewSection({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        aria-controls={bodyId}
+        aria-controls={open ? bodyId : undefined}
         className={`group w-full flex items-baseline justify-between gap-4 text-left ${
           open ? "mb-3" : ""
         }`}

@@ -34,3 +34,15 @@ it("takes focus from the row that opened it and gives it back on Escape", () => 
   fireEvent.keyDown(document, { key: "Escape" });
   expect(row).toHaveFocus();
 });
+
+// FT-43 (B-25): the close control shows a word, not only an "×".
+it("the close button shows the word Close beside the ×", () => {
+  render(
+    <AdminDetailDrawer open onClose={() => {}} title="Payout">
+      <p>Body</p>
+    </AdminDetailDrawer>,
+  );
+  const close = screen.getByRole("button", { name: "Close" });
+  expect(close).toHaveTextContent("×");
+  expect(close).toHaveTextContent("Close");
+});
