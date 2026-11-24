@@ -11,11 +11,11 @@ const ACTOR_LABEL: Record<RemovalActorType, string> = {
 };
 // History actions, from RemovalHistoryActions in the backend.
 const ACTION_LABEL: Record<string, string> = {
-  CREATED: "Case created", EVIDENCE_REPLACED: "Selfie replaced", VERIFIED: "Photos verified", NOTICE_STORED: "Owner notice stored",
+  CREATED: "Request created", EVIDENCE_REPLACED: "Selfie replaced", VERIFIED: "Photos verified", NOTICE_STORED: "Owner notice stored",
   OWNER_UNAVAILABLE: "Owner unavailable", OWNER_RESPONDED: "Owner responded", REVIEW_OVERDUE: "Owner review overdue",
   ADMIN_DECIDED: "Admin decision", ERASURE_PROGRESS: "Erasure progress", EVIDENCE_PURGED: "Evidence deleted",
-  SUPPORT_UPDATED: "Support update", CANCEL_REQUESTED: "Cancel requested", RESOLVED: "Case resolved", CANCELLED: "Case cancelled",
-  SUGGESTED: "Suggested", SUGGESTION_DISMISSED: "Suggestion dismissed",
+  SUPPORT_UPDATED: "Support update", CANCEL_REQUESTED: "Cancel requested", RESOLVED: "Request finished", CANCELLED: "Request cancelled",
+  SUGGESTED: "Possible match", SUGGESTION_DISMISSED: "Possible match removed",
 };
 // A history state change is a case status or a photo state.
 const STATE_LABEL: Record<string, string> = {
@@ -37,18 +37,22 @@ export function removalStepLine(request: PhotoRemovalRequestDto, now = Date.now(
       // An owner still to answer: a reachable owner, not overdue, with a hidden photo they have not answered for.
       const unanswered = request.reviews.filter((review) => !review.overdue && !review.unavailableReason &&
         request.items.some((item) => item.reviewId === review.id && item.state === "VERIFIED" && !item.ownerResponse));
-      // An owner with no deadline yet has not been told; the sheet has no line for that, so none shows.
-      if (unanswered.some((review) => !review.deadline)) return null;
-      const waiting = unanswered.filter((review) => Date.parse(review.deadline!) > now);
+      const waiting = unanswered.filter((review) => !review.deadline || Date.parse(review.deadline) > now);
+      const people = `${waiting.length} photographer${waiting.length === 1 ? "" : "s"}`;
+      // An owner with no deadline yet has not been told, so there is no date to give (U12.3).
+      if (unanswered.some((review) => !review.deadline)) return `Step 2 of 4. Waiting for ${people} to answer.`;
       if (waiting.length === 0) return "Step 3 of 4. Ready for your decision on each photo.";
       const until = waiting.map((review) => review.deadline!).reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a));
-      return `Step 2 of 4. Waiting for ${waiting.length} photographer${waiting.length === 1 ? "" : "s"} to answer, until ${formatSalesDate(until)}. You can decide earlier with an urgent reason.`;
+      return `Step 2 of 4. Waiting for ${people} to answer, until ${formatSalesDate(until)}. You can decide earlier with an urgent reason.`;
     }
     // A cancel also passes through Closing; only an authorized removal has files being deleted.
     case "RESOLVING": return request.items.some((item) => item.state === "REMOVAL_AUTHORIZED")
-      ? "Step 4 of 4. Removal authorized. The files are being deleted." : null;
+      ? "Step 4 of 4. Removal authorized. The files are being deleted." : "Step 4 of 4. Closing the request. No photo is being removed.";
     case "RESOLVED": return "Finished. Every photo was decided.";
-    // W32.1's "Nothing was hidden or removed." is held: a request cancelled while open had its photos hidden.
+    // U12.1 is true only for an admin's cancel. A runner's request also ends Cancelled when the runner withdraws it or
+    // no photo matched (the runner hears other words), and the admin data does not say which, so it shows no line.
+    case "CANCELLED": return request.source === "RUNNER" ? null : "Cancelled. Photos hidden for this request went back on sale, " +
+      "unless another request still holds them. A runner who filed it was told the photos were kept. Photographers were not told.";
     default: return null;
   }
 }

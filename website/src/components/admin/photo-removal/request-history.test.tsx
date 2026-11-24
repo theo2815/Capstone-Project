@@ -41,7 +41,7 @@ function renderHistory() {
 it("loads more history, appending it, with labels instead of raw codes and no metadata", async () => {
   const user = userEvent.setup();
   renderHistory();
-  expect(await screen.findByText(/Case created/)).toBeInTheDocument();
+  expect(await screen.findByText(/Request created/)).toBeInTheDocument();
   expect(screen.queryByText(/CREATED/)).toBeNull();
   expect(screen.getByText(/Admin · admin-a/)).toBeInTheDocument();
   expect(screen.getByText(/Ticket checked/)).toBeInTheDocument();
@@ -49,7 +49,7 @@ it("loads more history, appending it, with labels instead of raw codes and no me
   expect(removalApi.listRemovalHistory).toHaveBeenCalledWith("case-1", { offset: 0, limit: 50 }, expect.anything());
   await user.click(screen.getByRole("button", { name: "Load 2 more" }));
   expect(await screen.findByText(/Later entry/)).toBeInTheDocument();
-  expect(screen.getByText(/Case created/)).toBeInTheDocument();
+  expect(screen.getByText(/Request created/)).toBeInTheDocument();
   expect(screen.getByText(/Owner review overdue/)).toBeInTheDocument();
   expect(screen.getByText(/Something new · Draft → Open/)).toBeInTheDocument();
   expect(screen.queryByText(/REVIEW_OVERDUE|SYSTEM/)).toBeNull();
