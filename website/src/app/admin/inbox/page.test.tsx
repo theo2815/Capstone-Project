@@ -18,7 +18,6 @@ vi.mock("@/hooks/use-admin-data", () => ({
   useAdminKpis: () => kpis.data ?? null,
 }));
 
-vi.mock("@/components/admin/admin-kpi-strip", () => ({ AdminKpiStrip: () => null }));
 const mounts = vi.hoisted(() => ({ verifications: 0 }));
 vi.mock("@/components/admin/verifications-queue", () => ({
   VerificationsQueue: () => {
@@ -137,4 +136,21 @@ it("the kicker counts what is waiting, the same total as the rail", async () => 
   settle({ disputesNeedingAdmin: 2 });
   await renderPage();
   expect(screen.getByRole("banner").querySelector("p")).toHaveTextContent(/^Inbox · 2 waiting$/);
+});
+
+it("shows the counts once: no separate count strip above the chips", async () => {
+  url.search = "type=disputes";
+  settle({ disputesNeedingAdmin: 2 });
+  await renderPage();
+  expect(screen.queryByRole("navigation", { name: "Queue counts" })).toBeNull();
+});
+
+it("the kicker reads All clear only on a real 0, and the label alone while counts are unknown", async () => {
+  url.search = "type=verifications";
+  const { unmount } = await renderPage();
+  expect(screen.getByRole("banner").querySelector("p")).toHaveTextContent(/^Inbox$/);
+  unmount();
+  settle({});
+  await renderPage();
+  expect(screen.getByRole("banner").querySelector("p")).toHaveTextContent(/^Inbox · All clear$/);
 });

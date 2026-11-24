@@ -12,7 +12,6 @@ import { useAdminKpisQuery } from "@/hooks/use-admin-data";
 import { ROUTES } from "@/lib/constants";
 import { ADMIN_QUEUE_LINES } from "@/lib/admin-section-guide";
 
-import { AdminKpiStrip } from "@/components/admin/admin-kpi-strip";
 import { AdminInboxFilterChips } from "@/components/admin/admin-inbox-filter-chips";
 import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
 import {
@@ -47,8 +46,8 @@ const CONTENT: Record<AdminQueueKey, ReactNode> = {
 // With no ?type, the Inbox waits for the KPI counts, then writes the first
 // queue with work into the URL (Verifications when nothing waits or the
 // counts failed); once ?type is in the URL a later count change never moves
-// the admin. ?type=<inboxType> swaps the body without unmounting the KPI
-// strip or header, so deep links work.
+// the admin. ?type=<inboxType> swaps the body without unmounting the chips
+// or header, so deep links work. The chips are the page's only counts.
 //
 // /admin redirects here. The dedicated pages (/admin/disputes etc.)
 // still exist as focus-mode entries reachable from the rail and render
@@ -78,7 +77,6 @@ export default function AdminInboxPage() {
   return (
     <>
       <Header pendingCount={pendingCount} />
-      <AdminKpiStrip />
       <AdminInboxFilterChips value={typeInUrl ? active.inboxType : ""} />
       {typeInUrl && (
         <p className="font-sans text-sm text-ink-soft mt-4 max-w-xl">{ADMIN_QUEUE_LINES[active.key]}</p>
@@ -90,9 +88,10 @@ export default function AdminInboxPage() {
 
 function Header({ pendingCount }: { pendingCount: number | null }) {
   return (
-    <header className="pb-8 md:pb-12 border-b border-line">
+    <header className="pb-6 md:pb-8 border-b border-line">
       <Kicker as="p">
-        Inbox{pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> waiting</>}
+        Inbox
+        {pendingCount === 0 ? " · All clear" : pendingCount !== null && <> · <span className="tnum">{pendingCount}</span> waiting</>}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Inbox.
