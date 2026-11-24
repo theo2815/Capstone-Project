@@ -6,8 +6,8 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useOpenRelevanceAppealsCount, useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -98,10 +98,7 @@ export function RelevanceCases({ defaultTab = "cant_tell" }: { defaultTab?: Rele
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}
         </div>
       ) : list.error && list.items.length === 0 ? (
-        <div role="alert" className="space-y-3">
-          <p className="font-sans text-sm text-ink-soft">Could not load the cases.</p>
-          <button type="button" onClick={list.refetch} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
-        </div>
+        <LoadError what="the cases" onRetry={list.refetch} className="text-sm text-error" />
       ) : list.items.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{repeat ? CONSEQUENCES_TEXT.repeatEmpty : RELEVANCE_TABS.find((t) => t.value === tab)?.empty}</p>
       ) : (
@@ -144,12 +141,9 @@ export function RelevanceCases({ defaultTab = "cant_tell" }: { defaultTab?: Rele
           subtitle={openRow && <RelevanceCaseSubtitle row={openRow} />}
         >
           {detail.isPending ? (
-            <p role="status" className="font-sans text-sm text-slate-soft">Loading case…</p>
+            <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
           ) : detail.isError ? (
-            <div role="alert" className="space-y-3">
-              <p className="font-sans text-sm text-ink-soft">Could not load the case.</p>
-              <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
-            </div>
+            <LoadError what="the case" onRetry={() => void detail.refetch()} className="text-sm text-error" />
           ) : (
             <div className="space-y-10">
               <RelevanceCaseBody detail={detail.data} />

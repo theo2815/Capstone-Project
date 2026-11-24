@@ -1,6 +1,8 @@
 "use client";
 
-import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_GHOST, BTN_SIZE } from "@/components/ui/button-styles";
 import { AdminRefundPanel } from "@/components/admin/admin-refund-panel";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -20,17 +22,8 @@ export function RefundRun({ onOpen }: { onOpen: (id: string) => void }) {
   const list = useAdminDisputePage({ view: "refund_run" });
   const items = list.items;
 
-  if (list.isLoading) return <p role="status" className="py-6">Loading refunds…</p>;
-  if (list.error && items.length === 0) {
-    return (
-      <div role="alert" className="space-y-4 py-6">
-        <p>Couldn&apos;t load refunds.</p>
-        <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={list.refetch}>
-          Try again
-        </button>
-      </div>
-    );
-  }
+  if (list.isLoading) return <div aria-busy="true" className="space-y-4">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>;
+  if (list.error && items.length === 0) return <LoadError what="refunds" onRetry={list.refetch} className="text-sm text-error" />;
 
   return (
     <div className="space-y-6">

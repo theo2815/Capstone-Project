@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
@@ -137,14 +139,9 @@ export function PayoutReportsSection() {
         Open: not answered yet. Acknowledged: you replied and are still working on it. Resolved: closed.
       </p>
       <div className="mt-6">
-      {list.isLoading ? <p role="status">Loading reports…</p> :
+      {list.isLoading ? <div aria-busy="true" className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div> :
         list.error && reports.length === 0 ? (
-          <div role="alert" className="space-y-4">
-            <p>Couldn&apos;t load payout reports.</p>
-            <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={list.refetch}>
-              Try again
-            </button>
-          </div>
+          <LoadError what="payout reports" onRetry={list.refetch} className="text-sm text-error" />
         ) : reports.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">
           {status === "open"

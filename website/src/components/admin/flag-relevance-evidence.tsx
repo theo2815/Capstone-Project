@@ -1,12 +1,14 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { Modal } from "@/components/ui/modal";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { PAGE_SIZE } from "@/lib/pagination-config";
-import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_DANGER, BTN_GHOST, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   COPY_PAIR_NOTICE,
   canHideBatch,
@@ -24,7 +26,6 @@ const MAX_SAMPLES = 12;
 
 const labelCls =
   `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate-soft`;
-const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm}`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} px-3`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;
 
@@ -239,15 +240,8 @@ function HiddenPhotos({ flag }: { flag: Flag }) {
     }
   }
 
-  if (query.isLoading) return <p role="status" className="font-sans text-sm text-slate-soft">Loading hidden photos…</p>;
-  if (query.error && items.length === 0) {
-    return (
-      <div role="alert" className="space-y-2">
-        <p className="font-sans text-sm text-ink-soft">Could not load the hidden photos.</p>
-        <button type="button" onClick={() => query.refetch()} className={secondaryBtn}>Retry</button>
-      </div>
-    );
-  }
+  if (query.isLoading) return <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>;
+  if (query.error && items.length === 0) return <LoadError what="the hidden photos" onRetry={() => void query.refetch()} className="text-sm text-error" />;
   if (items.length === 0) return <p className="font-sans text-sm text-slate-soft">No photos hidden by this flag.</p>;
   return (
     <>
@@ -285,12 +279,9 @@ export function FlagRelevanceEvidence({ flag }: { flag: Flag }) {
     <section aria-label="Relevance evidence" className="space-y-6">
       <Kicker as="p" tone="soft">Relevance evidence</Kicker>
       {query.isPending ? (
-        <p role="status" className="font-sans text-sm text-slate-soft">Loading evidence…</p>
+        <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
       ) : query.isError ? (
-        <div role="alert" className="space-y-2">
-          <p className="font-sans text-sm text-ink-soft">Could not load the evidence.</p>
-          <button type="button" onClick={() => query.refetch()} className={secondaryBtn}>Retry</button>
-        </div>
+        <LoadError what="the evidence" onRetry={() => void query.refetch()} className="text-sm text-error" />
       ) : query.data.batches.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">No batch is linked to this flag.</p>
       ) : (

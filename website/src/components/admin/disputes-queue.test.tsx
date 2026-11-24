@@ -411,3 +411,21 @@ describe("after a decision", () => {
     expect(fixtures.router.replace).not.toHaveBeenCalled();
   });
 });
+
+it("the view tabs and the search stay on screen while the list loads and when it fails", async () => {
+  client.removeQueries({ queryKey: firstPageKey });
+  vi.mocked(api.get).mockImplementation((path) => path === "/admin/kpis" ? Promise.resolve({}) : new Promise(() => {}));
+  const { container, unmount } = renderQueue();
+  expect(screen.getByRole("button", { name: "Needs you" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Search disputes")).toBeInTheDocument();
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
+  unmount();
+  client.clear();
+  vi.mocked(api.get).mockImplementation((path) => path === "/admin/kpis" ? Promise.resolve({}) : Promise.reject(new Error("down")));
+  renderQueue();
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn't load disputes.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Needs you" })).toBeInTheDocument();
+});

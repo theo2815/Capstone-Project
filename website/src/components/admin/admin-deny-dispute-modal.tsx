@@ -1,8 +1,9 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect, useState } from "react";
 import { AdminFormModal } from "@/components/admin/admin-form-modal";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import {
   AdminFormSection,
   AdminRadioGroup,
@@ -63,18 +64,9 @@ export function AdminDenyDisputeModal({
     >
       <AdminFormSection label="Reason">
         {reasons.isPending ? (
-          <p role="status" className="font-sans text-sm text-slate-soft">Loading reasons…</p>
+          <div aria-busy="true" className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-11 w-full rounded-xl" />)}</div>
         ) : reasons.isError ? (
-          <div role="alert" className="space-y-2 font-sans text-sm text-ink-soft">
-            <p>Couldn&apos;t load the deny reasons.</p>
-            <button
-              type="button"
-              onClick={() => void reasons.refetch()}
-              className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}
-            >
-              Retry
-            </button>
-          </div>
+          <LoadError what="the deny reasons" onRetry={() => void reasons.refetch()} className="text-sm text-error" />
         ) : (
           <AdminRadioGroup
             name="dispute-deny-reason"

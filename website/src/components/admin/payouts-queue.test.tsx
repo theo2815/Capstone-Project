@@ -60,7 +60,7 @@ function render_() {
 // Each tab reads its own server list, so wait for it before looking at rows.
 async function mount() {
   const view = render_();
-  await waitFor(() => expect(screen.queryByText("Loading payouts…")).not.toBeInTheDocument());
+  await waitFor(() => expect(document.querySelector('[aria-busy="true"] .animate-pulse')).toBeNull());
   return view;
 }
 
@@ -548,7 +548,9 @@ it("a failed single approval keeps the confirm open, and a retry sends once more
 it("a failed first load shows an alert, not tabs that read nothing to do", async () => {
   failLists = 1; countsMissing = true;
   await mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load payouts");
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn't load payouts.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(screen.queryByText("No payouts waiting. You're caught up.")).not.toBeInTheDocument();
   // The tabs stay so the admin can switch, but none reads a number it does not know.
   expect(within(screen.getByRole("group", { name: "Payout status" })).getByRole("button", { name: "Pending review" })).toBeInTheDocument();
@@ -707,4 +709,11 @@ it("an empty Pending review tab says the admin is caught up", async () => {
   await mount();
   expect(await screen.findByText("No payouts waiting. You're caught up.")).toBeInTheDocument();
   expect(screen.getByText("Waiting for a decision")).toBeInTheDocument();
+});
+
+it("loading shows skeleton rows and no Loading sentence", () => {
+  nextTabList = () => new Promise(() => {});
+  const { container } = render_();
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
 });

@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -438,14 +440,7 @@ export function PayoutsQueue() {
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
       </div>
-      {list.error ? (
-        <div role="alert" className="space-y-3">
-          <p className="font-sans text-sm text-error">Couldn&apos;t load payouts. Please try again.</p>
-          <button type="button" onClick={list.refetch} disabled={list.isFetching} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>
-            Retry
-          </button>
-        </div>
-      ) : null}
+      {list.error ? <LoadError what="payouts" onRetry={list.refetch} className="text-sm text-error" /> : null}
       {/* No count when the counts route is missing or loading: a 0 would read "nothing to do". */}
       <AdminStatusTabs
         label="Payout status"
@@ -458,7 +453,7 @@ export function PayoutsQueue() {
         onChange={setTab}
       />
       {list.isLoading ? (
-        <p role="status" className="font-sans text-sm text-slate">Loading payouts…</p>
+        <div aria-busy="true" className="space-y-4 pt-6">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>
       ) : !(list.error && effective.length === 0) && (
         <PayoutSlab
           id={tab}

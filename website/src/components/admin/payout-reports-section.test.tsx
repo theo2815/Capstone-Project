@@ -147,3 +147,17 @@ it.each(["Acknowledge", "Resolve"])("the %s… dialog says the note needs 10 cha
   expect(textbox).toHaveAccessibleDescription("At least 10 characters.");
   expect(textbox).not.toHaveAttribute("placeholder", expect.stringMatching(/24h|MY-32C887R/));
 });
+
+it("loading shows skeleton rows, and a failed load says Couldn't load payout reports. with Retry", async () => {
+  vi.mocked(api.get).mockImplementation(() => new Promise(() => {}));
+  const { container, unmount } = renderSection();
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
+  unmount();
+  client.clear();
+  vi.mocked(api.get).mockRejectedValue(new Error("down"));
+  renderSection();
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn't load payout reports.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

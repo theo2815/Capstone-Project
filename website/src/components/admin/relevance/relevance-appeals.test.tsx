@@ -275,3 +275,18 @@ it("an open appeal row shows the reason's first line and Waiting for you", async
   expect(within(won).queryByText("Waiting for you")).not.toBeInTheDocument();
   expect(within(won).queryByText("<b>These are my race photos</b>")).not.toBeInTheDocument();
 });
+
+it("the appeals load behind skeletons, and a failed list says Couldn't load the appeals. with Retry", async () => {
+  fixtures.search = "tab=appeals";
+  vi.mocked(api.get).mockImplementation(() => new Promise(() => {}));
+  const { container } = mount();
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
+  cleanup();
+  client.clear();
+  vi.mocked(api.get).mockRejectedValue(new Error("down"));
+  mount();
+  const alerts = await screen.findAllByRole("alert");
+  expect(within(alerts[0]!).getByText("Couldn't load the appeals.")).toBeInTheDocument();
+  expect(within(alerts[0]!).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

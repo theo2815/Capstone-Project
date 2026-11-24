@@ -6,11 +6,11 @@ import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/ui/load-error";
 import {
   BTN_DANGER,
   BTN_GHOST,
   BTN_PRIMARY,
-  BTN_SECONDARY,
   BTN_SIZE,
   ROW_OPEN_BUTTON,
 } from "@/components/ui/button-styles";
@@ -325,31 +325,14 @@ export function VerificationsQueue() {
 
   return (
     <>
-      {rowId && detail.isPending && !openRow && <p role="status" className="font-sans text-sm text-slate">Loading verification…</p>}
-      {rowId && detail.isError && (
-        <div role="alert" className="space-y-3">
-          <p className="font-sans text-sm text-error">Couldn&apos;t load verification.</p>
-          <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Try again</button>
-        </div>
-      )}
+      {rowId && detail.isPending && !openRow && <div aria-busy="true"><Skeleton className="h-28 w-full rounded-2xl" /></div>}
+      {rowId && detail.isError && <LoadError what="verification" onRetry={() => void detail.refetch()} className="text-sm text-error" />}
       {showFirstLoad && (
         <div className="space-y-4" aria-busy="true">
           {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}
         </div>
       )}
-      {showError && (
-        <div role="alert" className="space-y-3">
-          <p className="font-sans text-sm text-error">Couldn&apos;t load the verifications. Please try again.</p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            disabled={users.isFetching}
-            className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
-          >
-            Retry
-          </button>
-        </div>
-      )}
+      {showError && <LoadError what="the verifications" onRetry={() => void refetch()} className="text-sm text-error" />}
       <Slab
         id="open-queue"
         number="01"
@@ -685,13 +668,8 @@ function VerificationDetailBody({ row }: { row: AdminUserRow }) {
   const payoutsCount = effective?.payouts.length ?? 0;
   const avatarUrl = effective?.avatarUrl ?? row.avatarUrl ?? null;
 
-  if (settings.isPending) return <p role="status" className="font-sans text-sm text-slate">Loading verification details…</p>;
-  if (settings.isError) return (
-    <div role="alert" className="space-y-3">
-      <p className="font-sans text-sm text-error">Couldn&apos;t load verification details.</p>
-      <button type="button" onClick={() => void settings.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Try again</button>
-    </div>
-  );
+  if (settings.isPending) return <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>;
+  if (settings.isError) return <LoadError what="verification details" onRetry={() => void settings.refetch()} className="text-sm text-error" />;
 
   return (
     <div className="space-y-6">

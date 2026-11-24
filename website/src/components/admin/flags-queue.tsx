@@ -9,6 +9,7 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/ui/load-error";
 import { BTN_DANGER, BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useSearchParams } from "next/navigation";
 import {
@@ -291,17 +292,11 @@ export function FlagsQueue() {
           </div>
         )}
         {loadFailed && (
-          <div role="alert" className="mt-6 space-y-3">
-            <p className="font-sans text-sm text-error">Couldn&apos;t load flags. Please try again.</p>
-            <button
-              type="button"
-              onClick={() => { void openQuery.refetch(); historyLists.forEach((l) => l.refetch()); }}
-              disabled={openQuery.isFetching || historyLists.some((l) => l.isFetching)}
-              className={secondaryBtn}
-            >
-              Retry
-            </button>
-          </div>
+          <LoadError
+            what="flags"
+            onRetry={() => { void openQuery.refetch(); historyLists.forEach((l) => l.refetch()); }}
+            className="mt-6 text-sm text-error"
+          />
         )}
       </div>
 

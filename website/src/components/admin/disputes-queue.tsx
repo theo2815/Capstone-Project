@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
@@ -148,16 +150,6 @@ export function DisputesQueue() {
     setRowId(id);
   }
 
-  if (list.isLoading) return <p role="status" className="py-6">Loading disputes…</p>;
-  if (list.error && items.length === 0) return (
-    <div role="alert" className="space-y-4 py-6">
-      <p>Couldn&apos;t load disputes.</p>
-      <button type="button" className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`} onClick={list.refetch}>
-        Try again
-      </button>
-    </div>
-  );
-
   const emptyText = q
     ? `No disputes match “${q}”.`
     : VIEWS.find((v) => v.value === view)?.empty;
@@ -214,6 +206,10 @@ export function DisputesQueue() {
 
         {view === "refund_run" ? (
           <RefundRun onOpen={handleOpenRow} />
+        ) : list.isLoading ? (
+          <div aria-busy="true" className="space-y-4">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>
+        ) : list.error && items.length === 0 ? (
+          <LoadError what="disputes" onRetry={list.refetch} className="text-sm text-error" />
         ) : items.length === 0 ? (
           <p className="font-sans text-sm text-slate-soft">{emptyText}</p>
         ) : (

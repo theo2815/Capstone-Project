@@ -162,7 +162,7 @@ it("a failed load shows an alert with Retry, never an empty queue", async () => 
   navigation.search = "row=flag-1";
   mount();
   const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("Couldn't load flags");
+  expect(within(alert).getByText("Couldn't load flags.")).toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(screen.queryByText("No flags waiting. You're caught up.")).not.toBeInTheDocument();
   expect(navigation.replace).not.toHaveBeenCalled();

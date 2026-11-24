@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRef, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
@@ -39,12 +41,9 @@ export function RelevanceAppeals({ appealId, onOpen }: { appealId: string; onOpe
           <section key={status} aria-label={label} className="space-y-3">
             <Kicker as="h2" tone="soft">{label}</Kicker>
             {list.isLoading ? (
-              <p role="status" className="font-sans text-sm text-slate-soft">Loading appeals…</p>
+              <div aria-busy="true" className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
             ) : list.error && list.items.length === 0 ? (
-              <div role="alert" className="space-y-3">
-                <p className="font-sans text-sm text-ink-soft">Could not load the appeals.</p>
-                <button type="button" onClick={list.refetch} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
-              </div>
+              <LoadError what="the appeals" onRetry={list.refetch} className="text-sm text-error" />
             ) : list.items.length === 0 ? (
               <p className="font-sans text-sm text-slate-soft">{empty}</p>
             ) : (
@@ -195,12 +194,9 @@ function AppealDrawer({ appeal, onClose }: { appeal: RelevanceAppealRow; onClose
         </div>
 
         {detail.isPending ? (
-          <p role="status" className="font-sans text-sm text-slate-soft">Loading case…</p>
+          <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
         ) : detail.isError ? (
-          <div role="alert" className="space-y-3">
-            <p className="font-sans text-sm text-ink-soft">Could not load the case.</p>
-            <button type="button" onClick={() => void detail.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
-          </div>
+          <LoadError what="the case" onRetry={() => void detail.refetch()} className="text-sm text-error" />
         ) : (
           <div className="space-y-10">
             <RelevanceCaseBody detail={detail.data} samples={false} />

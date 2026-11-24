@@ -77,8 +77,16 @@ it("when the reasons fail to load, the modal shows the error and a Retry, and Co
   vi.mocked(api.get).mockRejectedValueOnce(new Error("down"));
   renderModal();
   const dialog = screen.getByRole("dialog", { name: "Deny d1" });
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Couldn't load the deny reasons.");
+  expect(within(await within(dialog).findByRole("alert")).getByText("Couldn't load the deny reasons.")).toBeInTheDocument();
   expect(within(dialog).getByRole("button", { name: "Deny claim" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Retry" }));
   expect(await within(dialog).findAllByRole("radio")).toHaveLength(3);
+});
+
+it("the reasons load behind a skeleton, with no Loading sentence", () => {
+  vi.mocked(api.get).mockImplementationOnce(() => new Promise(() => {}));
+  renderModal();
+  const dialog = screen.getByRole("dialog", { name: "Deny d1" });
+  expect(dialog.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(within(dialog).queryByText(/Loading/)).toBeNull();
 });
