@@ -151,7 +151,7 @@ it("a tab shows loading, failed with retry, empty, and Showing S of T with Load 
   client.clear();
   list = async () => { throw new Error("down"); };
   mount();
-  expect(await screen.findByText("Could not load the cases.")).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't load the cases.")).toBeInTheDocument();
   const rows = [row, { ...row, caseId: "c2", eventName: "Second Race" }, { ...row, caseId: "c3", eventName: "Third Race" }];
   list = async (url) => {
     const offset = Number(new URL(`http://x${url}`).searchParams.get("offset"));

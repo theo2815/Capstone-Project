@@ -13,6 +13,7 @@ import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/c
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Modal } from "@/components/ui/modal";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/ui/load-error";
 import { useAdminKpis } from "@/hooks/use-admin-data";
 import {
   useAdminSellerDetailsActions,
@@ -103,10 +104,7 @@ export function SellerDetailsQueue() {
           {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
         </div>
       ) : list.isError ? (
-        <div role="alert" className="font-sans text-sm text-ink">
-          <p>Couldn&apos;t load seller details.</p>
-          <button type="button" onClick={() => void list.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-3")}>Try again</button>
-        </div>
+        <LoadError what="seller details" onRetry={() => void list.refetch()} className="text-sm text-error" />
       ) : rows.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{FILTER_EMPTY[key]}</p>
       ) : (
@@ -214,12 +212,9 @@ function SellerDetailsDrawer({ userId, onClose }: { userId: string; onClose: () 
         </>
       )}>
       {record.isPending ? (
-        <p className="font-sans text-sm text-slate-soft">Loading…</p>
+        <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
       ) : record.isError || !data ? (
-        <div role="alert" className="font-sans text-sm text-ink">
-          <p>Couldn&apos;t open these seller details.</p>
-          <button type="button" onClick={() => void record.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm, "mt-3")}>Try again</button>
-        </div>
+        <LoadError what="seller details" onRetry={() => void record.refetch()} className="text-sm text-error" />
       ) : (
         <div className="space-y-10">
           {actionError && (

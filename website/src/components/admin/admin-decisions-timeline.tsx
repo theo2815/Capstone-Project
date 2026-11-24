@@ -1,13 +1,13 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { useAdminUserDetail } from "@/hooks/use-admin-users";
 import { useAdminDecisions } from "@/hooks/use-admin-decisions";
 import type { RecentAdminDecision } from "@/lib/api-admin";
 import type { DecisionLogEntry } from "@/lib/admin-user-registry";
-import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
-import { cn } from "@/lib/utils";
 
 interface AdminDecisionsTimelineProps {
   /** Cap on entries rendered. Defaults to 10 (Overview compact view). */
@@ -30,8 +30,8 @@ export function AdminDecisionsTimeline({
   const recentQuery = useAdminDecisions(limit, recent && !userId);
   if (!userId && !recent) return <p className="font-sans text-sm text-slate-soft">Decision history is available on each <Link className="underline" href="/admin/photographers">photographer’s profile</Link>.</p>;
   const query = userId ? userQuery : recentQuery;
-  if (query.isPending) return <p role="status">Loading decisions…</p>;
-  if (query.isError) return <p role="alert">Couldn&apos;t load decisions. <button type="button" onClick={() => void query.refetch()} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button></p>;
+  if (query.isPending) return <div aria-busy="true" className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>;
+  if (query.isError) return <LoadError what="decisions" onRetry={() => void query.refetch()} className="text-sm text-error" />;
 
   const rows: TimelineRow[] = userId
     ? (userQuery.data?.decisionLog ?? []).slice(0, limit).map((entry, i) => ({

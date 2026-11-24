@@ -6,6 +6,7 @@ import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadError } from "@/components/ui/load-error";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import {
   BTN_PRIMARY,
@@ -108,14 +109,9 @@ export function EventRequestsQueue() {
       <p className="font-sans text-sm text-slate mt-6 md:mt-8">
         Photographer-owned events · new submissions and pricing changes
       </p>
-      {query.isError && (
-        <div role="alert" className="space-y-3">
-          <p className="font-sans text-sm text-error">Couldn&apos;t load event requests. Please try again.</p>
-          <button type="button" onClick={() => void query.refetch()} disabled={query.isFetching} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>Retry</button>
-        </div>
-      )}
+      {query.isError && <LoadError what="event requests" onRetry={() => void query.refetch()} className="text-sm text-error" />}
       {query.isPending ? (
-        <div className="space-y-4">
+        <div aria-busy="true" className="space-y-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-28 w-full rounded-2xl" />
           ))}

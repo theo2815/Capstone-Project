@@ -67,7 +67,7 @@ it("a failed first load (even with an empty message) shows an alert with Retry, 
   vi.spyOn(api, "get").mockRejectedValue(new Error(""));
   mount();
   const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("Couldn't load the verifications. Please try again.");
+  expect(within(alert).getByText("Couldn't load the verifications.")).toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(screen.queryByText("No profiles waiting. You're caught up.")).toBeNull();
   expect(screen.queryByText(/^0 (waiting|not finished)$/)).toBeNull();

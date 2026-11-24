@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadError } from "@/components/ui/load-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRef } from "react";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { Thumb } from "@/components/admin/flag-relevance-evidence";
@@ -148,12 +150,9 @@ export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail 
     <section className="space-y-3">
       <Kicker as="p" tone="soft">Held photos</Kicker>
       {query.isLoading ? (
-        <p role="status" className="font-sans text-sm text-slate-soft">Loading held photos…</p>
+        <div aria-busy="true" className="space-y-3">{Array.from({ length: 2 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
       ) : query.error && items.length === 0 ? (
-        <div role="alert" className="space-y-2">
-          <p className="font-sans text-sm text-ink-soft">Could not load the held photos.</p>
-          <button type="button" onClick={() => query.refetch()} className={`${BTN_SECONDARY} ${BTN_SIZE.sm}`}>Retry</button>
-        </div>
+        <LoadError what="the held photos" onRetry={() => void query.refetch()} className="text-sm text-error" />
       ) : items.length === 0 ? (
         <p className="font-sans text-sm text-slate-soft">{HIDDEN_PHOTOS_EMPTY}</p>
       ) : (

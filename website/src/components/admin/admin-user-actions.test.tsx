@@ -125,11 +125,11 @@ it("awaits unsuspension and locks the action cluster", async () => {
 it("preserves a deep-linked verification through loading, failure, and retry", async () => {
   navigation.search = `row=${adminUser.userId}`; client.setQueryData(key, []);
   const request = deferred<unknown>(); vi.mocked(api.get).mockReturnValueOnce(request.promise); mount(true);
-  expect(navigation.replace).not.toHaveBeenCalled(); expect(screen.getByRole("status")).toHaveTextContent("Loading verification");
+  expect(navigation.replace).not.toHaveBeenCalled(); expect(document.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull(); expect(screen.queryByText(/Loading/)).toBeNull();
   await act(async () => request.reject(new Error("Unavailable")));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load verification"); expect(navigation.replace).not.toHaveBeenCalled();
-  expect(screen.getByRole("button", { name: "Try again" })).toHaveAttribute("type", "button");
-  await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(within(await screen.findByRole("alert")).getByText("Couldn't load verification.")).toBeInTheDocument(); expect(navigation.replace).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Retry" })).toHaveAttribute("type", "button");
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("dialog")).toHaveTextContent("Test Studio"); expect(navigation.replace).not.toHaveBeenCalled();
 });
 it("retains only failed bulk rejections, keeps their reason, and retries them once", async () => {

@@ -597,3 +597,26 @@ it("a case that can be restored says to look at the junk samples first", async (
   await within(copy).findByRole("button", { name: "Restore batch…" });
   expect(within(copy).queryByText(guide)).not.toBeInTheDocument();
 });
+
+it("the case and its held photos load behind skeletons, and a failure says Couldn't load with Retry", async () => {
+  one = () => new Promise(() => {});
+  mount();
+  const loading = await drawer();
+  expect(loading.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(within(loading).queryByText(/Loading/)).toBeNull();
+  cleanup();
+  client.clear();
+  one = async () => { throw new Error("down"); };
+  mount();
+  const failed = await drawer();
+  expect(await within(failed).findByText("Couldn't load the case.")).toBeInTheDocument();
+  expect(within(failed).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  cleanup();
+  client.clear();
+  one = async () => detail(rows[0] ?? cantTell);
+  holds = async () => { throw new Error("down"); };
+  mount();
+  const held = await drawer();
+  expect(await within(held).findByText("Couldn't load the held photos.")).toBeInTheDocument();
+  expect(within(held).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

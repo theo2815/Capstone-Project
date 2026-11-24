@@ -391,3 +391,28 @@ it("an empty Needs review list says the admin is caught up", async () => {
   renderQueue();
   expect(await screen.findByText("No seller details waiting. You're caught up.")).toBeInTheDocument();
 });
+
+it("a failed list load says Couldn't load seller details. with Retry", async () => {
+  get.mockRejectedValue(new Error("down"));
+  renderQueue();
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn't load seller details.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+it("the record loads behind a skeleton, and a failed record says Couldn't load seller details. with Retry", async () => {
+  const served = get.getMockImplementation()!;
+  let record: () => Promise<never> = () => new Promise(() => {});
+  get.mockImplementation(((path: string, ...rest: never[]) =>
+    path === "/admin/seller-details/u1" ? record() : served(path, ...rest)) as typeof api.get);
+  const dialog = await openRecord();
+  expect(dialog.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(within(dialog).queryByText(/Loading/)).toBeNull();
+  cleanup();
+  client.clear();
+  record = () => Promise.reject(new Error("down"));
+  const failed = await openRecord();
+  const alert = await within(failed).findByRole("alert");
+  expect(within(alert).getByText("Couldn't load seller details.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

@@ -296,3 +296,17 @@ it("an empty queue says no event requests are waiting", () => {
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   expect(screen.getByText("No event requests waiting. You're caught up.")).toBeInTheDocument();
 });
+
+it("loading shows skeleton rows, and a failed load says Couldn't load event requests. with Retry", async () => {
+  client.clear();
+  vi.mocked(api.get).mockImplementation(() => new Promise(() => {}));
+  const { container } = render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  cleanup();
+  client.clear();
+  vi.mocked(api.get).mockRejectedValue(new Error("down"));
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn't load event requests.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

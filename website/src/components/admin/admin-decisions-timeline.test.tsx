@@ -131,3 +131,17 @@ it("each decision shows its year", async () => {
   renderTimeline({ recent: true });
   expect(await screen.findByText(/OCT 27 · 2026 · /)).toBeTruthy();
 });
+
+it("loading shows skeleton rows, and a failed load says Couldn't load decisions. with Retry", async () => {
+  vi.spyOn(api, "get").mockImplementation(() => new Promise(() => {}));
+  const { container, unmount } = renderTimeline({ recent: true });
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
+  unmount();
+  client.clear();
+  vi.mocked(api.get).mockRejectedValue(new Error("down"));
+  renderTimeline({ recent: true });
+  const alert = await screen.findByRole("alert");
+  expect(alert.querySelector("p")?.textContent).toBe("Couldn't load decisions.");
+  expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

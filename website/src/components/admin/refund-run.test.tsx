@@ -123,3 +123,17 @@ it("keeps a short lead line, shows each dispute id and says Open dispute", async
   expect(screen.getByText("dispute-1")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Open dispute dispute-1" })).toHaveTextContent(/^Open dispute$/);
 });
+
+it("loading shows skeleton rows, and a failed load says Couldn't load refunds. with Retry", async () => {
+  vi.spyOn(api, "get").mockImplementation(() => new Promise(() => {}));
+  const { container, unmount } = wrap(<RefundRun onOpen={vi.fn()} />);
+  expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
+  unmount();
+  client.clear();
+  vi.mocked(api.get).mockRejectedValue(new Error("down"));
+  wrap(<RefundRun onOpen={vi.fn()} />);
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByText("Couldn't load refunds.")).toBeInTheDocument();
+  expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});

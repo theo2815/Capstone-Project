@@ -123,10 +123,11 @@ it("loading, empty and error states render", async () => {
   relevance = () => new Promise((r) => { release = r; });
   hidden = async () => { throw new Error("boom"); };
   mount();
-  expect(screen.getByText("Loading evidence…")).toBeInTheDocument();
+  expect(document.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
+  expect(screen.queryByText(/Loading/)).toBeNull();
   release(evidence([]));
   expect(await screen.findByText("No batch is linked to this flag.")).toBeInTheDocument();
-  expect(await screen.findByText("Could not load the hidden photos.")).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't load the hidden photos.")).toBeInTheDocument();
   hidden = async () => ({ items: [], total: 0 });
   await user.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("No photos hidden by this flag.")).toBeInTheDocument();
@@ -134,7 +135,7 @@ it("loading, empty and error states render", async () => {
   client.clear();
   relevance = async () => { throw new Error("down"); };
   mount();
-  expect(await screen.findByText("Could not load the evidence.")).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't load the evidence.")).toBeInTheDocument();
   relevance = async () => evidence([batch]);
   await user.click(screen.getAllByRole("button", { name: "Retry" })[0]!);
   expect(await screen.findByRole("region", { name: /Batch in/ })).toBeInTheDocument();
