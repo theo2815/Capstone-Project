@@ -41,6 +41,12 @@ it("the row checkbox has a 44 px hit area", () => {
   expect(label?.className).toContain("size-11");
 });
 
+// FU-9 (FT-44 #3): the photo-check link under the id is a 44 px target.
+it("the photo-check link has a 44 px hit area", () => {
+  renderRow({ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: true });
+  expect(screen.getByRole("link", { name: "Payouts paused: a photo check on this photographer is still open" }).className).toContain("min-h-11");
+});
+
 // FT-16 (C-25): green would read as finished, so no status is fresh; failed and returned are errors.
 it("status tones: Approved is ink, Failed and Returned are error, Paid stays slate", () => {
   expect(payoutStatusTone("approved")).toBe("ink");

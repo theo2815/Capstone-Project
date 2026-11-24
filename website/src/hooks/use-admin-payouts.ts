@@ -60,12 +60,11 @@ export function usePayoutActions() {
       } catch (error) {
         if (isCurrent()) {
           console.error(`[admin/payouts] ${label} failed`, error);
-          // The server's own words for a hold refusal (PE-2.8); FT-23 (C-16): any other server refusal keeps its reason too.
-          const heldRefusal = error instanceof ApiError && error.errors[0]?.code === "PAYOUT_ON_HOLD";
+          // FT-23 (C-16, W23.5): a server refusal keeps its own words; FU-9 (U9.4): the hold refusal (PE-2.8) too.
           const bulk = label === "Approve payouts" || label === "Hold payouts";
           useToastStore.getState().showToast({
-            kind: "error", message: heldRefusal ? error.message
-              : `Couldn't ${label}. ${(bulk && error instanceof Error) || error instanceof ApiError ? error.message : "Please try again."}`,
+            kind: "error",
+            message: `Couldn't ${label}. ${(bulk && error instanceof Error) || error instanceof ApiError ? error.message : "Please try again."}`,
           });
         }
         return false;

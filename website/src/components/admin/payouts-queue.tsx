@@ -33,6 +33,7 @@ import {
 import {
   payoutMethodLabel,
   payoutActionsBlockedByHold,
+  payoutApproveNote,
   ADMIN_PAYOUT_STATUS_LABEL,
   type AdminPayoutCycle,
   type AdminPayoutStatus,
@@ -568,6 +569,9 @@ export function PayoutsQueue() {
               ? "Approving sends no money. A larger payout needs a second, different admin before it can be paid."
               : "Do this once the transfer has started. Then mark it paid with the bank reference, or mark it failed."}
           </p>
+          {confirmTarget.kind === "approve" && payoutApproveNote(confirmTarget.cycle) && (
+            <p className="font-sans text-sm text-slate">{payoutApproveNote(confirmTarget.cycle)}</p>
+          )}
         </AdminConfirmModal>
       )}
 

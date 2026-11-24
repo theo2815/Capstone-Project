@@ -90,6 +90,11 @@ export function PayoutReportActionModal({
       submitLabel={config.submit}
       submitDisabled={!valid}
     >
+      {mode === "acknowledge" && (
+        <p className="font-sans text-sm text-ink-soft">
+          The photographer gets your reply in their QuickPitik inbox. A reply cannot be taken back; you can still resolve the report later.
+        </p>
+      )}
       <section className="space-y-2">
         <AdminTextarea
           id={`report-action-${mode}-note`}

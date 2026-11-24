@@ -37,9 +37,12 @@ interface AdminPayoutRowProps {
 }
 
 /** FT-23 (C-16): this admin gave the first approval, which the backend refuses to count twice (409).
- *  False when approvedBy is missing (an older backend), so nothing is disabled then. */
+ *  False when approvedBy is missing (an older backend), so nothing is disabled then.
+ *  FU-9: also false when the server says one approval is enough now; without needsTwoApprovals, as before.
+ *  When the server says two are needed, a held payout counts too (a hold keeps the first approval). */
 export function gaveFirstApproval(cycle: AdminPayoutCycle, adminId: string | undefined): boolean {
-  return cycle.status === "pending_review" && !!cycle.approvedBy && cycle.approvedBy === adminId;
+  const waiting = cycle.status === "pending_review" || (cycle.needsTwoApprovals === true && cycle.status === "held");
+  return waiting && cycle.needsTwoApprovals !== false && !!cycle.approvedBy && cycle.approvedBy === adminId;
 }
 export const OWN_FIRST_APPROVAL_NOTE = "You gave the first approval. A different admin must give the second.";
 
@@ -254,7 +257,7 @@ export function PayoutFlagLine({ cycle }: { cycle: AdminPayoutCycle }) {
   if (!cycle.relevanceFlagId) return null;
   return (
     <p className="font-sans text-sm text-warning-text mt-2">
-      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} className="relative z-10 underline underline-offset-2 hover:text-ink">
+      <Link href={`/admin/flags?row=${cycle.relevanceFlagId}`} className="relative z-10 inline-flex min-h-11 items-center underline underline-offset-2 hover:text-ink">
         {cycle.relevanceHold ? PAYOUT_HOLD_REASON : PAYOUT_UNCONFIRMED_FLAG_NOTE}
       </Link>
     </p>

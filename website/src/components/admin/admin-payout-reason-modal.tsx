@@ -29,7 +29,7 @@ const COPY: Record<
     verb: "failed",
     submit: "Mark failed",
     placeholder: "What went wrong with the transfer?",
-    note: "Use this when the money never left — the funds return to the photographer's balance to retry.",
+    note: "Use this when the money never left. The money goes back to the photographer's balance, and they get your reason in their QuickPitik inbox.",
   },
   returned: {
     title: "Mark payout returned",

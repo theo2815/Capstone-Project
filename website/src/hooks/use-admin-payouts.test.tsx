@@ -166,11 +166,12 @@ it("does not read or mutate payout cycles without an admin session", async () =>
   expect(get).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
 });
 
+// FU-9 (U9.4): a hold refusal reads like every other refusal, with the server's words after "Couldn't …".
 it("a hold refusal shows the server's reason", async () => {
   vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "PAYOUT_ON_HOLD", message: "Payouts are on hold while a flag is open." }], 409));
   const { result } = renderHook(usePayoutActions, { wrapper });
   await expect(result.current.approve(payoutCycle.id)).resolves.toBe(false);
-  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "error", message: "Payouts are on hold while a flag is open." });
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "error", message: "Couldn't approve payout. Payouts are on hold while a flag is open." });
 });
 
 // FT-23 (C-16, W23.5): a refused single action shows the server's own words, not "please try again".

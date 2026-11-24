@@ -75,4 +75,26 @@ describe("AdminPayoutHoldModal (AX-28)", () => {
     await user.click(submit());
     expect(onSubmit.mock.calls[0]![0]).toMatch(/^We need to review your account first/);
   });
+
+  // FU-9 (FT-33): the server refuses a reason over 255 characters, so the note leaves room for the longest label.
+  it("a long note with the longest reason still sends at most 255 characters", async () => {
+    const user = userEvent.setup();
+    const { onSubmit, submit } = setup();
+    await user.click(screen.getByRole("radio", { name: "Your payout account details do not match our records" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "x".repeat(280) } });
+    await user.click(submit());
+    expect(onSubmit.mock.calls[0]![0].length).toBeLessThanOrEqual(255);
+  });
+
+  // FU-9 (FT-11): the "Other" error goes away once the admin picks another reason.
+  it("the Other note error clears when the reason changes", async () => {
+    const user = userEvent.setup();
+    const { submit } = setup();
+    await user.click(screen.getByRole("radio", { name: "Other (see note)" }));
+    await user.click(submit());
+    expect(screen.getByText("Add a note: Other needs one.")).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "We need to review your account first" }));
+    await user.click(screen.getByRole("radio", { name: "Other (see note)" }));
+    expect(screen.queryByText("Add a note: Other needs one.")).not.toBeInTheDocument();
+  });
 });
