@@ -11,7 +11,7 @@ export default function AdminPhotoRemovalRequestPage() {
   const { id } = useParams<{ id: string }>();
   return (
     <>
-      <Link href={ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS} className="inline-flex min-h-[44px] items-center text-sm text-slate hover:text-ink">← Removal requests</Link>
+      <Link href={ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS} className="inline-flex min-h-[44px] items-center text-sm text-slate hover:text-ink">← Photo removals</Link>
       <div className="mt-6">
         <RemovalRequestReview requestId={id} />
         <RemovalRequestDecision requestId={id} />

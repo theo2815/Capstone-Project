@@ -4,11 +4,8 @@ import { expect, it } from "vitest";
 
 // Admin selects use DropdownSelect (components/ui/dropdown.tsx), so every list and form field looks and works the same (FT-31).
 const SRC = path.resolve(__dirname, "../..");
-// Still native today, each with the task that moves it.
-const ALLOWED = [
-  "components/admin/photo-removal/request-decision.tsx", // the per-photo Decision, until FT-32
-  "components/admin/photo-removal/request-history.tsx", // the guest buyer notice, until FT-32
-];
+// A select that must stay native goes here, with its reason. FT-32 moved the last two.
+const ALLOWED: string[] = [];
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

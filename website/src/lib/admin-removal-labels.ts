@@ -1,4 +1,5 @@
-import type { RemovalActorType, RemovalMatchSource, RemovalRequestStatus } from "@/types/photo-removal";
+import { formatSalesDate } from "@/lib/format";
+import type { PhotoRemovalRequestDto, RemovalActorType, RemovalMatchSource, RemovalRequestStatus } from "@/types/photo-removal";
 
 // Admin display labels for photo-removal codes; codes stay codes on the client.
 export const REMOVAL_STATUS_LABEL: Record<RemovalRequestStatus, string> = {
@@ -27,3 +28,27 @@ const label = (map: Record<string, string>, code: string) =>
 export const removalActionLabel = (code: string) => label(ACTION_LABEL, code);
 export const removalActorLabel = (code: string) => label(ACTOR_LABEL, code);
 export const removalStateLabel = (code: string) => label(STATE_LABEL, code);
+
+// FT-32 (C-74): the one line under a request's header that names its step and who it waits for.
+export function removalStepLine(request: PhotoRemovalRequestDto, now = Date.now()): string | null {
+  switch (request.status) {
+    case "DRAFT": return "Step 1 of 4. Choose the photos this request is about, then verify them.";
+    case "OPEN": {
+      // An owner still to answer: a reachable owner, not overdue, with a hidden photo they have not answered for.
+      const unanswered = request.reviews.filter((review) => !review.overdue && !review.unavailableReason &&
+        request.items.some((item) => item.reviewId === review.id && item.state === "VERIFIED" && !item.ownerResponse));
+      // An owner with no deadline yet has not been told; the sheet has no line for that, so none shows.
+      if (unanswered.some((review) => !review.deadline)) return null;
+      const waiting = unanswered.filter((review) => Date.parse(review.deadline!) > now);
+      if (waiting.length === 0) return "Step 3 of 4. Ready for your decision on each photo.";
+      const until = waiting.map((review) => review.deadline!).reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a));
+      return `Step 2 of 4. Waiting for ${waiting.length} photographer${waiting.length === 1 ? "" : "s"} to answer, until ${formatSalesDate(until)}. You can decide earlier with an urgent reason.`;
+    }
+    // A cancel also passes through Closing; only an authorized removal has files being deleted.
+    case "RESOLVING": return request.items.some((item) => item.state === "REMOVAL_AUTHORIZED")
+      ? "Step 4 of 4. Removal authorized. The files are being deleted." : null;
+    case "RESOLVED": return "Finished. Every photo was decided.";
+    // W32.1's "Nothing was hidden or removed." is held: a request cancelled while open had its photos hidden.
+    default: return null;
+  }
+}

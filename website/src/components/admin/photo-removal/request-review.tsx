@@ -5,17 +5,19 @@ import { useAdminRemovalActions, useAdminRemovalRequest, useRemovalEvidence, use
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { FindPhotosControls } from "@/components/events/find-photos-controls";
 import { PhotoPreviewCard } from "@/components/photos/photo-preview-card";
-import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminTextInput, AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { Kicker } from "@/components/ui/kicker";
 import { FieldError } from "@/components/ui/field-error";
+import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BTN_DANGER, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { ApiError } from "@/lib/api";
 import { validateImageFile } from "@/lib/image-utils";
 import { formatLongDate } from "@/lib/format";
-import { REMOVAL_SOURCE_LABEL, REMOVAL_STATUS_LABEL } from "@/lib/admin-removal-labels";
+import { REMOVAL_SOURCE_LABEL, REMOVAL_STATUS_LABEL, removalStepLine } from "@/lib/admin-removal-labels";
 import { cn } from "@/lib/utils";
 import { REMOVAL_INPUT } from "./request-intake";
 import { RemovalPhotoThumb } from "./removal-photo-thumb";
@@ -32,17 +34,16 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function RemovalRequestReview({ requestId }: { requestId: string }) {
   const detail = useAdminRemovalRequest(requestId);
-  if (detail.isPending) return <><h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1><p role="status" className="mt-8 text-slate">Loading case…</p></>;
-  // A failed background refresh keeps showing the last server copy.
-  if (!detail.data) return (
+  if (detail.isPending) return (
     <>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1>
-      <div role="alert" className="mt-8 space-y-4">
-        <p>Couldn&apos;t load this case.</p>
-        <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void detail.refetch()}>Try again</button>
+      <div role="status" aria-busy="true" aria-label="Loading this request" className="mt-8 space-y-3">
+        <Skeleton className="h-8 w-2/3" /><Skeleton className="h-24 w-full" />
       </div>
     </>
   );
+  // A failed background refresh keeps showing the last server copy.
+  if (!detail.data) return <><h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1><LoadError what="this request" onRetry={() => void detail.refetch()} className="mt-8" /></>;
   const request = detail.data;
   return (
     <>
@@ -73,14 +74,16 @@ const isRunner = (request: PhotoRemovalRequestDto) => request.source === "RUNNER
 
 function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
   const runner = isRunner(request);
+  const step = removalStepLine(request);
   return (
     <header className="pb-8 border-b border-line">
-      <Kicker as="p" tnum>{runner ? "Runner request" : "Removal case"} · {formatLongDate(request.createdAt)}</Kicker>
+      <Kicker as="p" tnum>{runner ? "Runner request" : "Support request"} · {formatLongDate(request.createdAt)}</Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">{request.event.name}</h1>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <AdminStatusPill label={runner ? "Runner" : "Support"} tone={runner ? "ink" : "muted"} />
         <AdminStatusPill label={REMOVAL_STATUS_LABEL[request.status] ?? request.status} tone={request.status === "DRAFT" ? "amber" : "ink"} />
       </div>
+      {step && <p className="mt-3 text-sm text-ink">{step}</p>}
       <dl className="mt-5 grid gap-3 sm:grid-cols-2 text-sm">
         {runner ? (
           <div>
@@ -126,7 +129,7 @@ export function ReviewCurrentState({ request, actions, refreshing, refresh, onRe
   }
   return (
     <div role="alert" className="rounded-2xl border border-warning/40 bg-bone-deep p-4 space-y-3">
-      <p className="text-sm text-ink">This case changed while you were working. Review the current state before continuing.</p>
+      <p className="text-sm text-ink">This request changed while you were working. Review the current state before continuing.</p>
       <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} disabled={refreshing} onClick={() => void review()}>
         Review current state
       </button>
@@ -322,10 +325,11 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
               </ul>
             </div>
           ))}
-          <div className="space-y-2">
-            <AdminFieldLabel htmlFor="removal-method">Verification method</AdminFieldLabel>
-            <input id="removal-method" type="text" maxLength={2000} value={method} disabled={busy} onChange={(e) => setMethod(e.target.value)} className={REMOVAL_INPUT} />
-          </div>
+          {/* AdminTextInput has no disabled prop; the fieldset locks it while busy. */}
+          <fieldset disabled={busy} className="min-w-0">
+            <AdminTextInput id="removal-method" label="Verification method" maxLength={2000} value={method} onChange={setMethod}
+              placeholder="For example: same bib, same race kit, selfie compared by eye" />
+          </fieldset>
           <AdminTextarea id="removal-note" label="Verification note" maxLength={2000} value={note} disabled={busy} onChange={setNote} />
           {selected.length > 100 && <p className="text-sm text-warning-text">Select at most <span className="tnum">100</span> photos per verification.</p>}
           <FieldError message={verifyError} id="removal-verify-error" />
@@ -442,7 +446,7 @@ function CancelCase({ request, disabled }: { request: PhotoRemovalRequestDto; di
     if (!(await confirm({
       title: "Cancel this request?",
       message: "Nothing is hidden or removed. The runner sees the request as rejected.",
-      confirmLabel: "Cancel case", danger: true,
+      confirmLabel: "Cancel request", danger: true,
     }))) return;
     setError(null);
     const body = { expectedVersion: request.version, reason: reason.trim() };
@@ -455,12 +459,13 @@ function CancelCase({ request, disabled }: { request: PhotoRemovalRequestDto; di
     }
   }
   return (
-    <section aria-label="Cancel case" className="space-y-3 border-t border-line pt-8">
-      <AdminFieldLabel htmlFor="removal-cancel-reason">Reason for cancelling</AdminFieldLabel>
-      <input id="removal-cancel-reason" type="text" maxLength={2000} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} className={REMOVAL_INPUT} />
+    <section aria-label="Cancel request" className="space-y-3 border-t border-line pt-8">
+      <fieldset disabled={busy} className="min-w-0">
+        <AdminTextInput id="removal-cancel-reason" label="Reason for cancelling" maxLength={2000} value={reason} onChange={setReason} />
+      </fieldset>
       <FieldError message={error} id="removal-cancel-error" />
       <button type="button" disabled={busy || !reason.trim()} onClick={() => void cancel()} className={cn(BTN_DANGER, BTN_SIZE.sm)}>
-        {actions.cancel.isPending ? "Cancelling…" : "Cancel case"}
+        {actions.cancel.isPending ? "Cancelling…" : "Cancel request"}
       </button>
     </section>
   );

@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { useAdminRemovalActions, useAdminRemovalRequest } from "@/hooks/use-photo-removal";
 import { useConfirmation } from "@/hooks/use-confirmation";
-import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminFieldLabel, AdminTextInput, AdminTextarea } from "@/components/admin/admin-form-fields";
+import { DropdownSelect } from "@/components/ui/dropdown";
 import { FieldError } from "@/components/ui/field-error";
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { formatLongDate, formatSalesDate } from "@/lib/format";
@@ -23,6 +24,7 @@ const DECISIONS: [RemovalDecision, string][] = [
   ["REMOVE", "Remove"], ["RETAIN", "Retain"], ["MORE_EVIDENCE", "Ask for more evidence"], ["RETAIN_RESTRICTED", "Retain restricted (stays hidden)"],
 ];
 const DECISION_LABEL = Object.fromEntries(DECISIONS) as Record<RemovalDecision, string>;
+const DECISION_OPTIONS = [{ value: "" as const, label: "No decision" }, ...DECISIONS.map(([value, label]) => ({ value, label }))];
 // What each choice does (backend facts F3); shown under the select once chosen.
 const DECISION_EFFECT: Record<RemovalDecision, string> = {
   REMOVE: "The photo is deleted for good. This cannot be undone.",
@@ -194,11 +196,10 @@ export function RemovalRequestDecision({ requestId }: { requestId: string }) {
       {singleFace.length > 0 && (
         <div className="space-y-3 rounded-2xl border border-line p-4">
           <p className="text-sm text-slate">Sets Remove on <span className="tnum">{singleFace.length}</span> hidden photo{singleFace.length === 1 ? "" : "s"} showing one face. Photos with other people, or with no face count, are decided one by one.</p>
-          <div className="space-y-1">
-            <AdminFieldLabel htmlFor="removal-shared-reason">Reason for every selected photo</AdminFieldLabel>
-            <input id="removal-shared-reason" type="text" maxLength={2000} value={sharedReason} disabled={busy || reviewRequired}
-              onChange={(e) => setShared(e.target.value)} className={REMOVAL_INPUT} />
-          </div>
+          {/* AdminTextInput has no disabled prop; the fieldset locks it while busy. */}
+          <fieldset disabled={busy || reviewRequired} className="min-w-0">
+            <AdminTextInput id="removal-shared-reason" label="Reason for every selected photo" maxLength={2000} value={sharedReason} onChange={setShared} />
+          </fieldset>
           <button type="button" disabled={busy || reviewRequired} onClick={selectSingleFace} className={cn(BTN_SECONDARY, BTN_SIZE.sm)}>
             Select all single-face hidden photos
           </button>
@@ -296,12 +297,9 @@ function ItemRow({ item, draft, busy, alt, onChange, onRetry }: {
         <div className="grid gap-3 sm:grid-cols-2 pt-1">
           <div className="space-y-1">
             <AdminFieldLabel htmlFor={`decision-${item.id}`}>Decision<span className="sr-only"> for {photo}</span></AdminFieldLabel>
-            <select id={`decision-${item.id}`} value={draft.decision} disabled={busy} className={REMOVAL_INPUT}
-              aria-describedby={draft.decision ? `decision-effect-${item.id}` : undefined}
-              onChange={(e) => onChange({ decision: e.target.value as Draft["decision"] })}>
-              <option value="">No decision</option>
-              {DECISIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
+            <DropdownSelect id={`decision-${item.id}`} value={draft.decision} disabled={busy} options={DECISION_OPTIONS}
+              ariaDescribedBy={draft.decision ? `decision-effect-${item.id}` : undefined}
+              onChange={(decision) => onChange({ decision })} />
             {draft.decision && <p id={`decision-effect-${item.id}`} className="text-sm text-slate">{DECISION_EFFECT[draft.decision]}</p>}
           </div>
           {draft.decision && (

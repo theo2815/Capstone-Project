@@ -4,11 +4,13 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminEventsInfinite } from "@/hooks/use-admin-events";
 import { useAdminRemovalActions } from "@/hooks/use-photo-removal";
-import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
+import { AdminFieldHint, AdminTextInput, AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { FieldError } from "@/components/ui/field-error";
+import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
-import { BTN_GHOST, BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { Skeleton } from "@/components/ui/skeleton";
+import { BTN_PRIMARY, BTN_SIZE } from "@/components/ui/button-styles";
 import type { AdminEventRow } from "@/lib/api-admin";
 import { ROUTES } from "@/lib/constants";
 import { formatRaceDate, sentenceCaseDate } from "@/lib/format";
@@ -17,7 +19,8 @@ import { cn } from "@/lib/utils";
 // The backend can't read any other shape, and its reply then names no field.
 const RUNNER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RUNNER_ID_ERROR = "Runner account ID must be the 36-character account ID, like 1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed. Leave it empty if you don't have it.";
-export const REMOVAL_INPUT = "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:border-fresh";
+// The same box as AdminTextInput, for the inputs it cannot carry (a search with a hidden label, a date, a field marked invalid on blur).
+export const REMOVAL_INPUT = "w-full rounded-2xl border border-line bg-surface px-4 py-3 font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh";
 
 // Support intake only: contact and reason live in component state and go
 // straight to the backend; nothing here is written to storage or the URL.
@@ -58,7 +61,7 @@ export function RemovalRequestIntake() {
       });
       router.push(`${ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS}/${encodeURIComponent(created.id)}`);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Couldn't create the case. Try again.");
+      setError(failure instanceof Error ? failure.message : "Couldn't create the request. Try again.");
     }
   }
 
@@ -69,13 +72,15 @@ export function RemovalRequestIntake() {
     <form onSubmit={submit} className="mt-8 space-y-10 max-w-2xl">
       <fieldset className="min-w-0 space-y-4" disabled={create.isPending}>
         <legend className="font-display text-xl font-extrabold text-ink">1. Event</legend>
-        <p className="text-sm text-slate">One event per case. Only approved events are listed; public and unlisted ones can both be chosen.</p>
+        <p className="text-sm text-slate">One event per request. Only approved events are listed; public and unlisted ones can both be chosen.</p>
         <label htmlFor="removal-event-search" className="sr-only">Search events</label>
         {/* Enter here would submit the whole case form. */}
         <input id="removal-event-search" type="search" value={search} onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} placeholder="Search by event name or place" className={REMOVAL_INPUT} />
-        {events.isLoading && <p role="status" className="text-sm text-slate">Loading events…</p>}
-        {!!events.error && <p role="alert" className="text-sm text-error">Couldn&apos;t load events. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void events.refetch()}>Try again</button></p>}
+        {events.isLoading && (
+          <div role="status" aria-busy="true" aria-label="Loading events" className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+        )}
+        {!!events.error && <LoadError what="events" onRetry={() => void events.refetch()} />}
         {!events.isLoading && !events.error && live.length === 0 && (
           <p className="text-sm text-slate">{events.hasNextPage ? "No approved events among those loaded so far." : q ? "No approved event matches this search." : "No approved events yet."}</p>
         )}
@@ -100,36 +105,27 @@ export function RemovalRequestIntake() {
       <fieldset className="space-y-5" disabled={create.isPending}>
         <legend className="font-display text-xl font-extrabold text-ink">2. Request</legend>
         <p className="text-sm text-slate">Admin-only. Photographers see a generic privacy reason, never these details.</p>
-        <Field id="removal-support-reference" label="Support reference" value={draft.supportReference} onChange={set("supportReference")} max={1000} />
-        <Field id="removal-requester-contact" label="Requester contact" value={draft.requesterContact} onChange={set("requesterContact")} max={1000} />
-        <Field id="removal-requester-user" label="Runner account ID (optional)" value={draft.requesterUserId} onChange={set("requesterUserId")} max={64}
-          hint="The runner's 36-character account ID, not their email or name." invalid={error === RUNNER_ID_ERROR} />
-        <Field id="removal-reason" label="Reason" value={draft.reason} onChange={set("reason")} max={2000} multiline />
-        <Field id="removal-admin-note" label="Admin note (optional)" value={draft.adminNote} onChange={set("adminNote")} max={2000} multiline />
+        <AdminTextInput id="removal-support-reference" label="Support reference" value={draft.supportReference} onChange={set("supportReference")} maxLength={1000}
+          hint="The ticket or message number from your support inbox." />
+        <AdminTextInput id="removal-requester-contact" label="Requester contact" value={draft.requesterContact} onChange={set("requesterContact")} maxLength={1000}
+          hint="The email or phone number the person wrote from." />
+        <AdminTextInput id="removal-requester-user" label="Runner account ID (optional)" value={draft.requesterUserId} onChange={set("requesterUserId")} maxLength={64}
+          hint="The runner's 36-character account ID, not their email or name." error={error === RUNNER_ID_ERROR ? error : null} />
+        <div className="space-y-2">
+          <AdminTextarea id="removal-reason" label="Reason" maxLength={2000} value={draft.reason} onChange={set("reason")} describedBy="removal-reason-hint" />
+          <AdminFieldHint id="removal-reason-hint">What the person asked for, in their own words. Only admins see this.</AdminFieldHint>
+        </div>
+        <AdminTextarea id="removal-admin-note" label="Admin note (optional)" maxLength={2000} value={draft.adminNote} onChange={set("adminNote")} />
       </fieldset>
 
-      <FieldError message={error} id="removal-intake-error" />
+      {/* The runner ID error shows under its own field. */}
+      <FieldError message={error === RUNNER_ID_ERROR ? null : error} id="removal-intake-error" />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <button type="submit" disabled={!ready || create.isPending} aria-describedby={ready ? undefined : "removal-intake-missing"} className={cn(BTN_PRIMARY, BTN_SIZE.md)}>
-          {create.isPending ? "Creating…" : "Create case"}
+          {create.isPending ? "Creating…" : "Create request"}
         </button>
         {!ready && <p id="removal-intake-missing" className="text-sm text-slate">Still needed: {missing.join(", ")}.</p>}
       </div>
     </form>
-  );
-}
-
-function Field({ id, label, value, onChange, max, multiline = false, hint, invalid }: {
-  id: string; label: string; value: string; onChange: (value: string) => void; max: number; multiline?: boolean; hint?: string; invalid?: boolean;
-}) {
-  const hintId = hint ? `${id}-hint` : undefined;
-  if (multiline) return <AdminTextarea id={id} label={label} maxLength={max} value={value} onChange={onChange} />;
-  return (
-    <div className="space-y-2">
-      <AdminFieldLabel htmlFor={id}>{label}</AdminFieldLabel>
-      <input id={id} type="text" autoComplete="off" maxLength={max} value={value} onChange={(e) => onChange(e.target.value)} className={REMOVAL_INPUT}
-        aria-describedby={invalid ? `${hintId ?? ""} removal-intake-error`.trim() : hintId} aria-invalid={invalid || undefined} />
-      {hint && <p id={hintId} className="text-sm text-slate">{hint}</p>}
-    </div>
   );
 }

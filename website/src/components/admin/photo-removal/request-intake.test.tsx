@@ -47,7 +47,7 @@ it("adminStaysInAdminForUnlistedEvent", async () => {
   expect(await screen.findByText("UNLISTED")).toBeInTheDocument();
   expect(screen.getByText("PUBLIC")).toBeInTheDocument();
   await fillIntake(user);
-  await user.click(screen.getByRole("button", { name: "Create case" }));
+  await user.click(screen.getByRole("button", { name: "Create request" }));
   await waitFor(() => expect(location.pathname).toBe("/admin/photo-removal-requests/case-new"));
   expect(location.pathname).toMatch(/^\/admin\/photo-removal-requests\//);
   expect(removalApi.createRemovalRequest).toHaveBeenCalledWith(expect.objectContaining({
@@ -69,14 +69,14 @@ it("keeps input, blocks duplicates and reuses the command when a failed create i
     .mockResolvedValueOnce({ ...draftCase, id: "case-retry" });
   renderIntake();
   await fillIntake(user);
-  const submit = screen.getByRole("button", { name: "Create case" });
+  const submit = screen.getByRole("button", { name: "Create request" });
   await user.click(submit);
   expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
   await act(async () => { fail(new Error("Network down")); });
   expect(await screen.findByText("Network down")).toBeInTheDocument();
   expect(screen.getByLabelText("Support reference")).toHaveValue("TICKET-42");
   expect(location.pathname).toBe("/admin/photo-removal-requests/new");
-  await user.click(screen.getByRole("button", { name: "Create case" }));
+  await user.click(screen.getByRole("button", { name: "Create request" }));
   await waitFor(() => expect(location.pathname).toBe("/admin/photo-removal-requests/case-retry"));
   const calls = vi.mocked(removalApi.createRemovalRequest).mock.calls;
   expect(calls).toHaveLength(2);
@@ -103,7 +103,7 @@ it("explains a runner ID the backend could not read, without sending it", async 
   await fillIntake(user);
   const runnerId = screen.getByLabelText("Runner account ID (optional)");
   await user.type(runnerId, "runner@example.test");
-  await user.click(screen.getByRole("button", { name: "Create case" }));
+  await user.click(screen.getByRole("button", { name: "Create request" }));
   expect(await screen.findByText(/must be the 36-character account ID/)).toBeInTheDocument();
   expect(runnerId).toHaveAttribute("aria-invalid", "true");
   expect(removalApi.createRemovalRequest).not.toHaveBeenCalled();
@@ -123,10 +123,10 @@ it("searches events on the server and loads more pages (RM5)", async () => {
   expect(removalApi.createRemovalRequest).not.toHaveBeenCalled();
 });
 
-it("says what is still missing next to a disabled Create case (RM5)", async () => {
+it("says what is still missing next to a disabled Create request (RM5)", async () => {
   const user = userEvent.setup();
   renderIntake();
-  const submit = await screen.findByRole("button", { name: "Create case" });
+  const submit = await screen.findByRole("button", { name: "Create request" });
   expect(submit).toBeDisabled();
   expect(submit).toHaveAccessibleDescription("Still needed: an event, support reference, requester contact, reason.");
   await user.click(await screen.findByRole("radio", { name: /Cebu Marathon/ }));
@@ -156,4 +156,25 @@ it("keeps the picked event on screen when a search no longer lists it", async ()
 it("an event row's date is in sentence case", async () => {
   renderIntake();
   expect((await screen.findAllByText(/^Sep 10 · 2026 · /)).length).toBe(2);
+});
+
+// FT-32 (C-72, W32.2): each field says where its value comes from, and a bad runner ID is flagged at its own field.
+it("each request field says where its value comes from", async () => {
+  renderIntake();
+  await screen.findByRole("radio", { name: /Cebu Marathon/ });
+  expect(screen.getByLabelText("Support reference")).toHaveAccessibleDescription("The ticket or message number from your support inbox.");
+  expect(screen.getByLabelText("Requester contact")).toHaveAccessibleDescription("The email or phone number the person wrote from.");
+  expect(screen.getByLabelText("Reason")).toHaveAccessibleDescription("What the person asked for, in their own words. Only admins see this.");
+});
+
+it("a bad runner ID shows its error under that field", async () => {
+  const user = userEvent.setup();
+  renderIntake();
+  await fillIntake(user);
+  const runnerId = screen.getByLabelText("Runner account ID (optional)");
+  await user.type(runnerId, "runner@example.test");
+  await user.click(screen.getByRole("button", { name: "Create request" }));
+  const error = await screen.findByText(/must be the 36-character account ID/);
+  expect(runnerId.parentElement).toContainElement(error);
+  expect(runnerId).toHaveAccessibleDescription(expect.stringContaining("must be the 36-character account ID"));
 });
