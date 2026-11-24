@@ -22,14 +22,15 @@ import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
 import { ROUTES } from "@/lib/constants";
 
 // Admin Events page. Four status tabs (Live / Upcoming / Recent / Archive),
-// one list of <AdminEventCard>s at a time. Lifecycle state is derived from `event.date`
-// (see `lib/event-catalog.ts`) — admin only edits Title/Location/Date and
-// the four states fall out automatically:
+// one list of <AdminEventCard>s at a time. The server files each event under a tab
+// (`deriveAdminEventState` in the backend's EventDtoMapper.kt, Manila date):
 //
-//   future date            → Upcoming
-//   day 0..3 (race + 4d)   → Live  (photographer upload window)
-//   day 4..89              → Recent (gallery for sale, no more uploads)
-//   day 90+                → Archive
+//   before race day, or a draft    → Upcoming
+//   race day only                  → Live
+//   every later day (no age limit) → Recent
+//   status Archived only           → Archive
+//
+// The public site's `deriveEventState` (`lib/event-catalog.ts`) differs on purpose (O1).
 
 const SECTIONS: ReadonlyArray<{
   id: string;
@@ -41,28 +42,28 @@ const SECTIONS: ReadonlyArray<{
   {
     id: "live",
     title: "Live now",
-    caption: "Currently accepting uploads · 4-day grace from race day",
+    caption: "Race day",
     matchState: "live",
     cols: "grid-cols-1 md:grid-cols-2",
   },
   {
     id: "upcoming",
     title: "Upcoming",
-    caption: "Race day pending",
+    caption: "Race day ahead, or not published yet",
     matchState: "upcoming",
     cols: "grid-cols-1 md:grid-cols-2",
   },
   {
     id: "recent",
     title: "Recent",
-    caption: "Galleries open for sale · upload window closed",
+    caption: "After race day · photos on sale",
     matchState: "open",
     cols: "grid-cols-1 md:grid-cols-2",
   },
   {
     id: "archive",
     title: "Archive",
-    caption: "Read-only history",
+    caption: "Archived events",
     matchState: "past",
     cols: "grid-cols-1 md:grid-cols-2 lg:grid-cols-3",
   },

@@ -405,3 +405,20 @@ it("an empty tab keeps its own text while another tab holds an event (FT-22)", a
   expect(await screen.findByText("No live events right now.")).toBeInTheDocument();
   expect(screen.queryByText(/No events yet/)).not.toBeInTheDocument();
 });
+
+it("each tab's caption says the server's rule: Live is race day only, Archive is archived events (FU-4, U4.1 to U4.4)", async () => {
+  await mountLoaded();
+  const captions: Array<[RegExp, string]> = [
+    [/^Live now/, "Race day"],
+    [/^Upcoming/, "Race day ahead, or not published yet"],
+    [/^Recent/, "After race day · photos on sale"],
+    [/^Archive/, "Archived events"],
+  ];
+  for (const [tab, caption] of captions) {
+    await userEvent.click(screen.getByRole("button", { name: tab }));
+    expect(await screen.findByText(caption, { selector: "p" })).toBeInTheDocument();
+  }
+  for (const old of ["Currently accepting uploads · 4-day grace from race day", "Race day pending", "Galleries open for sale · upload window closed", "Read-only history"]) {
+    expect(screen.queryByText(old)).not.toBeInTheDocument();
+  }
+});
