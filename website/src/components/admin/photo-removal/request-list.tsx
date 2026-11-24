@@ -5,21 +5,29 @@ import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useAdminRemovalRequests } from "@/hooks/use-photo-removal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
 import { AdminFieldLabel } from "@/components/admin/admin-form-fields";
-import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
+import { BTN_GHOST, BTN_SIZE } from "@/components/ui/button-styles";
+import { DropdownSelect } from "@/components/ui/dropdown";
+import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useAdminQueueCounts } from "@/lib/admin-queues";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { REMOVAL_STATUS_LABEL } from "@/lib/admin-removal-labels";
 import { cn } from "@/lib/utils";
-import { REMOVAL_INPUT } from "./request-intake";
 import type { PhotoRemovalRequestDto, RemovalRequestSource, RemovalRequestStatus } from "@/types/photo-removal";
 
 const PAGE = 20;
 // List rows arrive without items; count photos that passed verification from server phase counts.
 const verifiedPhotos = (c: PhotoRemovalRequestDto["phaseCounts"]) => c.verified + c.removalAuthorized + c.removed + c.retained + c.retainedRestricted;
 const SOURCE_LABEL: Record<RemovalRequestSource, string> = { RUNNER: "Runner", SUPPORT: "Support" };
+const SOURCE_OPTIONS: ReadonlyArray<{ value: RemovalRequestSource | ""; label: string }> = [
+  { value: "", label: "Runner and support" }, { value: "RUNNER", label: "Runner requests" }, { value: "SUPPORT", label: "Support requests" },
+];
+type Tab = "waiting" | "all" | RemovalRequestStatus;
 
-// needsActionOnly: the Inbox shows only the cases waiting on an admin, without the checkbox.
+// needsActionOnly: the Inbox shows only the cases waiting on an admin, without the status tabs.
 export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnly?: boolean }) {
   // Filters live in the URL so Back from a case returns to the same view (loaded pages stay cached).
   const [statusRaw] = useUrlState<string>("status", "");
@@ -28,52 +36,51 @@ export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnl
   const writeUrl = useUrlStateBatch();
   const status = (Object.hasOwn(REMOVAL_STATUS_LABEL, statusRaw) ? statusRaw : "") as RemovalRequestStatus | "";
   const source = (Object.hasOwn(SOURCE_LABEL, sourceRaw) ? sourceRaw : "") as RemovalRequestSource | "";
-  const needsAction = needsActionOnly || needsRaw === "1";
+  // No params (or needs=1) is Waiting; All needs needs=0, because the default view is not the unfiltered one.
+  const tab: Tab = needsActionOnly ? "waiting" : status || (needsRaw === "0" ? "all" : "waiting");
+  const waitingCount = useAdminQueueCounts().byKey.removals;
   // A filter change starts a new list; the old offset param from Prev/Next is dropped.
   const setFilter = (patch: Record<string, string | null>) => writeUrl({ ...patch, offset: null });
-  const filtered = status !== "" || source !== "" || needsRaw === "1";
-  const list = useAdminRemovalRequests({ ...(status && { status }), ...(source && { source }), ...(needsAction && { needsAction }) }, PAGE);
+  const pickTab = (next: Tab) =>
+    setFilter(next === "waiting" ? { status: null, needs: "1" } : next === "all" ? { status: null, needs: "0" } : { status: next, needs: null });
+  const byStatus = tab !== "waiting" && tab !== "all";
+  const filtered = byStatus || source !== "";
+  const list = useAdminRemovalRequests({
+    ...(byStatus && { status: tab }), ...(source && { source }), ...(tab === "waiting" && { needsAction: true }),
+  }, PAGE);
   const rows = list.items;
   return (
-    <div className="mt-8 space-y-4">
-      <div className="grid gap-4 sm:grid-cols-3 sm:items-end">
-        <div className="space-y-1">
-          <AdminFieldLabel htmlFor="removal-filter-status">Status</AdminFieldLabel>
-          <select id="removal-filter-status" value={status} className={REMOVAL_INPUT}
-            onChange={(e) => setFilter({ status: e.target.value || null })}>
-            <option value="">Any status</option>
-            {Object.entries(REMOVAL_STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </div>
-        <div className="space-y-1">
-          <AdminFieldLabel htmlFor="removal-filter-source">Source</AdminFieldLabel>
-          <select id="removal-filter-source" value={source} className={REMOVAL_INPUT}
-            onChange={(e) => setFilter({ source: e.target.value || null })}>
-            <option value="">Runner and support</option>
-            <option value="RUNNER">Runner requests</option>
-            <option value="SUPPORT">Support requests</option>
-          </select>
-        </div>
-        {!needsActionOnly && (
-          <label className="flex min-h-[44px] items-center gap-2 text-sm text-ink cursor-pointer">
-            <input type="checkbox" checked={needsAction} onChange={(e) => setFilter({ needs: e.target.checked ? "1" : null })} />
-            Needs action
-          </label>
-        )}
-      </div>
-      {list.isLoading && <p role="status" className="text-slate">Loading cases…</p>}
-      {!!list.error && (
-        <div role="alert" className="space-y-4">
-          <p>Couldn&apos;t load removal cases.</p>
-          <button type="button" className={cn(BTN_SECONDARY, BTN_SIZE.sm)} onClick={() => void list.refetch()}>Try again</button>
-        </div>
+    // The status tabs bring their own top margin; the Inbox has none, so the list keeps mt-8 there.
+    <div className={cn("space-y-4", needsActionOnly && "mt-8")}>
+      {!needsActionOnly && (
+        <>
+          <AdminStatusTabs<Tab>
+            label="Status"
+            tabs={[
+              { key: "waiting", label: "Waiting", count: waitingCount ?? undefined },
+              ...(Object.entries(REMOVAL_STATUS_LABEL) as [RemovalRequestStatus, string][]).map(([key, label]) => ({ key, label })),
+              { key: "all", label: "All" },
+            ]}
+            value={tab}
+            onChange={pickTab}
+          />
+          <p className="font-sans text-sm text-slate">Closing: a removal was authorized and the files are still being deleted.</p>
+        </>
       )}
+      <div className="space-y-1 sm:max-w-xs">
+        <AdminFieldLabel htmlFor="removal-filter-source">Source</AdminFieldLabel>
+        <DropdownSelect id="removal-filter-source" value={source} options={SOURCE_OPTIONS} onChange={(next) => setFilter({ source: next || null })} />
+      </div>
+      {list.isLoading && (
+        <div role="status" aria-busy="true" aria-label="Loading removal requests" className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+      )}
+      {!!list.error && <LoadError what="removal requests" onRetry={() => void list.refetch()} />}
       {!list.isLoading && !list.error && rows.length === 0 && (filtered ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p className="text-slate">No cases match these filters.</p>
+          <p className="text-slate">No requests match these filters.</p>
           <button type="button" className={cn(BTN_GHOST, BTN_SIZE.sm)} onClick={() => setFilter({ status: null, source: null, needs: null })}>Clear filters</button>
         </div>
-      ) : <p className="text-slate">{needsActionOnly ? "No requests waiting. You're caught up." : "No removal cases yet."}</p>)}
+      ) : <p className="text-slate">{tab === "waiting" ? "No requests waiting. You're caught up." : "No removal requests yet."}</p>)}
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((row) => {
           const runner = row.source === "RUNNER";
