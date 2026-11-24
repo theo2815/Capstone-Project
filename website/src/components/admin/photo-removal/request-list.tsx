@@ -95,7 +95,8 @@ export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnl
           return (
             <li key={row.id} data-row-id={row.id}>
               <Link href={requestHref(row.id)} className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 py-4 px-2 hover:bg-bone-deep/50", focusedId === row.id && "ring-2 ring-inset ring-ink")}>
-                <span className="min-w-0 flex-1">
+                {/* Below md the name takes the whole first line, so the count, date and pills wrap under it instead of cutting it. */}
+                <span className="min-w-0 grow basis-full md:basis-0">
                   <span className="block font-display font-bold text-ink truncate">{row.event.name}</span>
                   {/* A runner's case has only a system reference; the event and date already identify it. */}
                   <span className="block text-sm text-slate truncate">{runner ? "Filed by the runner" : row.supportReference}</span>
