@@ -43,7 +43,7 @@ it.each([...actions.map(([name]) => name), "bulkApprove", "bulkHold"] as const)(
     const request = deferred<AdminPayoutCycle>();
     const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
     const { result } = renderHook(usePayoutActions, { wrapper });
-    let pending!: Promise<boolean>;
+    let pending!: Promise<unknown>;
     act(() => {
       pending = action === "bulkApprove" ? result.current.bulkApprove([payoutCycle.id])
         : action === "bulkHold" ? result.current.bulkHold([payoutCycle.id], "Review needed")
@@ -70,7 +70,8 @@ it.each(actions)("%s uses the full backend record and reconciles filtered caches
   client.setQueryData(otherOwner, [payoutCycle]);
   vi.spyOn(api, "post").mockResolvedValue(confirmed);
   const { result } = renderHook(usePayoutActions, { wrapper });
-  await expect(result.current[action](payoutCycle.id, "User input")).resolves.toBe(true);
+  // FT-23: approve resolves the updated payout; the other actions resolve true.
+  await expect(result.current[action](payoutCycle.id, "User input")).resolves.toEqual(action === "approve" ? confirmed : true);
   expect(client.getQueryData(key)).toEqual([confirmed]);
   expect(client.getQueryData(filtered)).toEqual([]);
   expect(client.getQueryData(reportKey)).toEqual([report]);
@@ -110,7 +111,7 @@ it("cancels an older read and lets a subsequent provider refetch replace the con
   const approved = { ...payoutCycle, status: "approved" as const, approvedBy: admin.id };
   vi.spyOn(api, "post").mockResolvedValue(approved);
   const { result } = renderHook(usePayoutActions, { wrapper });
-  await expect(result.current.approve(payoutCycle.id)).resolves.toBe(true);
+  await expect(result.current.approve(payoutCycle.id)).resolves.toEqual(approved);
   older.resolve([payoutCycle]); await read;
   expect(client.getQueryData(key)).toEqual([approved]);
   const paid = { ...approved, status: "paid" as const, paymentReference: "PROVIDER-PAID" };
@@ -170,4 +171,20 @@ it("a hold refusal shows the server's reason", async () => {
   const { result } = renderHook(usePayoutActions, { wrapper });
   await expect(result.current.approve(payoutCycle.id)).resolves.toBe(false);
   expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "error", message: "Payouts are on hold while a flag is open." });
+});
+
+// FT-23 (C-16, W23.5): a refused single action shows the server's own words, not "please try again".
+it("a refused second approval shows the server's reason", async () => {
+  vi.spyOn(api, "post").mockRejectedValueOnce(new ApiError([{ code: "PAYOUT_SECOND_APPROVER_REQUIRED", message: "A different admin must give the second approval for this amount." }], 409));
+  const { result } = renderHook(usePayoutActions, { wrapper });
+  await expect(result.current.approve(payoutCycle.id)).resolves.toBe(false);
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({
+    kind: "error", message: "Couldn't approve payout. A different admin must give the second approval for this amount.",
+  });
+});
+it("a single action that fails without a server message says to try again", async () => {
+  vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Network down"));
+  const { result } = renderHook(usePayoutActions, { wrapper });
+  await expect(result.current.hold(payoutCycle.id, "Review")).resolves.toBe(false);
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "error", message: "Couldn't hold payout. Please try again." });
 });

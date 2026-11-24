@@ -70,7 +70,7 @@ it("shows cross-view payout pending feedback while independent rows remain usabl
   vi.spyOn(api, "post").mockReturnValue(request.promise);
   const actions = renderHook(usePayoutActions, { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
   await mount();
-  let pending!: Promise<boolean>;
+  let pending!: Promise<unknown>;
   act(() => { pending = actions.result.current.approve(payoutCycle.id); });
   await waitFor(() => expect(screen.getByText("Approving…")).toBeInTheDocument());
   const approvals = screen.getAllByRole("button", { name: /Approve|Approving/ });
@@ -162,7 +162,7 @@ it("blocks repeated row/drawer approvals while pending and keeps the first appro
   await act(async () => { request.resolve(rows[0]); });
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(client.getQueryData(key)).toEqual(rows);
-  expect(useToastStore.getState().toasts.at(-1)?.message).toContain("Approval recorded");
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe(`First approval recorded. A second admin must approve ${payoutCycle.id}.`);
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   expect(screen.getByRole("dialog")).toHaveTextContent("1 of 2");
   expect(screen.queryByRole("button", { name: "Mark paid…" })).not.toBeInTheDocument();
@@ -170,6 +170,43 @@ it("blocks repeated row/drawer approvals while pending and keeps the first appro
   rows = [{ ...rows[0], status: "approved", secondApprovedBy: "admin-b", reviewedAt: "2026-09-10T05:00:00Z" }];
   await act(async () => { await refresh(); });
   await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Mark paid…" })).toBeEnabled());
+});
+
+// FT-23 (C-16, W23.2): the backend refuses a second approval by the same admin, so it is not offered.
+it("the admin who gave the first approval cannot approve again; without approvedBy Approve stays enabled", async () => {
+  const user = userEvent.setup();
+  const older = { ...payoutCycle, id: "cycle-2" } as Partial<AdminPayoutCycle>;
+  delete older.approvedBy; // an older backend sends no approvedBy
+  rows = [{ ...payoutCycle, approvedBy: admin.id }, older as AdminPayoutCycle]; client.setQueryData(key, rows);
+  const post = vi.spyOn(api, "post");
+  await mount();
+  const own = document.querySelector<HTMLElement>(`[data-row-id="${payoutCycle.id}"]`)!;
+  const other = document.querySelector<HTMLElement>('[data-row-id="cycle-2"]')!;
+  const sentence = "You gave the first approval. A different admin must give the second.";
+  expect(within(own).getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(own).toHaveTextContent(sentence);
+  expect(within(other).getByRole("button", { name: "Approve" })).toBeEnabled();
+  expect(other).not.toHaveTextContent(sentence);
+  await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
+  const drawer = screen.getByRole("dialog");
+  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(drawer).toHaveTextContent(sentence);
+  await user.keyboard("e");
+  expect(screen.queryByRole("dialog", { name: "Approve payout" })).not.toBeInTheDocument();
+  expect(post).not.toHaveBeenCalled();
+});
+
+// FT-23 (C-15, W23.4): the approval that completes a payout says what to do next.
+it("an approval that makes the payout approved says to send the money", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(api, "post").mockImplementationOnce(async () => {
+    rows = [{ ...payoutCycle, status: "approved", approvedBy: admin.id, reviewedAt: "2026-09-10T05:00:00Z" }]; return rows[0];
+  });
+  await mount();
+  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(within(screen.getByRole("dialog", { name: "Approve payout" })).getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "success", message: `Approved ${payoutCycle.id}. Send the money, then mark it paid.` });
 });
 
 it.each([
@@ -208,6 +245,14 @@ it.each([
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[0][0]).toBe(`/admin/payouts/${payoutCycle.id}/${action}`);
   expect(client.getQueryData(key)).toEqual(rows);
+  // FT-23 (C-27, W23.6 to W23.8): the toast says who was told, as a success.
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "success", message: {
+    hold: "On hold. The photographer was told why.",
+    "mark-paid": "Marked paid. The photographer was told, with reference Reference or note retained.",
+    reject: "Rejected. The photographer was told, and the money is back in their balance.",
+    "mark-failed": "Marked failed. The photographer was told, and the money is back in their balance.",
+    "mark-returned": "Marked returned. The photographer was told to check their payout account.",
+  }[action] });
 });
 
 it.each(["approve", "hold"])("keeps bulk %s pending through partial-result reconciliation", async (action) => {
@@ -286,7 +331,9 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   expect(screen.queryByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" })).not.toBeInTheDocument();
   // Bulk results carry no records, so the tab re-reads its server list before the modal closes.
   expect(listCalls()).toHaveLength(2);
-  expect(useToastStore.getState().toasts.at(-1)?.message).toContain(action === "approve" ? "Approvals recorded" : "Held");
+  // FT-23 (W23.10, W23.7): the bulk toasts, typed as the wording sheet has them.
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "success", message: action === "approve"
+    ? "Approvals recorded for 1 payout." : "1 payouts on hold. The photographers were told why." });
 });
 
 it("preserves provider-controlled action guards, including drawer keyboard shortcuts", async () => {
@@ -340,7 +387,7 @@ it("retains a mark-paid form through step-up cancellation, invalid credentials, 
   await waitFor(() => expect(form).not.toBeInTheDocument());
   expect(client.getQueryData(key)).toEqual(rows);
   expect(useAuthStore.getState().isAuthenticated).toBe(true);
-  expect(useToastStore.getState().toasts.at(-1)?.message).toContain("Paid");
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Marked paid. The photographer was told, with reference GC-REFERENCE.");
 });
 
 it("a held photographer's payout names the flag and disables approve and mark paid", async () => {

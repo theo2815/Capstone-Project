@@ -6,9 +6,9 @@ import { AdminPayoutRow, payoutStatusTone } from "./admin-payout-row";
 
 afterEach(cleanup);
 
-function renderRow() {
+function renderRow(cycle = payoutCycle) {
   const props = {
-    cycle: payoutCycle, submitting: false, selected: false, selectionActive: false, focused: false,
+    cycle, submitting: false, selected: false, selectionActive: false, focused: false,
     onToggleSelect: vi.fn(), onActivate: vi.fn(), onOpenDrawer: vi.fn(), onApprove: vi.fn(),
     onHold: vi.fn(), onMarkPaid: vi.fn(), onMarkProcessing: vi.fn(),
   };
@@ -42,4 +42,13 @@ it("status tones: Approved is ink, Failed and Returned are error, Paid stays sla
   expect(payoutStatusTone("paid")).toBe("slate");
   const all = ["pending_review", "approved", "processing", "held", "paid", "failed", "returned", "rejected", "cancelled"] as const;
   expect(all.map(payoutStatusTone)).not.toContain("fresh");
+});
+
+// FT-23 (C-15, W23.1): a half-approved payout says so on its row, not only in the drawer.
+it("a pending row with a first approval says it waits for a second admin", () => {
+  renderRow({ ...payoutCycle, approvedBy: "admin-b" });
+  expect(screen.getByText("Waiting for a second admin (1 of 2)")).toBeInTheDocument();
+  cleanup();
+  renderRow();
+  expect(screen.queryByText(/Waiting for a second admin/)).not.toBeInTheDocument();
 });

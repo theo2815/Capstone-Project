@@ -60,12 +60,12 @@ export function usePayoutActions() {
       } catch (error) {
         if (isCurrent()) {
           console.error(`[admin/payouts] ${label} failed`, error);
-          // The server's own words for a hold refusal (PE-2.8); other failures keep the generic text.
+          // The server's own words for a hold refusal (PE-2.8); FT-23 (C-16): any other server refusal keeps its reason too.
           const heldRefusal = error instanceof ApiError && error.errors[0]?.code === "PAYOUT_ON_HOLD";
+          const bulk = label === "Approve payouts" || label === "Hold payouts";
           useToastStore.getState().showToast({
-            kind: "error", message: heldRefusal ? error.message : label === "Approve payouts" || label === "Hold payouts"
-              ? `Couldn't ${label}. ${error instanceof Error ? error.message : "Please try again."}`
-              : `Couldn't ${label} — please try again.`,
+            kind: "error", message: heldRefusal ? error.message
+              : `Couldn't ${label}. ${(bulk && error instanceof Error) || error instanceof ApiError ? error.message : "Please try again."}`,
           });
         }
         return false;
@@ -132,7 +132,12 @@ export function usePayoutActions() {
     return {
       isPending: (ids: string[]) => mutation.isPending(ids.map((id) => ({ kind: "payout", id }))),
       pendingAction: (ids: string[]) => mutation.pendingAction(ids.map((id) => ({ kind: "payout", id }))),
-      approve: (id: string) => run([id], "Approving…", "approve payout", () => approvePayout(id)),
+      // FT-23 (C-15): resolves the updated payout, so the caller can tell a first approval (still pending) from the final one.
+      approve: async (id: string) => {
+        const done: { cycle?: AdminPayoutCycle } = {};
+        const ok = await run([id], "Approving…", "approve payout", async () => (done.cycle = await approvePayout(id)));
+        return ok && done.cycle ? done.cycle : false;
+      },
       hold: (id: string, reason: string) => run([id], "Holding…", "hold payout", () => holdPayout(id, reason)),
       markPaid: (id: string, reference: string) => run([id], "Marking paid…", "mark payout paid", () => markPayoutPaid(id, reference)),
       reject: (id: string, reason: string) => run([id], "Rejecting…", "reject payout", () => rejectPayout(id, reason)),

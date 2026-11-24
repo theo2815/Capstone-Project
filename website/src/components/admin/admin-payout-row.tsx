@@ -14,6 +14,7 @@ import {
 import { cn, formatPrice } from "@/lib/utils";
 import { BTN_DANGER, BTN_SECONDARY, ROW_OPEN_BUTTON } from "@/components/ui/button-styles";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
+import { useAuthStore } from "@/store/auth-store";
 import { type AdminStatusPillTone } from "./admin-status-pill";
 
 interface AdminPayoutRowProps {
@@ -34,6 +35,13 @@ interface AdminPayoutRowProps {
   onMarkPaid: () => void;
   onMarkProcessing: () => void;
 }
+
+/** FT-23 (C-16): this admin gave the first approval, which the backend refuses to count twice (409).
+ *  False when approvedBy is missing (an older backend), so nothing is disabled then. */
+export function gaveFirstApproval(cycle: AdminPayoutCycle, adminId: string | undefined): boolean {
+  return cycle.status === "pending_review" && !!cycle.approvedBy && cycle.approvedBy === adminId;
+}
+export const OWN_FIRST_APPROVAL_NOTE = "You gave the first approval. A different admin must give the second.";
 
 /** Status colour for payout rows and the payout drawer pill (one helper for both). */
 export function payoutStatusTone(status: AdminPayoutStatus): AdminStatusPillTone {
@@ -86,6 +94,7 @@ export function AdminPayoutRow({
 }: AdminPayoutRowProps) {
   const subjectLabel = cycle.brandName ?? cycle.photographerName;
   const hintId = useId();
+  const adminId = useAuthStore((s) => s.user?.id);
 
   return (
     <article
@@ -125,6 +134,9 @@ export function AdminPayoutRow({
           <span className="font-mono text-[13px]">{cycle.id}</span>
         </p>
         <PayoutFlagLine cycle={cycle} />
+        {cycle.status === "pending_review" && cycle.approvedBy && (
+          <p className="font-sans text-sm text-slate mt-1">Waiting for a second admin (1 of 2)</p>
+        )}
         {cycle.status === "held" && cycle.holdReason && (
           <p className="font-sans text-sm text-slate mt-1">Hold: {cycle.holdReason}</p>
         )}
@@ -157,6 +169,7 @@ export function AdminPayoutRow({
           status={cycle.status}
           provider={cycle.provider ?? "manual"}
           blocked={payoutActionsBlockedByHold(cycle)}
+          ownApproval={gaveFirstApproval(cycle, adminId)}
           onApprove={onApprove}
           onHold={onHold}
           onMarkPaid={onMarkPaid}
@@ -256,12 +269,14 @@ function RowActions({
   status,
   provider,
   blocked,
+  ownApproval,
   onApprove,
   onHold,
   onMarkPaid,
   onMarkProcessing,
 }: {
   blocked: boolean;
+  ownApproval: boolean;
   status: AdminPayoutStatus;
   submitting: boolean;
   provider: string;
@@ -270,6 +285,7 @@ function RowActions({
   onMarkPaid: () => void;
   onMarkProcessing: () => void;
 }) {
+  const noteId = useId();
   if (provider !== "manual") return null;
   // House buttons in sentence case (proposal 11: mono uppercase is for labels only).
   const PILL = cn(BTN_SECONDARY, "px-4 py-2 text-sm min-h-[44px] whitespace-nowrap");
@@ -288,8 +304,11 @@ function RowActions({
   }
   return (
     <div className="relative z-10 min-w-0 flex items-center gap-2 flex-wrap justify-end">
+      {canApprove && ownApproval && (
+        <p id={noteId} className="font-sans text-sm text-slate basis-full text-right">{OWN_FIRST_APPROVAL_NOTE}</p>
+      )}
       {canApprove && (
-        <button type="button" disabled={submitting || blocked} onClick={onApprove} className={PILL}>
+        <button type="button" disabled={submitting || blocked || ownApproval} aria-describedby={ownApproval ? noteId : undefined} onClick={onApprove} className={PILL}>
           Approve
         </button>
       )}
