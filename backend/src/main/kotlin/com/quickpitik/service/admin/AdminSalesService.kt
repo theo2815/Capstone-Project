@@ -42,7 +42,7 @@ class AdminSalesService(
 
     // AX-12: each week is the same window and sums kpis(range=week) uses, so the
     // newest point always equals the week tile.
-    // shortcut: five sum queries per week (60 at the default 12); one GROUP BY query if Sales gets slow.
+    // shortcut: six sum and count queries per week (72 at the default 12); one GROUP BY query if Sales gets slow.
     fun trend(weeksRaw: Int?): AdminSalesTrendDto {
         val weeks = (weeksRaw ?: 12).coerceIn(1, 52)
         val thisMonday = mondayOf(LocalDate.now(PH_ZONE))
@@ -101,6 +101,7 @@ class AdminSalesService(
             gmv = gmv,
             platformRevenue = platformRevenue,
             refundsIssued = refunds,
+            refundsIssuedCount = disputeRepository.countSucceededRefundsInWindow(from, to),
             // The keep and discount sums already include negative refund rows.
             netPlatformRevenue = platformRevenue,
             photographerKeep = photographerKeep,
