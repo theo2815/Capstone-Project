@@ -18,7 +18,8 @@ const CHIP = "block max-w-full truncate tnum";
 
 // Every approved QR Ph refund that still needs paying, oldest due first (the server sorts).
 // Each item reuses the refund panel unchanged; Open goes through the queue's setRowId so the view stays in the URL.
-export function RefundRun({ onOpen }: { onOpen: (id: string) => void }) {
+// The queue's J/K walks these same rows (one query), so it passes the focused id for the ring.
+export function RefundRun({ onOpen, focusedId }: { onOpen: (id: string) => void; focusedId?: string | null }) {
   const list = useAdminDisputePage({ view: "refund_run" });
   const items = list.items;
 
@@ -40,7 +41,7 @@ export function RefundRun({ onOpen }: { onOpen: (id: string) => void }) {
             const amount = d.refundAmount ?? d.itemChargeAmount;
             return (
               <li key={d.id}>
-                <article data-row-id={d.id} className="space-y-4 rounded-2xl border border-line bg-bone p-5 md:p-6">
+                <article data-row-id={d.id} className={cn("space-y-4 rounded-2xl border border-line bg-bone p-5 md:p-6", focusedId === d.id && "ring-2 ring-ink ring-offset-2 ring-offset-bone")}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="font-display text-lg font-medium text-ink truncate">@{d.runnerHandle}</h3>

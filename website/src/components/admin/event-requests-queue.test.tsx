@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -321,4 +321,13 @@ it.each([
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   const names = screen.getAllByRole("button").map((b) => b.textContent).filter((n) => /^(Send back|Decline|Same race|Approve)/.test(n ?? ""));
   expect(names).toEqual(expected);
+});
+
+it("FT-36: J then Enter puts focus on the first request's buttons (a request has no drawer)", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  await screen.findByRole("button", { name: "Send back…" });
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Send back…" }));
 });

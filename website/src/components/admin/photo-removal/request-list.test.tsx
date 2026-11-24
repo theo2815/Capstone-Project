@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -19,6 +19,7 @@ const nav = vi.hoisted(() => {
   let search = "";
   const listeners = new Set<() => void>();
   return {
+    push: vi.fn(),
     get: () => search,
     set: (next: string) => { search = next; listeners.forEach((l) => l()); },
     subscribe: (l: () => void) => { listeners.add(l); return () => listeners.delete(l); },
@@ -29,7 +30,7 @@ vi.mock("next/navigation", async () => {
   return {
     usePathname: () => "/admin/photo-removal-requests",
     useSearchParams: () => new URLSearchParams(useSyncExternalStore(nav.subscribe, nav.get)),
-    useRouter: () => ({ replace: (url: string) => nav.set(url.split("?")[1] ?? ""), push: vi.fn() }),
+    useRouter: () => ({ replace: (url: string) => nav.set(url.split("?")[1] ?? ""), push: nav.push }),
   };
 });
 let client: QueryClient;
@@ -144,4 +145,14 @@ it("the Inbox list says no requests are waiting", async () => {
   // The Inbox shows the waiting cases only: no status tabs, whatever the URL says.
   expect(screen.queryByRole("group", { name: "Status" })).toBeNull();
   expect(removalApi.listAdminRemovalRequests).toHaveBeenLastCalledWith({ offset: 0, limit: 20, needsAction: true }, expect.anything());
+});
+
+it("FT-36: J then Enter opens the first request", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.mocked(removalApi.listAdminRemovalRequests).mockResolvedValue({ items: [{ ...openCase, items: [] }], total: 1, offset: 0, limit: 20 });
+  render(<QueryClientProvider client={client}><RemovalRequestList /></QueryClientProvider>);
+  const link = await screen.findByRole("link");
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(nav.push).toHaveBeenCalledWith(link.getAttribute("href"));
 });

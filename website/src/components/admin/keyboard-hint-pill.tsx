@@ -6,6 +6,9 @@ import { useAdminLegendStore } from "@/store/admin-legend-store";
 // bottom-right and covered row content at the page edge). Click to open the
 // keyboard legend; pressing `?` from anywhere outside an input does the same.
 // Hidden below md because the keyboard layer is desktop-only, like the rail.
+// The key-cap look, shared by the drawer buttons that answer a key (FT-36).
+export const KBD_CLASS = "font-mono text-[12px] text-ink rounded border border-line bg-bone-deep px-1.5 py-0.5";
+
 export function KeyboardHintPill() {
   const setOpen = useAdminLegendStore((s) => s.setOpen);
   return (
@@ -18,7 +21,7 @@ export function KeyboardHintPill() {
       <span className="font-mono text-[14px] text-slate group-hover:text-ink transition-colors">
         Shortcuts
       </span>
-      <kbd className="font-mono text-[12px] text-ink rounded border border-line bg-bone-deep px-1.5 py-0.5">
+      <kbd className={KBD_CLASS}>
         ?
       </kbd>
     </button>

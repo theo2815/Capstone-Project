@@ -1,6 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useMemo } from "react";
+import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import { useUrlState, useUrlStateBatch } from "@/hooks/use-url-state";
 import { useAdminRemovalRequests } from "@/hooks/use-photo-removal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
@@ -49,6 +52,11 @@ export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnl
     ...(byStatus && { status: tab }), ...(source && { source }), ...(tab === "waiting" && { needsAction: true }),
   }, PAGE);
   const rows = list.items;
+  const router = useRouter();
+  const requestHref = (id: string) => `${ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS}/${encodeURIComponent(id)}`;
+  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  // Enter opens the request's own page, as a click on its row does.
+  const { focusedId } = useQueueKeyboardNav({ rowIds, disabled: false, onActivate: (id) => router.push(requestHref(id)) });
   return (
     // The status tabs bring their own top margin; the Inbox has none, so the list keeps mt-8 there.
     <div className={cn("space-y-4", needsActionOnly && "mt-8")}>
@@ -85,8 +93,8 @@ export function RemovalRequestList({ needsActionOnly = false }: { needsActionOnl
         {rows.map((row) => {
           const runner = row.source === "RUNNER";
           return (
-            <li key={row.id}>
-              <Link href={`${ROUTES.ADMIN_PHOTO_REMOVAL_REQUESTS}/${encodeURIComponent(row.id)}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-4 px-2 hover:bg-bone-deep/50">
+            <li key={row.id} data-row-id={row.id}>
+              <Link href={requestHref(row.id)} className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 py-4 px-2 hover:bg-bone-deep/50", focusedId === row.id && "ring-2 ring-inset ring-ink")}>
                 <span className="min-w-0 flex-1">
                   <span className="block font-display font-bold text-ink truncate">{row.event.name}</span>
                   {/* A runner's case has only a system reference; the event and date already identify it. */}

@@ -19,9 +19,9 @@ const ROWS: ShortcutRow[] = [
   { label: "Navigate rows", keys: ["J", "K"], scope: "Queue" },
   { label: "Open focused row", keys: ["Enter"], scope: "Queue" },
   { label: "Focus search", keys: ["/"], scope: "Queue" },
-  { label: "Approve", keys: ["E"], scope: "Drawer" },
-  { label: "Reject", keys: ["R"], scope: "Drawer" },
-  { label: "Hide", keys: ["H"], scope: "Drawer" },
+  { label: "Approve a payout (opens a confirmation)", keys: ["E"], scope: "Drawer" },
+  { label: "Send a profile back (opens the dialog)", keys: ["R"], scope: "Drawer" },
+  { label: "Hold a payout, or hide a flagged photo", keys: ["H"], scope: "Drawer" },
   { label: "Close drawer / modal", keys: ["Esc"], scope: "Anywhere" },
   { label: "Toggle this legend", keys: ["?"], scope: "Anywhere" },
 ];

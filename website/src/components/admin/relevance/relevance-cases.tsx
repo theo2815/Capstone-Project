@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { useAdminKpis } from "@/hooks/use-admin-data";
+import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import { useOpenRelevanceAppealsCount, useRelevanceCase, useRelevanceCases, useRelevanceHiddenPhotos } from "@/hooks/use-admin-relevance";
 import { useUrlState } from "@/hooks/use-url-state";
 import {
@@ -26,6 +27,7 @@ import {
   type RelevanceTab,
 } from "@/lib/admin-relevance";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { RelevanceCaseBody, RelevanceCaseSubtitle } from "./relevance-case-drawer";
 import { RelevanceCaseActions, RelevanceHiddenPhotos } from "./relevance-case-actions";
 import { RelevanceAppeals } from "./relevance-appeals";
@@ -62,6 +64,10 @@ export function RelevanceCases({ defaultTab = "cant_tell" }: { defaultTab?: Rele
   const kinds = detail.data ? caseActions(detail.data, held.items.some(isReleasable)) : [];
   // A ?row= link outside the loaded page still opens: the drawer reads the case by id.
   const openRow: RelevanceCaseRow | null = rowId ? (byId.get(rowId) ?? detail.data?.case ?? null) : null;
+  // Appeals keep their own lists (three at once), so the keys walk the cases only.
+  const rowIds = useMemo(() => (appeals ? [] : list.items.map((c) => c.caseId)), [appeals, list.items]);
+  const { focusedId, setFocusedId } = useQueueKeyboardNav({ rowIds, disabled: appeals || !!caseId, onActivate: setRowId });
+  useEffect(() => { if (caseId) setFocusedId(caseId); }, [caseId, setFocusedId]);
 
   return (
     <div className="pt-6 md:pt-8 space-y-6">
@@ -105,8 +111,8 @@ export function RelevanceCases({ defaultTab = "cant_tell" }: { defaultTab?: Rele
         <>
           <ul className="space-y-3">
             {list.items.map((c) => (
-              <li key={c.caseId}>
-                <CaseRow row={c} onOpen={() => setRowId(c.caseId)} />
+              <li key={c.caseId} data-row-id={c.caseId}>
+                <CaseRow row={c} focused={focusedId === c.caseId} onOpen={() => setRowId(c.caseId)} />
               </li>
             ))}
           </ul>
@@ -156,13 +162,13 @@ export function RelevanceCases({ defaultTab = "cant_tell" }: { defaultTab?: Rele
   );
 }
 
-function CaseRow({ row, onOpen }: { row: RelevanceCaseRow; onOpen: () => void }) {
+function CaseRow({ row, focused, onOpen }: { row: RelevanceCaseRow; focused: boolean; onOpen: () => void }) {
   const state = caseStateLabel(row);
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="w-full text-left rounded-2xl border border-line bg-surface p-4 md:p-5 transition-colors hover:bg-bone-deep/50"
+      className={cn("w-full text-left rounded-2xl border border-line bg-surface p-4 md:p-5 transition-colors hover:bg-bone-deep/50", focused && "ring-2 ring-ink ring-offset-2 ring-offset-bone")}
     >
       <span className="flex flex-wrap items-center gap-2">
         <AdminStatusPill label={verdictLabel(row.verdict)} tone="slate" />
