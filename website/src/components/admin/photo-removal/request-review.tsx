@@ -36,14 +36,14 @@ export function RemovalRequestReview({ requestId }: { requestId: string }) {
   const detail = useAdminRemovalRequest(requestId);
   if (detail.isPending) return (
     <>
-      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1>
+      <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal request</h1>
       <div role="status" aria-busy="true" aria-label="Loading this request" className="mt-8 space-y-3">
         <Skeleton className="h-8 w-2/3" /><Skeleton className="h-24 w-full" />
       </div>
     </>
   );
   // A failed background refresh keeps showing the last server copy.
-  if (!detail.data) return <><h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal case</h1><LoadError what="this request" onRetry={() => void detail.refetch()} className="mt-8" /></>;
+  if (!detail.data) return <><h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink">Removal request</h1><LoadError what="this request" onRetry={() => void detail.refetch()} className="mt-8" /></>;
   const request = detail.data;
   return (
     <>
@@ -74,7 +74,17 @@ const isRunner = (request: PhotoRemovalRequestDto) => request.source === "RUNNER
 
 function CaseHeader({ request }: { request: PhotoRemovalRequestDto }) {
   const runner = isRunner(request);
-  const step = removalStepLine(request);
+  const [now, setNow] = useState(Date.now);
+  const step = removalStepLine(request, now);
+  // The step line changes when an owner's deadline passes, so work it out again then, without a refetch.
+  const nextDeadline = request.status === "OPEN"
+    ? Math.min(...request.reviews.map((review) => review.deadline ? Date.parse(review.deadline) : Infinity).filter((at) => at > now)) : Infinity;
+  useEffect(() => {
+    if (nextDeadline === Infinity) return;
+    // setTimeout waits at most 2^31-1 ms (about 24.8 days); a later deadline re-arms after that wait.
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(nextDeadline - Date.now(), 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [nextDeadline, now]);
   return (
     <header className="pb-8 border-b border-line">
       <Kicker as="p" tnum>{runner ? "Runner request" : "Support request"} · {formatLongDate(request.createdAt)}</Kicker>
@@ -118,11 +128,11 @@ export function ReviewCurrentState({ request, actions, refreshing, refresh, onRe
   async function review() {
     let version = request.version;
     if (!actions.reviewCurrentState(request.id, version)) {
-      setStatus("Refreshing the case…");
+      setStatus("Refreshing the request…");
       const read = await refresh();
-      if (read.isError || !read.data) { setStatus("Couldn't refresh the case. Try again."); return; }
+      if (read.isError || !read.data) { setStatus("Couldn't refresh the request. Try again."); return; }
       version = read.data.version;
-      if (!actions.reviewCurrentState(request.id, version)) { setStatus("Couldn't refresh the case. Try again."); return; }
+      if (!actions.reviewCurrentState(request.id, version)) { setStatus("Couldn't refresh the request. Try again."); return; }
     }
     setStatus(null);
     onReviewed?.();
@@ -251,7 +261,7 @@ function DraftWorkspace({ request, refreshing, refresh }: { request: PhotoRemova
         {request.evidencePresent && file && <p className="text-sm text-slate">Searching with a new selfie replaces the one on file and clears earlier matches.</p>}
         {/* A runner case's evidence is its own live-check image: it is never replaced here (R10). */}
         {isRunner(request)
-          ? !request.evidencePresent && <p className="text-sm text-warning-text">No live-check image was saved for this request. Pick the runner&apos;s photos by hand below, or cancel the case.</p>
+          ? !request.evidencePresent && <p className="text-sm text-warning-text">No live-check image was saved for this request. Pick the runner&apos;s photos by hand below, or cancel the request.</p>
           : <FindPhotosControls file={file} bib={bib} onFileChange={setFile} onBibChange={setBib} onSearch={() => void search()}
               busy={busy || reviewRequired} error={searchError} allowPersonalLibrary={false} />}
         {request.evidencePresent && !file && (
@@ -414,7 +424,7 @@ function EvidencePreview({ requestId }: { requestId: string }) {
       {url ? <img src={url} alt="Runner selfie evidence" className="size-20 rounded-xl object-cover" /> : <span className="size-20 rounded-xl bg-bone-deep" aria-hidden="true" />}
       <div>
         <p className="font-display font-bold text-ink">Selfie on file</p>
-        <p className="text-sm text-slate">Private case evidence. It is not added to anyone&apos;s selfie library.</p>
+        <p className="text-sm text-slate">Private request evidence. It is not added to anyone&apos;s selfie library.</p>
         {evidence.isError && <p className="text-sm text-warning-text">Preview unavailable.</p>}
       </div>
     </div>
@@ -478,7 +488,7 @@ const SUGGESTION_DONE: Record<SuggestionAction, string> = {
 
 const CONFIRM: Record<SuggestionAction, { title: string; button: string; body: string }> = {
   promote: { title: "Hide this photo?", button: "Hide photo", body: "It is hidden from sale and search, and its photographer is asked to review it." },
-  demote: { title: "Put this photo back on sale?", button: "Put back on sale", body: "It goes back on sale and in search, and stays on this case as a suggestion." },
+  demote: { title: "Put this photo back on sale?", button: "Put back on sale", body: "It goes back on sale and in search, and stays on this request as a possible match." },
   dismiss: { title: "Remove this possible match?", button: "Remove", body: "The photo stays public and nobody is told. You cannot bring it back to this list." },
 };
 

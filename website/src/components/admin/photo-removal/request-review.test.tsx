@@ -9,7 +9,7 @@ import { useAuthStore } from "@/store/auth-store";
 import type { PhotoRemovalRequestDto, RemovalMatchResult } from "@/types/photo-removal";
 import { RemovalRequestReview } from "./request-review";
 import { RemovalRequestDecision } from "./request-decision";
-import { draftCase, openCase, removalItem, removalPhoto, runnerCase } from "./removal-fixtures";
+import { draftCase, openCase, ownerReview, removalItem, removalPhoto, runnerCase } from "./removal-fixtures";
 import { formatLongDate } from "@/lib/format";
 
 vi.mock("@/lib/api-photo-removal");
@@ -153,7 +153,7 @@ it("refreshes the case when the post-conflict read is not current yet", async ()
   renderReview();
   await user.click(await screen.findByRole("button", { name: "Match stored selfie" }));
   await user.click(await screen.findByRole("button", { name: "Review current state" }));
-  expect(await screen.findByText(/Couldn.t refresh the case/)).toBeInTheDocument();
+  expect(await screen.findByText("Couldn't refresh the request. Try again.")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Review current state" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Review current state" })).not.toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: "Match stored selfie" }));
@@ -357,6 +357,7 @@ it("a runner case without evidence offers only manual verify or cancel", async (
   serverCase = { ...runnerCase, status: "DRAFT", evidencePresent: false, evidenceCleanupState: "NONE" };
   const { container } = renderReview();
   expect(await screen.findByRole("button", { name: "Cancel request" })).toBeDisabled();
+  expect(screen.getByText(/, or cancel the request\.$/)).toBeVisible();
   expect(container.querySelector('input[type="file"]')).toBeNull();
   expect(screen.queryByRole("button", { name: "Match stored selfie" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
@@ -375,9 +376,9 @@ it("the header shows the status label, not the raw code", async () => {
 it("the case page has an h1 while loading and on error", async () => {
   vi.mocked(removalApi.getAdminRemovalRequest).mockRejectedValue(new Error("down"));
   renderReview();
-  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Removal request" })).toBeInTheDocument();
   expect(await screen.findByText("Couldn't load this request.")).toBeVisible();
-  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Removal request" })).toBeInTheDocument();
 });
 
 // FT-21 (C-80): Not this runner… has no undo, so it waits for a confirm that says so.
@@ -405,7 +406,9 @@ it("Cancel on Not this runner… sends nothing, and Put back on sale says where 
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(removalApi.reviewRemovalSuggestions).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: /^Put back on sale… for photo-h1/ }));
-  await user.click(within(await screen.findByRole("dialog", { name: "Put this photo back on sale?" })).getByRole("button", { name: "Put back on sale" }));
+  const putBack = await screen.findByRole("dialog", { name: "Put this photo back on sale?" });
+  expect(within(putBack).getByText("It goes back on sale and in search, and stays on this request as a possible match.")).toBeVisible();
+  await user.click(within(putBack).getByRole("button", { name: "Put back on sale" }));
   expect(await screen.findByText("The photo is back on sale. It stays listed here as a possible match.")).toBeVisible();
   expect(vi.mocked(removalApi.reviewRemovalSuggestions).mock.calls[0][1]).toMatchObject({ demote: ["h1"], promote: [], dismiss: [] });
 });
@@ -489,4 +492,40 @@ it("the Verification method field gives an example", async () => {
   renderReview();
   await user.click(await screen.findByRole("checkbox", { name: /photo-orphan/ }));
   expect(screen.getByLabelText("Verification method")).toHaveAttribute("placeholder", "For example: same bib, same race kit, selfie compared by eye");
+});
+
+// FU-12 (U12.6): the stored selfie is the request's evidence.
+it("the stored selfie is called request evidence", async () => {
+  serverCase = { ...runnerCase, status: "DRAFT" };
+  renderReview();
+  expect(await screen.findByText("Private request evidence. It is not added to anyone's selfie library.")).toBeVisible();
+});
+
+// FU-12: the step line is worked out again when an owner's deadline passes, without a refetch.
+it("the step line moves on when the owner's deadline passes", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    serverCase = { ...openCase, items: [removalItem("a1", "A")], reviews: [ownerReview("A", { deadline })] };
+    renderReview();
+    expect(await screen.findByText(/^Step 2 of 4\. Waiting for 1 photographer to answer, until /)).toBeVisible();
+    act(() => { vi.advanceTimersByTime(61_000); });
+    expect(screen.getByText("Step 3 of 4. Ready for your decision on each photo.")).toBeVisible();
+    expect(removalApi.getAdminRemovalRequest).toHaveBeenCalledTimes(1);
+  } finally { vi.useRealTimers(); }
+});
+
+// A deadline past setTimeout's longest wait (about 24.8 days) still flips the line on time.
+it("the step line moves on for a deadline weeks away", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const deadline = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+    serverCase = { ...openCase, items: [removalItem("a1", "A")], reviews: [ownerReview("A", { deadline })] };
+    renderReview();
+    expect(await screen.findByText(/^Step 2 of 4\. Waiting for 1 photographer/)).toBeVisible();
+    act(() => { vi.advanceTimersByTime(29 * 24 * 3600 * 1000); });
+    expect(screen.getByText(/^Step 2 of 4\. Waiting for 1 photographer/)).toBeVisible();
+    act(() => { vi.advanceTimersByTime(24 * 3600 * 1000 + 1000); });
+    expect(screen.getByText("Step 3 of 4. Ready for your decision on each photo.")).toBeVisible();
+  } finally { vi.useRealTimers(); }
 });
