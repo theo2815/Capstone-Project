@@ -38,9 +38,11 @@ export function Slab({
     >
       <div className={`flex items-baseline justify-between gap-6 ${collapsed ? "mb-2" : "mb-8 md:mb-10"}`}>
         <div className="flex items-baseline gap-4 min-w-0">
-          <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum">
-            {number}
-          </span>
+          {number && (
+            <span className="font-mono text-[14px] min-[400px]:text-[15px] md:text-[13px] tracking-[0.15em] text-slate-soft tnum">
+              {number}
+            </span>
+          )}
           {/* A real h2 so screen readers get page h1 → section h2 → card h3. On
               phones the title may wrap rather than run into the trailing count. */}
           <h2

@@ -116,9 +116,9 @@ it("FT-41: opening a row writes ?sd-row=, and a link with ?sd-row= opens it", as
   expect(await screen.findByRole("dialog")).toHaveTextContent("Juan Dela Cruz");
 });
 
-it("FT-41: the slab number is 04 unless the page gives another", async () => {
+it("FU-15 (C-14): no section number in the Inbox; the page's number when it gives one", async () => {
   const view = renderQueue();
-  expect(within(document.getElementById("seller-details")!).getByText("04")).toBeInTheDocument();
+  expect(within(document.getElementById("seller-details")!).queryByText(/^\d\d$/)).not.toBeInTheDocument();
   view.unmount();
   render(<QueryClientProvider client={client}><SellerDetailsQueue number="03" /></QueryClientProvider>);
   expect(within(document.getElementById("seller-details")!).getByText("03")).toBeInTheDocument();
@@ -321,6 +321,39 @@ it("scores show their pass mark when the backend sends it, and the bare score wh
   expect(within(dialog).queryByText(/undefined/)).not.toBeInTheDocument();
 });
 
+it("FU-15: a failing score never reads as meeting its mark; a passing one keeps one decimal", async () => {
+  const base = get.getMockImplementation()!;
+  const serve = (extra: object) => get.mockImplementation(async (path: string) => path === "/admin/seller-details/u1" ? { ...RECORD, livenessPassMark: 95, faceMatchPassMark: 99, ...extra } : base(path));
+  serve({ livenessConfidence: 94.96, faceSimilarity: 98.996 });
+  const first = await openRecord();
+  expect(await within(first).findByText("94.96% (needs 95%)")).toBeInTheDocument();
+  expect(within(first).getByText("98.99% (needs 99%)")).toBeInTheDocument();
+  cleanup(); nav.set("");
+  serve({ livenessConfidence: 95, faceSimilarity: 99.04 });
+  const second = await openRecord();
+  expect(await within(second).findByText("95.0% (needs 95%)")).toBeInTheDocument();
+  expect(within(second).getByText("99.0% (needs 99%)")).toBeInTheDocument();
+});
+
+it("FU-15: the Approve and Reject line shows only where Approve shows", async () => {
+  nav.set("sd=auto_approved");
+  const dialog = await openRecord(/Maria Santos/);
+  expect(await within(dialog).findByLabelText(/Reason for rejecting/)).toBeInTheDocument();
+  expect(within(dialog).queryByText(/^Approve: the ID check is passed\./)).not.toBeInTheDocument();
+});
+
+it("FU-15: a failed reject shows its error next to the reason box, with the reason kept", async () => {
+  vi.spyOn(api, "post").mockRejectedValue(new ApiError([{ code: "INVALID_STATE_TRANSITION", message: "Seller details have changed. Reload before deciding." }], 409));
+  const dialog = await openRecord();
+  fireEvent.change(await within(dialog).findByLabelText(/Reason for rejecting/), { target: { value: "The ID is expired." } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+  const alert = await within(dialog).findByRole("alert");
+  expect(alert).toHaveTextContent("These details changed. Reload before deciding.");
+  // Same small group as the box, not the top of the drawer body (which also holds the photos).
+  expect(within(alert.parentElement!).getByLabelText(/Reason for rejecting/)).toHaveValue("The ID is expired.");
+  expect(within(alert.parentElement!).queryByRole("region", { name: "Photos" })).not.toBeInTheDocument();
+});
+
 it("a needs-review row shows its first real reason; an auto-approved row shows none", async () => {
   const base = get.getMockImplementation()!;
   get.mockImplementation(async (path: string) => {
@@ -369,6 +402,8 @@ it("asks for a reload when the record changed", async () => {
   const dialog = await openRecord();
   fireEvent.click(await within(dialog).findByRole("button", { name: "Approve" }));
   expect(await within(dialog).findByText("These details changed. Reload before deciding.")).toBeInTheDocument();
+  // FU-15: a failed Approve stays at the top of the body, not by the reason box.
+  expect(within(within(dialog).getByRole("alert").parentElement!).getByRole("region", { name: "Photos" })).toBeInTheDocument();
 });
 
 it("does not open the record again when the window regains focus", async () => {
