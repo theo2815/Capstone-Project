@@ -53,7 +53,8 @@ export function AdminRefundConfirmModal({
           : "The refund goes to the original payment method when the provider confirms it. The dispute then closes."}
       </p>
       <p className="font-sans text-sm text-slate">
-        The runner is told. A finished refund cannot be undone: the sale is taken back from the photographer&apos;s
+        The runner is told if they still have an account, and the photographer is told the dispute was resolved. A
+        finished refund cannot be undone: the sale is taken back from the photographer&apos;s
         earnings and, on a full refund, the runner&apos;s download of this photo ends.
       </p>
     </AdminConfirmModal>

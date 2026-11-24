@@ -94,7 +94,9 @@ export function AdminRefundPanel({
   const trimmed = url.trim();
   // The server never auto-cancels once a link was sent (the runner may have claimed it): past this date an admin checks PayMongo.
   const linkSent = !!dispute.refundLinkSentAt;
-  const checkPaymongo = linkSent && isRefundLinkExpired(dispute.refundCancelsAt);
+  // A card or e-wallet refund parks here when PayMongo's API failed: no link to send, only a check in PayMongo.
+  const qrph = dispute.orderSnapshot.paymentMethod === "qrph";
+  const checkPaymongo = qrph && linkSent && isRefundLinkExpired(dispute.refundCancelsAt);
 
   const windowClosed = !linkSent && isRefundLinkExpired(dispute.refundWindowClosesAt);
 
@@ -143,12 +145,16 @@ export function AdminRefundPanel({
 
   return (
     <div className="space-y-4 font-sans text-sm text-ink-soft">
-      <ol aria-label="Refund steps" className="list-decimal space-y-1 pl-5">
-        <li>Copy the payment ID.</li>
-        <li>In PayMongo, find the payment and make the refund.</li>
-        <li>Paste the refund link here and send it to the runner.</li>
-        <li>When PayMongo shows the refund as claimed, mark it refunded.</li>
-      </ol>
+      {qrph ? (
+        <ol aria-label="Refund steps" className="list-decimal space-y-1 pl-5">
+          <li>Copy the payment ID.</li>
+          <li>In PayMongo, find the payment and make the refund.</li>
+          <li>Paste the refund link here and send it to the runner.</li>
+          <li>When PayMongo shows the refund as claimed, mark it refunded.</li>
+        </ol>
+      ) : (
+        <p>Check this refund in PayMongo. If PayMongo shows it refunded, mark it refunded with its ref_ reference.</p>
+      )}
 
       <RefundPaymentReference dispute={dispute} disabled={busy} />
 
@@ -178,7 +184,7 @@ export function AdminRefundPanel({
         </div>
       )}
 
-      {showField ? (
+      {!qrph ? null : showField ? (
         <div className="space-y-2">
           <AdminTextInput
             id={`refund-link-${dispute.id}`}
@@ -188,7 +194,7 @@ export function AdminRefundPanel({
             hint="Paste the refund link from PayMongo."
           />
           <button type="button" onClick={handleAskSend} disabled={busy || !trimmed} className={`${BTN_SECONDARY} ${sm} w-full`}>
-            Send to runner
+            Send to runner…
           </button>
         </div>
       ) : (
@@ -231,7 +237,7 @@ export function AdminRefundPanel({
       >
         <p className="font-sans text-sm text-ink-soft">
           They get it by email, and in their QuickPitik inbox if they have an account. If you send another link later,
-          it replaces this one.
+          it replaces this one. An email that was sent cannot be taken back.
         </p>
       </AdminConfirmModal>
 

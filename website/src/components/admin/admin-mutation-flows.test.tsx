@@ -96,7 +96,7 @@ function pendingRequest(method: "post" | "fetch") {
 }
 
 it("does not show an unknown refund outcome as refunded in the dispute drawer", async () => {
-  const pending: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] };
+  const pending: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [], orderSnapshot: { ...dispute.orderSnapshot, paymentMethod: "qrph" } };
   fixtures.search = `row=${pending.id}`;
   seedDisputes([pending]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
@@ -107,7 +107,7 @@ it("does not show an unknown refund outcome as refunded in the dispute drawer", 
 });
 
 it("lets the refund panel span the drawer footer and scroll on its own", async () => {
-  const parked: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [] };
+  const parked: Dispute & { refundStatus: string } = { ...dispute, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review", activity: [], orderSnapshot: { ...dispute.orderSnapshot, paymentMethod: "qrph" } };
   fixtures.search = `row=${parked.id}`;
   seedDisputes([parked]);
   render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);

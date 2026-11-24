@@ -119,7 +119,7 @@ describe("manual refund panel", () => {
     const user = userEvent.setup();
     const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" });
     renderAside(parked);
-    const send = screen.getByRole("button", { name: "Send to runner" });
+    const send = screen.getByRole("button", { name: "Send to runner…" });
     expect(send).toBeDisabled();
     await user.type(screen.getByLabelText("Refund link"), "  https://pay.example/r/1  ");
     await user.click(send);
@@ -140,20 +140,37 @@ describe("manual refund panel", () => {
     ]);
   });
 
+  // FU-8: the QR Ph steps, the link field and its send button fit a QR Ph refund only.
+  it("shows one PayMongo check and Mark refunded on a card refund, not the QR Ph steps", () => {
+    renderAside({ ...parked, orderSnapshot: { ...parked.orderSnapshot, paymentMethod: "card" } });
+    expect(screen.getByText("Check this refund in PayMongo. If PayMongo shows it refunded, mark it refunded with its ref_ reference.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Refund steps" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Refund link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Send to runner/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark refunded…" })).toBeInTheDocument();
+  });
+
+  it("keeps the four steps and the send button on a QR Ph refund", () => {
+    renderAside(parked);
+    expect(screen.getByRole("list", { name: "Refund steps" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send to runner…" })).toBeInTheDocument();
+    expect(screen.queryByText(/Check this refund in PayMongo/)).not.toBeInTheDocument();
+  });
+
   it("the link field says where the link comes from", () => {
     renderAside(parked);
     expect(screen.getByLabelText("Refund link")).toHaveAccessibleDescription("Paste the refund link from PayMongo.");
   });
 
   // FT-18 (C-46): a money link to a customer gets a second look first.
-  it("Send to runner asks first and sends only after Send link", async () => {
+  it("Send to runner… asks first and sends only after Send link", async () => {
     const user = userEvent.setup();
     const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" });
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
-    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send to runner…" }));
     const dialog = screen.getByRole("dialog", { name: "Send this refund link to @runner?" });
-    expect(dialog).toHaveTextContent("They get it by email, and in their QuickPitik inbox if they have an account. If you send another link later, it replaces this one.");
+    expect(dialog).toHaveTextContent("They get it by email, and in their QuickPitik inbox if they have an account. If you send another link later, it replaces this one. An email that was sent cannot be taken back.");
     expect(post).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Send link" }));
     expect(post).toHaveBeenCalledTimes(1);
@@ -166,7 +183,7 @@ describe("manual refund panel", () => {
     const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, no) => { refuse = no; }));
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
-    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send to runner…" }));
     const dialog = screen.getByRole("dialog", { name: "Send this refund link to @runner?" });
     const send = within(dialog).getByRole("button", { name: "Send link" });
     await user.click(send);
@@ -188,7 +205,7 @@ describe("manual refund panel", () => {
     vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Backend unavailable"));
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
-    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send to runner…" }));
     await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(screen.getByLabelText("Refund link")).toHaveValue("https://pay.example/r/1");
     expect(useToastStore.getState().toasts.map((t) => t.kind)).toEqual(["error"]);
@@ -210,7 +227,7 @@ describe("manual refund panel", () => {
     renderAside({ ...parked, refundLinkUrl: "https://pay.example/r/1", refundLinkSentAt: "2026-10-29T01:00:00Z" });
     await user.click(screen.getByRole("button", { name: "Send a new link" }));
     await user.type(screen.getByLabelText("Refund link"), "  https://pay.example/r/1  ");
-    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send to runner…" }));
     expect(post).not.toHaveBeenCalled();
     expect(lastToast()).toMatchObject({ kind: "info", message: "This link was already sent." });
   });
@@ -304,7 +321,7 @@ describe("manual refund panel", () => {
     vi.spyOn(api, "post").mockResolvedValueOnce(sent);
     const view = renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
-    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send to runner…" }));
     await user.click(screen.getByRole("button", { name: "Send link" }));
     view.rerender(
       <QueryClientProvider client={client}>
@@ -445,11 +462,11 @@ describe("manual refund panel", () => {
     vi.spyOn(api, "post").mockReturnValueOnce(new Promise((yes) => { release = yes; }));
     renderAside(parked);
     await user.type(screen.getByLabelText("Refund link"), "https://pay.example/r/1");
-    await user.click(screen.getByRole("button", { name: "Send to runner" }));
+    await user.click(screen.getByRole("button", { name: "Send to runner…" }));
     await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(screen.getByRole("button", { name: "Copy payment ID", hidden: true })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Mark refunded…", hidden: true })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send to runner", hidden: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send to runner…", hidden: true })).toBeDisabled();
     await act(async () => { release({ ...parked, refundLinkUrl: "https://pay.example/r/1" }); });
   });
 
@@ -475,9 +492,9 @@ describe("refund confirm modal copy", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("The refund goes to the original payment method when the provider confirms it.");
   });
   // FT-18 (C-47): who is told and what cannot be undone, and the word for the wait.
-  it("says the runner is told and that a finished refund cannot be undone", () => {
+  it("says who is told (runner if they still have an account, photographer) and that a finished refund cannot be undone", () => {
     render(<AdminRefundConfirmModal {...base} paymentMethod="gcash" />);
-    expect(screen.getByText("The runner is told. A finished refund cannot be undone: the sale is taken back from the photographer's earnings and, on a full refund, the runner's download of this photo ends.")).toBeInTheDocument();
+    expect(screen.getByText("The runner is told if they still have an account, and the photographer is told the dispute was resolved. A finished refund cannot be undone: the sale is taken back from the photographer's earnings and, on a full refund, the runner's download of this photo ends.")).toBeInTheDocument();
   });
   it("reads Refunding… while the refund is sent", () => {
     render(<AdminRefundConfirmModal {...base} paymentMethod="gcash" submitting />);
