@@ -8,6 +8,8 @@ interface SlabProps {
   trailing?: ReactNode;
   /** An empty section: tighter padding so a one-line "nothing here" doesn't take 200px. */
   collapsed?: boolean;
+  /** "heading": body-size sentence-case title for admin pages; "label" keeps the mono kicker look. */
+  titleStyle?: "label" | "heading";
   children: ReactNode;
 }
 
@@ -22,6 +24,7 @@ export function Slab({
   caption,
   trailing,
   collapsed = false,
+  titleStyle = "label",
   children,
 }: SlabProps) {
   return (
@@ -40,7 +43,13 @@ export function Slab({
           </span>
           {/* A real h2 so screen readers get page h1 → section h2 → card h3. On
               phones the title may wrap rather than run into the trailing count. */}
-          <h2 className="font-mono font-normal uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink min-w-0 md:shrink-0">
+          <h2
+            className={
+              titleStyle === "heading"
+                ? "font-sans text-base md:text-lg font-semibold normal-case tracking-normal text-ink min-w-0 md:shrink-0"
+                : "font-mono font-normal uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink min-w-0 md:shrink-0"
+            }
+          >
             {title}
           </h2>
           {caption && (

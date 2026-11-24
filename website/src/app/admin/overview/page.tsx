@@ -57,7 +57,7 @@ export default function AdminOverviewPage() {
     <>
       <Header />
 
-      <Slab id="metrics" number="01" title="Key metrics" caption="Totals right now. The last tile counts this week.">
+      <Slab titleStyle="heading" id="metrics" number="01" title="Key metrics" caption="Totals right now. The last tile counts this week.">
         <div className="@container">
         {!kpisQuery.data && kpisQuery.isError ? (
           <div role="alert" className="space-y-3">
@@ -162,6 +162,7 @@ export default function AdminOverviewPage() {
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="trend"
         number="02"
         title="Last 30 days"
@@ -171,6 +172,7 @@ export default function AdminOverviewPage() {
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="decisions"
         number="03"
         title="Decision history"

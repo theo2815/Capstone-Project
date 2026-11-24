@@ -107,7 +107,7 @@ export function SellerDetailsQueue({ number = "04", keyScope = false }: { number
   useEffect(() => { if (openId) setFocusedId(openId); }, [openId, setFocusedId]);
 
   return (
-    <Slab id="seller-details" number={number} title="Seller details" caption="ID checks before uploads"
+    <Slab titleStyle="heading" id="seller-details" number={number} title="Seller details" caption="ID checks before uploads"
       trailing={<span className="tnum">{total} {FILTER_COUNT[key]}</span>}>
       {/* Inside the Slab, so the Slab stays a sibling of the slabs before it (its first: styles). */}
       <div ref={scopeRef} data-kbd-scope={keyScope ? "" : undefined}>

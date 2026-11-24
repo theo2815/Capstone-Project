@@ -135,6 +135,7 @@ export function PayoutReportsSection({ keyScope = false }: { keyScope?: boolean 
 
   return (
     <Slab
+      titleStyle="heading"
       id="payout-reports"
       number="06"
       title="Reports from photographers"

@@ -684,6 +684,7 @@ function PayoutSlab({
   const noun = totalCount === 1 ? "payout" : "payouts";
   return (
     <Slab
+      titleStyle="heading"
       id={id}
       number={number}
       title={title}
