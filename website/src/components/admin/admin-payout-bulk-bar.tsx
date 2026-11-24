@@ -59,11 +59,11 @@ export function AdminPayoutBulkBar({
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={onApprove}
-            disabled={approveDisabled || submitting}
-            className={`${BTN_PRIMARY} ${BTN_SIZE.sm} disabled:hover:bg-fresh`}
+            onClick={onClear}
+            disabled={submitting}
+            className={`${BTN_GHOST} ${BTN_SIZE.sm} px-3`}
           >
-            Approve {count}
+            Clear
           </button>
           <button
             type="button"
@@ -75,11 +75,11 @@ export function AdminPayoutBulkBar({
           </button>
           <button
             type="button"
-            onClick={onClear}
-            disabled={submitting}
-            className={`${BTN_GHOST} ${BTN_SIZE.sm} px-3`}
+            onClick={onApprove}
+            disabled={approveDisabled || submitting}
+            className={`${BTN_PRIMARY} ${BTN_SIZE.sm} disabled:hover:bg-fresh`}
           >
-            Clear
+            Approve {count}…
           </button>
         </div>
       </div>

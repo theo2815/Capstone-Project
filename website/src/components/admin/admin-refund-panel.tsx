@@ -211,7 +211,7 @@ export function AdminRefundPanel({
       )}
 
       <button type="button" onClick={() => setConfirmOpen(true)} disabled={busy} className={`${BTN_SECONDARY} ${sm} w-full`}>
-        Mark refunded
+        Mark refunded…
       </button>
 
       {checkPaymongo && (

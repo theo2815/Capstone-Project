@@ -480,17 +480,6 @@ export function VerificationsQueue() {
           }
           actions={
             <>
-              {openRow.adminHold && (
-                <button
-                  type="button"
-                  disabled={submitting}
-                  aria-busy={submitting}
-                  onClick={() => setApproveOpen(true)}
-                  className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
-                >
-                  Approve
-                </button>
-              )}
               <button
                 type="button"
                 disabled={submitting}
@@ -500,6 +489,17 @@ export function VerificationsQueue() {
               >
                 Send back…
               </button>
+              {openRow.adminHold && (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  aria-busy={submitting}
+                  onClick={() => setApproveOpen(true)}
+                  className={`${BTN_PRIMARY} ${BTN_SIZE.sm}`}
+                >
+                  Approve…
+                </button>
+              )}
             </>
           }
         >

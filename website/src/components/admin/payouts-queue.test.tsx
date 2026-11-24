@@ -77,7 +77,7 @@ it("shows cross-view payout pending feedback while independent rows remain usabl
   expect(approvals.filter((button) => button.hasAttribute("disabled"))).toHaveLength(1);
   expect(approvals.filter((button) => !button.hasAttribute("disabled"))).toHaveLength(1);
   await act(async () => { request.reject(new Error("Step-up cancelled")); await pending; });
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Approve" }).every((button) => !button.hasAttribute("disabled"))).toBe(true));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Approve…" }).every((button) => !button.hasAttribute("disabled"))).toBe(true));
 });
 it("opens an unrelated payout drawer while a selected row approval is pending", async () => {
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
@@ -91,7 +91,7 @@ it("opens an unrelated payout drawer while a selected row approval is pending", 
   await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
   await userEvent.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
   expect(screen.getByRole("dialog")).toHaveTextContent("cycle-2");
-  expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" })).toBeEnabled();
+  expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve…" })).toBeEnabled();
   await act(async () => { request.reject(new Error("Unavailable")); });
 });
 
@@ -149,12 +149,12 @@ it("blocks repeated row/drawer approvals while pending and keeps the first appro
   await mount();
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   const drawer = screen.getByRole("dialog");
-  const approve = within(drawer).getByRole("button", { name: "Approve" });
+  const approve = within(drawer).getByRole("button", { name: "Approve…" });
   await user.click(approve);
   await user.click(within(screen.getByRole("dialog", { name: "Approve payout" })).getByRole("button", { name: "Approve" }));
   expect(approve).toBeDisabled();
   expect(screen.getByRole("button", { name: "Approving…" })).toBeDisabled();
-  expect(screen.getAllByRole("button", { name: "Approve" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
+  expect(screen.getAllByRole("button", { name: "Approve…" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
   await user.keyboard("e"); await user.click(approve);
   expect(post).toHaveBeenCalledTimes(1);
   expect(useToastStore.getState().toasts).toHaveLength(0);
@@ -183,13 +183,13 @@ it("the admin who gave the first approval cannot approve again; without approved
   const own = document.querySelector<HTMLElement>(`[data-row-id="${payoutCycle.id}"]`)!;
   const other = document.querySelector<HTMLElement>('[data-row-id="cycle-2"]')!;
   const sentence = "You gave the first approval. A different admin must give the second.";
-  expect(within(own).getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(within(own).getByRole("button", { name: "Approve…" })).toBeDisabled();
   expect(own).toHaveTextContent(sentence);
-  expect(within(other).getByRole("button", { name: "Approve" })).toBeEnabled();
+  expect(within(other).getByRole("button", { name: "Approve…" })).toBeEnabled();
   expect(other).not.toHaveTextContent(sentence);
   await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
   const drawer = screen.getByRole("dialog");
-  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(within(drawer).getByRole("button", { name: "Approve…" })).toBeDisabled();
   expect(drawer).toHaveTextContent(sentence);
   await user.keyboard("e");
   expect(screen.queryByRole("dialog", { name: "Approve payout" })).not.toBeInTheDocument();
@@ -203,7 +203,7 @@ it("an approval that makes the payout approved says to send the money", async ()
     rows = [{ ...payoutCycle, status: "approved", approvedBy: admin.id, reviewedAt: "2026-09-10T05:00:00Z" }]; return rows[0];
   });
   await mount();
-  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
   await user.click(within(screen.getByRole("dialog", { name: "Approve payout" })).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "success", message: `Approved ${payoutCycle.id}. Send the money, then mark it paid.` });
@@ -264,7 +264,7 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
   await mount();
   for (const row of rows) await user.click(screen.getByRole("checkbox", { name: `Select payout ${row.id}` }));
-  await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 2" : "Hold 2…" }));
+  await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 2…" : "Hold 2…" }));
   const modal = screen.getByRole("dialog");
   const submit = action === "approve" ? "Approve" : "Hold 2 payouts";
   if (action === "hold") await user.click(within(modal).getAllByRole("radio")[0]!);
@@ -299,7 +299,7 @@ it("the bulk approve confirm lists every selected payout and its button is Appro
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", brandName: "Second Studio", amount: 1200 }]; client.setQueryData(key, rows);
   await mount();
   for (const row of rows) await user.click(screen.getByRole("checkbox", { name: `Select payout ${row.id}` }));
-  await user.click(screen.getByRole("button", { name: "Approve 2" }));
+  await user.click(screen.getByRole("button", { name: "Approve 2…" }));
   const modal = screen.getByRole("dialog");
   const list = within(modal).getByRole("list");
   expect(within(list).getAllByRole("listitem")).toHaveLength(2);
@@ -317,7 +317,7 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
   await mount();
   await user.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
-  await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" }));
+  await user.click(screen.getByRole("button", { name: action === "approve" ? "Approve 1…" : "Hold 1…" }));
   const modal = screen.getByRole("dialog");
   if (action === "hold") await user.click(within(modal).getAllByRole("radio")[0]!);
   await user.click(within(modal).getByRole("button", { name: action === "approve" ? "Approve" : "Hold payout" }));
@@ -330,7 +330,7 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   const box = screen.queryByRole("checkbox", { name: `Select payout ${payoutCycle.id}` });
   if (action === "approve") expect(box).not.toBeChecked();
   else expect(box).toBeNull();
-  expect(screen.queryByRole("button", { name: action === "approve" ? "Approve 1" : "Hold 1…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: action === "approve" ? "Approve 1…" : "Hold 1…" })).not.toBeInTheDocument();
   // Bulk results carry no records, so the tab re-reads its server list before the modal closes.
   expect(listCalls()).toHaveLength(2);
   // FT-23 (W23.10, W23.7): the bulk toasts, typed as the wording sheet has them.
@@ -401,11 +401,11 @@ it("a held photographer's payout names the flag and disables approve and mark pa
   const view = await mount();
   expect(screen.getAllByText("Payouts paused: a photo check on this photographer is still open")).toHaveLength(1);
   expect(screen.getAllByRole("link", { name: /photo check/i })[0]).toHaveAttribute("href", "/admin/flags?row=flag-1");
-  expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approve…" })).toBeDisabled();
   expect(screen.getAllByRole("button", { name: "Hold…" })[0]).toBeEnabled();
   view.unmount(); navigation.search = "status=in-progress"; await mount();
   expect(screen.getAllByText("Payouts paused: a photo check on this photographer is still open")).toHaveLength(1);
-  expect(screen.getByRole("button", { name: "Mark processing" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Mark processing…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Mark paid…" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Open payout cycle-2" }));
   const drawer = screen.getByRole("dialog");
@@ -417,7 +417,7 @@ it("an unconfirmed flag shows a warning and leaves the buttons on", async () => 
   rows = [{ ...payoutCycle, relevanceFlagId: "flag-1", relevanceHold: false }]; client.setQueryData(key, rows);
   await mount();
   expect(screen.getByText("A photo check on this photographer is open, not yet confirmed")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Approve…" })).toBeEnabled();
 });
 it("the bulk bar refuses approve while a selected payout is on hold, and E does nothing in the drawer", async () => {
   const user = userEvent.setup();
@@ -481,7 +481,7 @@ it("clears the ticked payouts when the URL status changes (Back, Forward or a li
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2", status: "held" }]; client.setQueryData(key, rows);
   const view = await mount();
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
-  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approve 1…" })).toBeInTheDocument();
   const again = () => view.rerender(<QueryClientProvider client={client}><PayoutsQueue /><StepUpProvider /></QueryClientProvider>);
   navigation.search = "status=held"; again();
   await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeInTheDocument());
@@ -496,7 +496,7 @@ it("clears the ticked payouts when the status tab changes", async () => {
   await mount();
   const tabs = screen.getByRole("group", { name: "Payout status" });
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
-  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approve 1…" })).toBeInTheDocument();
   await user.click(within(tabs).getByRole("button", { name: /Held 1/ }));
   expect(screen.queryByRole("button", { name: /^Approve \d/ })).not.toBeInTheDocument();
   await user.click(within(tabs).getByRole("button", { name: /Pending review 1/ }));
@@ -518,7 +518,7 @@ it.each([
     await user.click(screen.getByRole("button", { name: `Open payout ${payoutCycle.id}` }));
     await user.keyboard("e");
   } else {
-    await user.click(screen.getByRole("button", { name: how === "a row Approve" ? "Approve" : "Mark processing" }));
+    await user.click(screen.getByRole("button", { name: how === "a row Approve" ? "Approve…" : "Mark processing…" }));
   }
   expect(post).not.toHaveBeenCalled();
   const confirm = screen.getByRole("dialog", { name: title });
@@ -532,7 +532,7 @@ it("a failed single approval keeps the confirm open, and a retry sends once more
   const user = userEvent.setup();
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Unavailable"));
   await mount();
-  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
   const confirm = screen.getByRole("dialog", { name: "Approve payout" });
   await user.click(within(confirm).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(within(confirm).getByRole("button", { name: "Approve" })).toBeEnabled());
@@ -567,10 +567,10 @@ it("a ticked payout that a refetch moves to another tab drops out of the selecti
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
   await mount();
   await user.click(screen.getByRole("checkbox", { name: "Select payout cycle-1" }));
-  expect(screen.getByRole("button", { name: "Approve 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Approve 1…" })).toBeInTheDocument();
   rows = [{ ...payoutCycle, status: "held" }, { ...payoutCycle, id: "cycle-2" }];
   await act(async () => { await refresh(); });
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Approve 1" })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Approve 1…" })).not.toBeInTheDocument());
 });
 
 // AX-29 (PAY5, PAY6): house buttons in the drawer, and values in their real case.
@@ -580,7 +580,7 @@ it("the drawer's Hold and Reject are danger buttons, and Approve is the primary 
   const drawer = screen.getByRole("dialog");
   expect(within(drawer).getByRole("button", { name: "Hold…" })).toHaveClass("text-error", "min-h-[44px]");
   expect(within(drawer).getByRole("button", { name: "Reject…" })).toHaveClass("text-error");
-  expect(within(drawer).getByRole("button", { name: "Approve" })).toHaveClass("bg-fresh", "min-h-[44px]");
+  expect(within(drawer).getByRole("button", { name: "Approve…" })).toHaveClass("bg-fresh", "min-h-[44px]");
 });
 it("a payment reference renders as typed in the drawer", async () => {
   const user = userEvent.setup(); seed("paid");
@@ -649,7 +649,7 @@ it("approving a payout while the paged tab is mounted refreshes the tab", async 
   await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(60));
   const before = listCalls().length;
   const row = screen.getByRole("checkbox", { name: "Select payout p-1" }).closest("li")!;
-  await user.click(within(row).getByRole("button", { name: "Approve" }));
+  await user.click(within(row).getByRole("button", { name: "Approve…" }));
   await user.click(within(screen.getByRole("dialog", { name: "Approve payout" })).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select payout p-1" })).not.toBeInTheDocument());
   expect(post).toHaveBeenCalledTimes(1);

@@ -61,7 +61,7 @@ it("lists every refund the server returns for refund_run, each with its refund p
   wrap(<RefundRun onOpen={vi.fn()} />);
   expect(await screen.findByText("@runner-1")).toBeInTheDocument();
   expect(screen.getByText("@runner-2")).toBeInTheDocument();
-  expect(screen.getAllByRole("button", { name: "Mark refunded" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Mark refunded…" })).toHaveLength(2);
   expect(screen.getByText("pay_1")).toBeInTheDocument();
   expect(screen.getByText("pay_2")).toBeInTheDocument();
   expect(api.get).not.toHaveBeenCalled();

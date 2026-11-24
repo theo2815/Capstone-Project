@@ -429,3 +429,18 @@ it("the view tabs and the search stay on screen while the list loads and when it
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Needs you" })).toBeInTheDocument();
 });
+
+// FT-35 (C-41, C-62): Escalate first, Deny next, the green Approve refund last, in the footer and on a phone.
+it("the dispute actions read Escalate, Deny, then Approve refund", async () => {
+  const names = (el: HTMLElement) => within(el).getAllByRole("button").map((b) => b.textContent);
+  const drawer = await openDrawerFor(dispute);
+  expect(names(within(drawer.querySelector("footer")!).getByRole("complementary", { name: "Admin actions" }))).toEqual(["Escalate…", "Deny…", "Approve refund…"]);
+  cleanup();
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+  try {
+    const phone = await openDrawerFor(dispute);
+    expect(names(within(phone).getByRole("group", { name: "Dispute actions" }))).toEqual(["Escalate…", "Deny…", "Approve refund…"]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

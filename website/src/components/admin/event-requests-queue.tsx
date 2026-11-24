@@ -389,14 +389,14 @@ function RequestRow({
       </div>
       {/* Capped so a duplicate's three buttons wrap instead of squeezing the details to one word a line. */}
       <div className="flex flex-wrap gap-2 shrink-0 lg:max-w-64 lg:justify-end">
+        {/* The stop first, the green Approve last, as in every admin footer. */}
         <button
           type="button"
-          onClick={onApprove}
+          onClick={onReject}
           disabled={busy}
-          aria-busy={busy}
-          className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
+          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
         >
-          {pendingLabel === "Approving…" ? pendingLabel : duplicate ? "Approve as a new race" : "Approve"}
+          {isChange ? "Decline…" : "Send back…"}
         </button>
         {duplicate && (
           <button
@@ -411,11 +411,12 @@ function RequestRow({
         )}
         <button
           type="button"
-          onClick={onReject}
+          onClick={onApprove}
           disabled={busy}
-          className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
+          aria-busy={busy}
+          className={cn(BTN_PRIMARY, BTN_SIZE.sm)}
         >
-          {isChange ? "Decline" : "Send back"}
+          {pendingLabel === "Approving…" ? pendingLabel : duplicate ? "Approve as a new race…" : "Approve…"}
         </button>
       </div>
     </li>
