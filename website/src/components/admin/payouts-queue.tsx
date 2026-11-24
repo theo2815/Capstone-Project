@@ -428,13 +428,13 @@ export function PayoutsQueue() {
   return (
     <>
       <div className="mb-6">
-        <label htmlFor="payout-search" className="sr-only">Payout id</label>
+        <label htmlFor="payout-search" className="sr-only">Search payouts</label>
         <input
           id="payout-search"
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by payout id"
+          placeholder="Search by payout id, name or @handle"
           className="w-full rounded-2xl border border-line bg-surface px-5 py-3 font-sans text-sm text-ink placeholder:text-slate-soft focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh"
         />
       </div>
@@ -467,7 +467,7 @@ export function PayoutsQueue() {
           caption={slab.caption}
           totalCount={list.total}
           rows={effective}
-          empty={q ? "No payouts in this tab match this payout id." : slab.empty}
+          empty={q ? "No payouts in this tab match this search." : slab.empty}
           selected={selected}
           selectionActive={selectionActive}
           toggleSelect={toggleSelect}

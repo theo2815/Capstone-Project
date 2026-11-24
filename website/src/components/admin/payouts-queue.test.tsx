@@ -666,15 +666,25 @@ it("a ?row= link to a payout that does not exist is cleared", async () => {
   await waitFor(() => expect(navigation.replace).toHaveBeenCalledWith(expect.not.stringContaining("row="), expect.anything()));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
-it("the search box is labelled Payout id, and the list and counts use its text", async () => {
+it("the search box is labelled Search payouts, and the list and counts use its text", async () => {
   rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }];
   navigation.search = "q=cycle-2";
   await mount();
-  expect(screen.getByRole("searchbox", { name: "Payout id" })).toHaveValue("cycle-2");
+  expect(screen.getByRole("searchbox", { name: "Search payouts" })).toHaveValue("cycle-2");
   expect(statusParam(listCalls().at(-1)!).get("q")).toBe("cycle-2");
   expect(vi.mocked(api.get).mock.calls.some(([path]) => String(path) === "/admin/payouts/counts?q=cycle-2")).toBe(true);
   expect(screen.queryByRole("checkbox", { name: "Select payout cycle-1" })).not.toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Select payout cycle-2" })).toBeInTheDocument();
+});
+
+// FT-28: the backend also matches the photographer's name, brand and handle (W28.1, W28.3).
+it("the search box names what it finds, and an empty search result names the search", async () => {
+  rows = [];
+  navigation.search = "q=@nobody";
+  await mount();
+  expect(screen.getByRole("searchbox", { name: "Search payouts" })).toHaveAttribute("placeholder", "Search by payout id, name or @handle");
+  expect(statusParam(listCalls().at(-1)!).get("q")).toBe("@nobody");
+  expect(await screen.findByText("No payouts in this tab match this search.")).toBeInTheDocument();
 });
 
 // AX-57: drawer and detail values read as typed, wrap at 375, and link a no-handle photographer by id.

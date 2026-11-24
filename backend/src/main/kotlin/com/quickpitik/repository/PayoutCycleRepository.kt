@@ -145,7 +145,14 @@ interface PayoutCycleRepository : JpaRepository<PayoutCycle, String>, PayoutCycl
     fun countByStatusForAdmin(@Param("search") search: String): List<StatusCountRow>
 }
 
-private const val ADMIN_PAYOUT_SEARCH = "(:search = '' OR LOWER(c.id) LIKE CONCAT('%', :search, '%') ESCAPE '\\')"
+// The admin payout search (FT-28): the payout id, or its photographer's name, brand name or
+// handle, the handle typed with or without "@". Columns as the admin user search uses them.
+private const val ADMIN_PAYOUT_SEARCH = """(:search = ''
+    OR LOWER(c.id) LIKE CONCAT('%', :search, '%') ESCAPE '\'
+    OR EXISTS (SELECT 1 FROM User u WHERE u.id = c.photographerId AND LOWER(u.name) LIKE CONCAT('%', :search, '%') ESCAPE '\')
+    OR EXISTS (SELECT 1 FROM PhotographerSettings s WHERE s.userId = c.photographerId
+        AND (LOWER(s.brandName) LIKE CONCAT('%', :search, '%') ESCAPE '\'
+            OR CONCAT('@', LOWER(s.handle)) LIKE CONCAT('%', :search, '%') ESCAPE '\')))"""
 
 // One status and how many rows have it; the admin payouts and flags counts routes (AX-10).
 data class StatusCountRow(val status: String, val total: Long)
