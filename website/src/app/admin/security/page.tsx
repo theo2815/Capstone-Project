@@ -28,6 +28,9 @@ import { ROUTES } from "@/lib/constants";
 // with a code. Enforcement at login is handled by the backend; this is the
 // setup surface. The QR is drawn locally from `otpauthUri`; the secret stays
 // beside it for manual entry, which every authenticator app accepts.
+const CODE_FAILED =
+  "That code didn't work. Wait for a new one and try again. If it keeps failing, check that your phone's date and time are right.";
+
 export default function AdminSecurityPage() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
@@ -42,6 +45,7 @@ export default function AdminSecurityPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const { showToast } = useToast();
 
   useEffect(() => {
     let active = true;
@@ -101,8 +105,8 @@ export default function AdminSecurityPage() {
       setError("Enter the 6-digit code from your authenticator app.");
       return;
     }
-    await run("Verifying…", "That code didn't work. Please try again.", async (current) => {
-      const res = await confirmMfa(code.trim());
+    await run("Verifying…", CODE_FAILED, async (current) => {
+      const res = await confirmMfa(code.replace(/\s/g, ""));
       if (!current()) return;
       setRecoveryCodes(res.recoveryCodes);
       setEnroll(null);
@@ -117,12 +121,13 @@ export default function AdminSecurityPage() {
       setError("Enter a current code to turn off two-step verification.");
       return;
     }
-    await run("Turning off…", "That code didn't work. Please try again.", async (current) => {
-      await disableMfa(code.trim());
+    await run("Turning off…", CODE_FAILED, async (current) => {
+      await disableMfa(code.replace(/\s/g, ""));
       if (!current()) return;
       setEnabled(false);
       setDisarming(false);
       setCode("");
+      showToast({ kind: "success", message: "Two-step verification is off." });
     });
   }
 
@@ -203,6 +208,12 @@ export default function AdminSecurityPage() {
             <p className="font-sans text-base text-ink-soft">
               Two-step verification is off for your account.
             </p>
+            <ol className="list-decimal space-y-1 pl-5 font-sans text-sm text-ink-soft tnum">
+              <li>Install an authenticator app on your phone, for example Google Authenticator.</li>
+              <li>Scan the QR code with the app.</li>
+              <li>Type the 6-digit code the app shows. It changes about every 30 seconds.</li>
+              <li>Save the recovery codes you are given at the end.</li>
+            </ol>
             <FieldError message={error} id="mfa-error" />
             <button
               type="button"
@@ -211,7 +222,7 @@ export default function AdminSecurityPage() {
               aria-busy={busy}
               className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
             >
-              {busy ? "Starting…" : "Enable 2-step verification"}
+              {busy ? "Starting…" : "Turn on two-step verification"}
             </button>
           </div>
         )}
@@ -252,8 +263,9 @@ function EnrollPanel({
           Step 1 · Add the key to your app
         </Kicker>
         <p className="font-sans text-sm text-ink-soft">
-          In your authenticator app, scan this QR code, or add an account by
-          entering the key manually.
+          In your authenticator app, scan this QR code. If you cannot scan it,
+          add an account by typing the key below. The key is a set-up code, not
+          a password.
         </p>
         <div className="flex flex-wrap items-start gap-4">
           {/* White margin of 4 modules: the quiet zone phone scanners need. */}
@@ -359,14 +371,21 @@ function RecoveryCodes({
 }) {
   const { showToast } = useToast();
   const listRef = useRef<HTMLUListElement>(null);
+  // A refused copy still selects the codes for a hand copy, so a click counts as used.
+  const [kept, setKept] = useState(false);
   return (
     <div className="space-y-5">
       <Kicker as="p" tone="soft">
         Two-step verification is on
       </Kicker>
       <p className="font-sans text-base text-ink">
-        Save these recovery codes somewhere safe. Each works once if you lose
-        your authenticator — this is the only time they&apos;re shown.
+        Save these recovery codes somewhere safe. This is the only time they are
+        shown. If you do not have your phone, type one of them in the same box
+        as the 6-digit code when you sign in. Each works once.
+      </p>
+      <p className="font-sans text-base text-ink">
+        If you lose both your phone and these codes, you cannot get back in by
+        yourself. Ask the owner to reset your two-step verification.
       </p>
       <ul ref={listRef} className="grid grid-cols-2 gap-x-8 gap-y-2 rounded-xl border border-line bg-bone-deep p-5">
         {codes.map((c) => (
@@ -378,26 +397,41 @@ function RecoveryCodes({
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => void copyOrSelect(codes.join("\n"), "Recovery codes", listRef.current, showToast)}
+          onClick={() => {
+            setKept(true);
+            void copyOrSelect(codes.join("\n"), "Recovery codes", listRef.current, showToast);
+          }}
           className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
         >
           Copy codes
         </button>
         <button
           type="button"
-          onClick={() => downloadCodes(codes)}
+          onClick={() => {
+            setKept(true);
+            downloadCodes(codes);
+          }}
           className={cn(BTN_SECONDARY, BTN_SIZE.sm)}
         >
           Download codes
         </button>
       </div>
-      <button
-        type="button"
-        onClick={onDone}
-        className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
-      >
-        I&apos;ve saved them
-      </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={onDone}
+          disabled={!kept}
+          aria-describedby={kept ? undefined : "mfa-codes-first"}
+          className={`${BTN_PRIMARY} ${BTN_SIZE.md}`}
+        >
+          I&apos;ve saved them
+        </button>
+        {!kept && (
+          <p id="mfa-codes-first" className="font-sans text-sm text-ink-soft">
+            Copy or download the codes first.
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -427,7 +461,8 @@ function EnabledPanel({
         Status · On
       </Kicker>
       <p className="font-sans text-base text-ink-soft">
-        Sign-in asks for a code from your authenticator app.
+        Sign-in asks for a code from your authenticator app. To get new recovery
+        codes, turn two-step verification off and on again.
       </p>
       {disarming ? (
         <form
@@ -440,11 +475,10 @@ function EnabledPanel({
           <p className="font-sans text-sm text-ink-soft">
             Enter a current code to turn two-step verification off.
           </p>
-          <AdminFieldLabel htmlFor="mfa-disable-code">6-digit code</AdminFieldLabel>
+          <AdminFieldLabel htmlFor="mfa-disable-code">6-digit code, or a recovery code</AdminFieldLabel>
           <input
             id="mfa-disable-code"
             type="text"
-            inputMode="numeric"
             autoComplete="one-time-code"
             disabled={busy}
             value={code}
