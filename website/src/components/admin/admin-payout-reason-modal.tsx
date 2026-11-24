@@ -97,6 +97,7 @@ export function AdminPayoutReasonModal({
         onChange={setReason}
         maxLength={255}
         placeholder={copy.placeholder}
+        hint="Seen by: the photographer."
       />
     </AdminFormModal>
   );

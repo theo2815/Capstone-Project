@@ -86,6 +86,7 @@ export function AdminFlagHideModal({
         maxLength={280}
         placeholder="Anything another admin should know"
       />
+      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

@@ -223,6 +223,7 @@ export function EventRequestsQueue() {
           onChange={setReason}
           maxLength={500}
           placeholder="What should they change before resubmitting?"
+          hint="Seen by: the photographer."
         />
       </AdminFormModal>
     </section>

@@ -90,7 +90,9 @@ export function AdminResetVerificationModal({
         onChange={setNote}
         maxLength={280}
         placeholder="Anything specific they need to fix before resubmitting?"
+        hint="Seen by: the photographer."
       />
+      {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );
 }

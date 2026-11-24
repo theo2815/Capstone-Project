@@ -55,6 +55,7 @@ export function AdminEscalateModal({
         onChange={setNote}
         maxLength={280}
         placeholder="What still needs checking?"
+        hint="Seen by: admins only."
       />
     </AdminFormModal>
   );

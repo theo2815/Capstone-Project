@@ -61,6 +61,15 @@ it("ties an error to the textarea", () => {
   expect(area).toHaveAccessibleDescription("Add a note.");
 });
 
+// FT-33 (C-59): a textarea's hint sits under it and is read out with it.
+it("shows a textarea hint and lists its id in aria-describedby", () => {
+  render(<AdminTextarea id="note" label="Note" value="" onChange={noop} maxLength={200} hint="Seen by: the photographer." />);
+  const area = screen.getByRole("textbox", { name: "Note" });
+  expect(screen.getByText("Seen by: the photographer.")).toHaveAttribute("id", "note-hint");
+  expect(area.getAttribute("aria-describedby")?.split(" ")).toContain("note-hint");
+  expect(area).toHaveAccessibleDescription("Seen by: the photographer.");
+});
+
 it("groups a radio set under its section label", () => {
   render(
     <AdminFormSection label="Reason">

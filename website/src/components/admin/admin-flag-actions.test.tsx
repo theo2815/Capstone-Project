@@ -9,6 +9,7 @@ import { useToastStore } from "@/store/toast-store";
 import { useAuthStore } from "@/store/auth-store";
 import { AdminFlagCard, type FlagCardActions } from "./admin-flag-card";
 import { FlagsQueue } from "./flags-queue";
+import { AdminFlagHideModal } from "./admin-flag-hide-modal";
 
 const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: navigation.replace }), usePathname: () => "/admin/flags", useSearchParams: () => new URLSearchParams(navigation.search) }));
@@ -182,4 +183,14 @@ it("the drawer of a relevance flag holds payouts, shows a refusal and keeps the 
   await user.click(drawer.getByRole("button", { name: "Confirm hold" }));
   await waitFor(() => expect(post).toHaveBeenLastCalledWith("/admin/flags/flag-2/payout-hold"));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
+});
+
+// FT-33 (C-31; W33.2): Hide photo stays off until a reason is picked, and the dialog says so.
+it("the Hide dialog says why Hide photo is off until a reason is picked", async () => {
+  const user = userEvent.setup();
+  render(<AdminFlagHideModal open onClose={() => {}} onSubmit={() => {}} flagId="flag-1" />);
+  expect(screen.getByRole("button", { name: "Hide photo" })).toBeDisabled();
+  expect(screen.getByText("Choose a reason to continue.")).toBeInTheDocument();
+  await user.click(screen.getByRole("radio", { name: "Violates platform policy" }));
+  expect(screen.queryByText("Choose a reason to continue.")).not.toBeInTheDocument();
 });
