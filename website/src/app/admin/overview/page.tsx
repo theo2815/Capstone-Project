@@ -50,12 +50,14 @@ export default function AdminOverviewPage() {
   const kpis = kpisQuery.data ?? EMPTY_KPIS;
   const needingAdmin = kpis.disputesNeedingAdmin ?? kpis.openDisputes;
   const overdue = kpis.disputesOverdue ?? 0;
+  // The Inbox's count (pending only); an older backend without it falls back to pending plus scheduled.
+  const payoutsWaiting = kpis.payoutsAwaitingReview ?? kpis.pendingPayouts;
 
   return (
     <>
       <Header />
 
-      <Slab id="metrics" number="01" title="Key metrics" caption="Live counts">
+      <Slab id="metrics" number="01" title="Key metrics" caption="Totals right now. The last tile counts this week.">
         <div className="@container">
         {!kpisQuery.data && kpisQuery.isError ? (
           <div role="alert" className="space-y-3">
@@ -87,7 +89,7 @@ export default function AdminOverviewPage() {
                 ? "photographer waiting"
                 : "photographers waiting"
             }
-            href={ROUTES.ADMIN_INBOX}
+            href={`${ROUTES.ADMIN_INBOX}?type=verifications`}
           />
           <AdminStatTile
             kicker="Disputes needing you"
@@ -113,10 +115,10 @@ export default function AdminOverviewPage() {
             />
           )}
           <AdminStatTile
-            kicker="Pending payouts"
-            value={kpis.pendingPayouts}
+            kicker="Payouts waiting"
+            value={payoutsWaiting}
             caption={
-              kpis.pendingPayouts === 1
+              payoutsWaiting === 1
                 ? "payout waiting"
                 : "payouts waiting"
             }
@@ -135,24 +137,22 @@ export default function AdminOverviewPage() {
           <AdminStatTile
             kicker="Approved photographers"
             value={kpis.approvedPhotographers}
-            caption="active on platform"
+            caption="approved to upload"
             href={ROUTES.ADMIN_PHOTOGRAPHERS}
           />
           <AdminStatTile
-            kicker="Active suspensions"
+            kicker="Suspended accounts"
             value={kpis.suspended}
-            caption={
-              kpis.suspended === 1 ? "frozen account" : "frozen accounts"
-            }
-            href={ROUTES.ADMIN_PHOTOGRAPHERS}
+            caption="photographers and runners"
+            href={`${ROUTES.ADMIN_PHOTOGRAPHERS}?status=suspended`}
           />
           <AdminStatTile
             kicker="This week's decisions"
             value={kpis.decisionsThisWeek}
             caption={
               kpis.decisionsThisWeek === 1
-                ? "action logged"
-                : "actions logged"
+                ? "action logged since Monday"
+                : "actions logged since Monday"
             }
             href="#decisions"
           />

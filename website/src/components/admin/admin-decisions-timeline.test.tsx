@@ -116,3 +116,18 @@ it("passes a custom limit to the request", async () => {
   expect(await screen.findByText("Approved")).toBeTruthy();
   expect(get).toHaveBeenCalledWith("/admin/decisions?limit=20", expect.anything());
 });
+
+it("a failed load offers a styled Retry that loads again", async () => {
+  const get = vi.spyOn(api, "get").mockRejectedValue(new Error("down"));
+  renderTimeline({ recent: true });
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(retry.className).toContain("min-h-[44px]");
+  retry.click();
+  await vi.waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(1));
+});
+
+it("each decision shows its year", async () => {
+  vi.spyOn(api, "get").mockResolvedValue(paged([row({ decision: "suspended", targetName: "Pat Photo" })]));
+  renderTimeline({ recent: true });
+  expect(await screen.findByText(/OCT 27 · 2026 · /)).toBeTruthy();
+});
