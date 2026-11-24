@@ -434,7 +434,7 @@ function RailRow({
                   "font-mono tnum text-[14px] min-[400px]:text-[15px] lg:text-[13px]",
                   isActive ? "text-ink" : "text-slate",
                 )}
-                aria-label={`${count} open`}
+                aria-label={`${count} waiting`}
               >
                 {count}
               </span>

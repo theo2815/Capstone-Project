@@ -50,7 +50,7 @@ function Header({
         {totalPending !== undefined && <> · <span className="tnum">{formatPrice(totalPending)}</span> to approve</>}
         {/* C-29 (W41.1): reports sit below the whole queue, so the header points at them. */}
         {!!openReports && (
-          <> · <Link href="#payout-reports" className="underline underline-offset-4 hover:text-ink"><span className="tnum">{openReports}</span> reports open</Link></>
+          <> · <Link href="#payout-reports" className="underline underline-offset-4 hover:text-ink"><span className="tnum">{openReports}</span> {openReports === 1 ? "report" : "reports"} open</Link></>
         )}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">

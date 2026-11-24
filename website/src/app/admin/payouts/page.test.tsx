@@ -77,6 +77,14 @@ it("FT-41: with 2 open reports the header ends with a link to the reports; with 
   expect(header()).not.toHaveTextContent("reports open");
 });
 
+it("FU-6 (U6.4): one open report reads singular", async () => {
+  vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({ pending_review: 3 });
+  vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({ openPayoutReports: 1 } as adminApi.AdminKpis);
+  mount();
+  expect(await screen.findByRole("link", { name: "1 report open" })).toHaveAttribute("href", "#payout-reports");
+  expect(header()).toHaveTextContent(/ · 1 report open$/);
+});
+
 it("shows its guide intro, look-alike links and definitions without hover", () => {
   vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({});
   mount();

@@ -455,6 +455,7 @@ export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: Reac
         photographerName={`${sendBackIds.length} ${
           sendBackIds.length === 1 ? "photographer" : "photographers"
         }`}
+        count={sendBackIds.length}
       />
 
       {openRow && (

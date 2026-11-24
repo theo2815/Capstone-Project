@@ -140,7 +140,7 @@ it("retains only failed bulk rejections, keeps their reason, and retries them on
     rows = rows.map((row) => row.userId === adminUser.userId ? { ...row, verificationStatus: "incomplete" } : row); return rows[0];
   });
   mount(true); await user.click(screen.getByRole("checkbox", { name: "Select Test Studio" })); await user.click(screen.getByRole("checkbox", { name: "Select Second Studio" }));
-  await user.click(screen.getByRole("button", { name: "Send back 2…" })); const dialog = screen.getByRole("dialog"); const note = within(dialog).getByLabelText("Note (optional, max 280)");
+  await user.click(screen.getByRole("button", { name: "Send back 2…" })); const dialog = screen.getByRole("dialog"); expect(dialog).toHaveTextContent("2 photographers get your reason in their inbox. Their profiles go back"); const note = within(dialog).getByLabelText("Note (optional, max 280)");
   await user.click(within(dialog).getAllByRole("radio")[0]!); await user.type(note, "Fix watermark"); await user.click(within(dialog).getByRole("button", { name: "Send back" }));
   expect(note).toBeDisabled(); await user.keyboard("{Enter}"); expect(post).toHaveBeenCalledTimes(2);
   await act(async () => request.reject(new Error("Unavailable")));

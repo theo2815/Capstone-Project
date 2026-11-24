@@ -46,16 +46,16 @@ it("the Verifications row is active on /admin/verifications, and Inbox is not", 
 it("Photo removals shows its count, and Payouts adds the open reports", () => {
   kpis.value = { ...base, removalsNeedingAction: 3, payoutsAwaitingReview: 2, pendingPayouts: 9, openPayoutReports: 1 };
   render(<AdminRail />);
-  expect(within(screen.getByRole("link", { name: /Photo removals/ })).getByLabelText("3 open")).toHaveTextContent("3");
-  expect(within(screen.getByRole("link", { name: /Payouts/ })).getByLabelText("3 open")).toHaveTextContent("3");
-  expect(within(screen.getByRole("link", { name: /Inbox/ })).getByLabelText("6 open")).toBeInTheDocument();
+  expect(within(screen.getByRole("link", { name: /Photo removals/ })).getByLabelText("3 waiting")).toHaveTextContent("3");
+  expect(within(screen.getByRole("link", { name: /Payouts/ })).getByLabelText("3 waiting")).toHaveTextContent("3");
+  expect(within(screen.getByRole("link", { name: /Inbox/ })).getByLabelText("6 waiting")).toBeInTheDocument();
   expect(screen.getByText("Queues · 6 waiting")).toBeInTheDocument();
 });
 
 it("Photo Relevance counts the cases that need a person", () => {
   kpis.value = { ...base, relevanceNeedsPerson: 4, relevanceHidden: 40, relevanceAppealsOpen: 1 };
   render(<AdminRail />);
-  expect(within(screen.getByRole("link", { name: /Photo Relevance/ })).getByLabelText("4 open")).toBeInTheDocument();
+  expect(within(screen.getByRole("link", { name: /Photo Relevance/ })).getByLabelText("4 waiting")).toBeInTheDocument();
 });
 
 it("an old backend without the new fields shows no badges and no crash", () => {
@@ -104,6 +104,13 @@ it("the mobile strip starts with a Search button that opens the palette", () => 
   expect(search.className).toContain("min-h-[44px]");
   fireEvent.click(search);
   expect(useAdminPaletteStore.getState().open).toBe(true);
+});
+
+// FU-6 (U6.5): the strip's count reads "waiting", as the rail's does.
+it("the mobile strip's count is read as N waiting", () => {
+  kpis.value = { ...base, openDisputes: 2 };
+  render(<AdminMobileStrip />);
+  expect(within(screen.getByRole("link", { name: /Disputes/ })).getByLabelText("2 waiting")).toHaveTextContent("2");
 });
 
 // FT-43 (B-08): the strip names its groups like the rail does.

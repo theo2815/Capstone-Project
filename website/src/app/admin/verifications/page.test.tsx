@@ -29,7 +29,14 @@ function mount(kpis: object, users: Promise<unknown>) {
 
 it("the header counts both queues once they load", async () => {
   const header = mount({ pendingVerifications: 1, pendingSellerDetails: 3 }, Promise.resolve({ items: [adminUser], total: 1 }));
-  await waitFor(() => expect(header).toHaveTextContent("Verifications · 1 profiles waiting · Seller details · 3 waiting"));
+  await waitFor(() => expect(header).toHaveTextContent("Verifications · 1 profile waiting · Seller details · 3 waiting"));
+});
+
+// FU-6 (U6.1): one profile, every other count the plural.
+it.each([[0, "0 profiles waiting"], [2, "2 profiles waiting"]])("the header reads %i as plural", async (n, text) => {
+  const items = Array.from({ length: n }, (_, i) => ({ ...adminUser, userId: `pending-${i}` }));
+  const header = mount({}, Promise.resolve({ items, total: n }));
+  expect(await within(header).findByRole("link", { name: text })).toBeInTheDocument();
 });
 
 it("an older backend without the seller-details count, or a failed list, never shows a 0", async () => {
@@ -49,7 +56,7 @@ it("FT-41: Seller details renders before Decision history, numbered 03", () => {
 it("FT-41: the two header counts link to their lists", async () => {
   const header = mount({ pendingVerifications: 1, pendingSellerDetails: 3 }, Promise.resolve({ items: [adminUser], total: 1 }));
   expect(await within(header).findByRole("link", { name: "Seller details · 3 waiting" })).toHaveAttribute("href", "#seller-details");
-  expect(await within(header).findByRole("link", { name: "1 profiles waiting" })).toHaveAttribute("href", "#open-queue");
+  expect(await within(header).findByRole("link", { name: "1 profile waiting" })).toHaveAttribute("href", "#open-queue");
 });
 
 it("shows its guide intro, look-alike links and definitions without hover", () => {

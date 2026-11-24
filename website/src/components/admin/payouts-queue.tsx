@@ -387,7 +387,9 @@ export function PayoutsQueue() {
         clearSelection();
         showToast({
           kind: "success",
-          message: `${target.payoutIds.length} payouts on hold. The photographers were told why.`,
+          message: target.payoutIds.length === 1
+            ? "1 payout on hold. The photographer was told why."
+            : `${target.payoutIds.length} payouts on hold. The photographers were told why.`,
         });
       }
       return ok;

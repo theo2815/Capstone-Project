@@ -33,7 +33,7 @@ function Header({ pendingCount, sellerDetailsCount }: { pendingCount: number | n
     <header className="pb-8 md:pb-12 border-b border-line">
       <Kicker as="p">
         Verifications{pendingCount !== null && (
-          <> · <Link href="#open-queue" className={COUNT_LINK}><span className="tnum">{pendingCount}</span> profiles waiting</Link></>
+          <> · <Link href="#open-queue" className={COUNT_LINK}><span className="tnum">{pendingCount}</span> {pendingCount === 1 ? "profile" : "profiles"} waiting</Link></>
         )}
         {sellerDetailsCount !== null && (
           <> · <Link href="#seller-details" className={COUNT_LINK}>Seller details · <span className="tnum">{sellerDetailsCount}</span> waiting</Link></>

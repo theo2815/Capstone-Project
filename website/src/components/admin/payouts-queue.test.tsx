@@ -293,6 +293,21 @@ it.each(["approve", "hold"])("keeps bulk %s pending through partial-result recon
   expect(post).toHaveBeenLastCalledWith("/admin/payouts/bulk", expect.objectContaining({ ids: ["cycle-2"] }), expect.anything());
 });
 
+// FU-6 (U6.3): two held payouts keep the plural toast.
+it("a bulk hold of two says the photographers were told", async () => {
+  const user = userEvent.setup();
+  rows = [payoutCycle, { ...payoutCycle, id: "cycle-2" }]; client.setQueryData(key, rows);
+  vi.spyOn(api, "post").mockResolvedValueOnce({ groupId: "batch", results: [{ id: payoutCycle.id, ok: true }, { id: "cycle-2", ok: true }] });
+  await mount();
+  for (const row of rows) await user.click(screen.getByRole("checkbox", { name: `Select payout ${row.id}` }));
+  await user.click(screen.getByRole("button", { name: "Hold 2…" }));
+  const modal = screen.getByRole("dialog");
+  await user.click(within(modal).getAllByRole("radio")[0]!);
+  await user.click(within(modal).getByRole("button", { name: "Hold 2 payouts" }));
+  await waitFor(() => expect(modal).not.toBeInTheDocument());
+  expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "success", message: "2 payouts on hold. The photographers were told why." });
+});
+
 // FT-16 (C-22): the bulk confirm lists what it approves and uses the same verb as the single one.
 it("the bulk approve confirm lists every selected payout and its button is Approve", async () => {
   const user = userEvent.setup();
@@ -335,7 +350,7 @@ it.each(["approve", "hold"])("closes bulk %s and clears selection only after con
   expect(listCalls()).toHaveLength(2);
   // FT-23 (W23.10, W23.7): the bulk toasts, typed as the wording sheet has them.
   expect(useToastStore.getState().toasts.at(-1)).toMatchObject({ kind: "success", message: action === "approve"
-    ? "Approvals recorded for 1 payout." : "1 payouts on hold. The photographers were told why." });
+    ? "Approvals recorded for 1 payout." : "1 payout on hold. The photographer was told why." });
 });
 
 it("preserves provider-controlled action guards, including drawer keyboard shortcuts", async () => {

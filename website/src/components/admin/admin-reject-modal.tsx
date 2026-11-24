@@ -15,6 +15,8 @@ interface AdminRejectModalProps {
   /** Resolves false when the request failed, so the modal keeps its input and shows why. */
   onSubmit: (reason: string) => Promise<boolean | void>;
   photographerName: string;
+  /** How many photographers a bulk send-back covers; above 1 the intro speaks of them all (U6.2). */
+  count?: number;
 }
 
 const REJECTION_REASONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -36,6 +38,7 @@ export function AdminRejectModal({
   onClose,
   onSubmit,
   photographerName,
+  count = 1,
 }: AdminRejectModalProps) {
   // AX-28: no reason starts picked, so a quick Enter never records one the admin did not choose.
   const [selectedReason, setSelectedReason] = useState("");
@@ -70,7 +73,9 @@ export function AdminRejectModal({
       onClose={onClose}
       onSubmit={handleSubmit}
       title="Send back for fixes"
-      intro={`${photographerName} gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.`}
+      intro={count > 1
+        ? `${count} photographers get your reason in their inbox. Their profiles go back to Incomplete so they can fix them. When they send them again, they wait here for your approval.`
+        : `${photographerName} gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.`}
       submitLabel="Send back"
       submitDisabled={!selectedReason}
       error={failed ? "Couldn't finish this. Your reason and note are still here." : null}
