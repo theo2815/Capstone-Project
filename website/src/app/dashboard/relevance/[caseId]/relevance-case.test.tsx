@@ -55,6 +55,7 @@ it("the appeal form refuses an empty or over-long reason before sending", async 
 
 it("a filed appeal shows its status and hides the form", async () => {
   vi.useRealTimers();
+  serverCase = { ...base, appealDeadline: "2099-12-31" }; // real clock: keep the appeal window open
   const user = userEvent.setup();
   const filed = { ...base, appeal: { id: "appeal-1", status: "OPEN" as const, createdAt: "2026-11-16T04:00:00Z", decidedAt: null } };
   const post = vi.spyOn(api, "post").mockImplementation(async () => { serverCase = filed; return filed; });
@@ -70,6 +71,7 @@ it("a filed appeal shows its status and hides the form", async () => {
 
 it("a refused appeal shows the server's message and keeps the reason", async () => {
   vi.useRealTimers();
+  serverCase = { ...base, appealDeadline: "2099-12-31" }; // real clock: keep the appeal window open
   const user = userEvent.setup();
   vi.spyOn(api, "post").mockRejectedValue(new ApiError([{ code: "APPEAL_ALREADY_OPEN",
     message: "You already have an open appeal for your photos in this event. We will tell you in your inbox when it is decided." }], 409));
