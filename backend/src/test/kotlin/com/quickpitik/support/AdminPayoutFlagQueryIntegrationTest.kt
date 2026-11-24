@@ -62,6 +62,35 @@ class AdminPayoutFlagQueryIntegrationTest : PostgresIntegrationTest() {
         assertEquals(mapOf("pending" to 1L, "approved" to 2L, "processing" to 1L, "paid" to 1L, "failed" to 1L), counts)
     }
 
+    // FT-28: the payout search also finds the photographer by name, brand name or handle
+    // (typed with or without "@"); % and _ stay plain text; the tab counts follow the list.
+    @Test
+    fun `payout search finds the photographer by name, brand or handle, and the counts follow`() {
+        val t = UUID.randomUUID().toString().take(8)
+        val owner = user(Role.PHOTOGRAPHER, "Ft28 Juan $t")
+        settings.saveAndFlush(PhotographerSettings(userId = owner.id, handle = "ft28shots-$t", brandName = "Ft28 Studio $t"))
+        val noSettings = user(Role.PHOTOGRAPHER, "Ft28 50%_a $t")
+        val lookAlike = user(Role.PHOTOGRAPHER, "Ft28 50xxa $t")
+        val pending = payout("FT28-$t-1", owner.id, PayoutCycleStatus.PENDING)
+        val paid = payout("FT28-$t-2", owner.id, PayoutCycleStatus.PAID)
+        val wildcard = payout("FT28-$t-3", noSettings.id, PayoutCycleStatus.FAILED)
+        payout("FT28-$t-4", lookAlike.id, PayoutCycleStatus.FAILED)
+
+        // The service hands the repository a trimmed, lower-cased, LIKE-escaped term.
+        fun find(term: String) =
+            cycles.pageForAdmin(PayoutCycleStatus.entries.map { it.wire }, term, PageRequest.of(0, 50)).content.map { it.id }.toSet()
+
+        assertEquals(setOf(pending, paid), find("ft28shots-$t"))
+        assertEquals(setOf(pending, paid), find("@ft28shots-$t"))
+        assertEquals(setOf(pending, paid), find("ft28 studio $t"))
+        assertEquals(setOf(pending, paid), find("ft28 juan $t"))
+        assertEquals(setOf(wildcard), find("50\\%\\_a $t"))
+        assertEquals(setOf(paid), find("ft28-$t-2"))
+
+        val counts = cycles.countByStatusForAdmin("@ft28shots-$t").associate { it.status to it.total }
+        assertEquals(mapOf("pending" to 1L, "paid" to 1L), counts)
+    }
+
     @Test
     fun `flag search finds photographer handle, reporter name and handle, and the exact flag id`() {
         val t = UUID.randomUUID().toString().take(8)
@@ -119,6 +148,9 @@ class AdminPayoutFlagQueryIntegrationTest : PostgresIntegrationTest() {
     private fun flag(kind: String, target: UUID, reporter: UUID? = null, status: FlagStatus = FlagStatus.OPEN, reason: String = "other"): UUID =
         flags.saveAndFlush(Flag(targetKindWire = kind, targetId = target, reporterId = reporter, reason = reason,
             statusWire = status.wire)).id
+
+    private fun payout(id: String, photographer: UUID, status: PayoutCycleStatus): String =
+        cycles.saveAndFlush(PayoutCycle(id = id, photographerId = photographer, weekOf = LocalDate.of(2026, 9, 1), statusWire = status.wire)).id
 
     private fun user(role: Role, name: String) = users.saveAndFlush(
         User(email = "ax10-${UUID.randomUUID()}@test.local", passwordHash = "test-only-unused", name = name, role = role),
