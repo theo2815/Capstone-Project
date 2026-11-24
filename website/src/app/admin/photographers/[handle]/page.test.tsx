@@ -135,3 +135,48 @@ it("Public URL header shows the handle as typed, with its caption whole", async 
   expect(within(header).getByText("@test-studio").closest(".uppercase")).toBeNull();
   expect(within(header).getByText("Where runners find this photographer")).not.toHaveClass("truncate");
 });
+
+it("builds the header line from the parts that are set, with no double separator", async () => {
+  detail = { ...adminUser, city: "", decisionLog: [] };
+  params.handle = adminUser.handle!;
+  mount();
+  await screen.findByRole("heading", { level: 1, name: /Test Studio/ });
+  const line = screen.getByText(/member since/);
+  expect(line.textContent).not.toMatch(/·\s*·/);
+  expect(line).toHaveTextContent(/Cebu · 0 actions on file/);
+});
+
+it("links a Pending profile to Verifications and seller details that need a person to the ID check", async () => {
+  const get = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (url: string, ...rest) =>
+    url.endsWith("/record") ? { ...record, sellerDetailsStatus: "manual_review" } : get(url, ...rest));
+  params.handle = adminUser.handle!;
+  mount();
+  expect(await screen.findByRole("link", { name: "Review in Verifications →" })).toHaveAttribute("href", "/admin/inbox?type=verifications");
+  expect(await screen.findByRole("link", { name: "Review their ID check →" })).toHaveAttribute("href", "/admin/inbox?type=seller-details");
+});
+
+it("shows neither review link for an approved profile with checked seller details", async () => {
+  detail = { ...adminUser, verificationStatus: "approved", decisionLog: [] };
+  params.handle = adminUser.handle!;
+  mount();
+  await screen.findByText("Auto-approved");
+  expect(screen.queryByRole("link", { name: /Review in Verifications/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Review their ID check/ })).not.toBeInTheDocument();
+});
+
+it("opens the checklist first, captioned with what it is", async () => {
+  params.handle = adminUser.handle!;
+  mount();
+  const toggle = await screen.findByRole("button", { name: /Completeness/ });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(toggle).toHaveTextContent("What the photographer has filled in");
+  expect(screen.getByRole("button", { name: /About/ })).toHaveAttribute("aria-expanded", "false");
+});
+
+it("titles the tab by the photographer's name when the profile has no handle", async () => {
+  params.handle = ID;
+  mount();
+  await screen.findByRole("heading", { level: 1, name: /Test Studio/ });
+  await waitFor(() => expect(document.title).toBe("Test Studio · Admin | QuickPitik"));
+});

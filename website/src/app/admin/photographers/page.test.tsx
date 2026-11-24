@@ -67,7 +67,7 @@ it("lists rejected photographers on their own tab", async () => {
   vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([{ ...adminUser, verificationStatus: "rejected" }]));
   mount();
   const card = await screen.findByText("Test Studio");
-  expect(adminApi.fetchAdminUsersPage).toHaveBeenLastCalledWith(
+  expect(adminApi.fetchAdminUsersPage).toHaveBeenCalledWith(
     { role: "PHOTOGRAPHER", status: "rejected", q: undefined, offset: 0, limit: 50 }, expect.anything());
   expect(screen.getByRole("button", { name: /^Rejected/ })).toHaveAttribute("aria-pressed", "true");
   expect(within(card.closest("a")!).getByText("Rejected")).toBeInTheDocument();
@@ -79,18 +79,31 @@ it("says so when no photographer is rejected", async () => {
   mount();
   // Reject saves the profile as incomplete today; only older rows carry "rejected".
   expect(await screen.findByText("No rejected photographers. A profile rejected now goes back to Incomplete.")).toBeInTheDocument();
+  // The URL asks for the tab, so it stays even with nothing in it.
+  expect(screen.getByRole("button", { name: /^Rejected/ })).toHaveAttribute("aria-pressed", "true");
 });
 
-it("shows tab counts from the KPIs, and none where no KPI fits", async () => {
+it("shows the Pending and Approved counts from the KPIs, not the suspended KPI", async () => {
   vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({ pendingVerifications: 3, approvedPhotographers: 12, suspended: 9 } as adminApi.AdminKpis);
   vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([adminUser]));
   mount();
   await waitFor(() => expect(screen.getByRole("button", { name: /^Pending/ })).toHaveTextContent("Pending3"));
   expect(screen.getByRole("button", { name: /^Approved/ })).toHaveTextContent("Approved12");
-  // The suspended KPI counts runners and admins too, so this photographers tab shows no count.
-  expect(screen.getByRole("button", { name: /^Suspended/ })).toHaveTextContent(/^Suspended$/);
-  expect(screen.getByRole("button", { name: /^Incomplete/ })).toHaveTextContent(/^Incomplete$/);
-  expect(screen.getByRole("button", { name: /^Rejected/ })).toHaveTextContent(/^Rejected$/);
+  // The suspended KPI counts runners and admins too, so this tab counts from the photographers list (1 here).
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Suspended/ })).toHaveTextContent(/^Suspended1$/));
+});
+
+it("counts every tab, the KPIs for Pending and Approved and the list totals for the rest, and hides an empty Rejected tab", async () => {
+  vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({ pendingVerifications: 3, approvedPhotographers: 12, suspended: 9 } as adminApi.AdminKpis);
+  const totals: Record<string, number> = { incomplete: 1, rejected: 0, suspended: 2 };
+  vi.mocked(adminApi.fetchAdminUsersPage).mockImplementation(async (args) =>
+    args.status && args.status in totals ? page([], totals[args.status]) : page([adminUser]));
+  mount();
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Incomplete/ })).toHaveTextContent("Incomplete1"));
+  expect(screen.getByRole("button", { name: /^Suspended/ })).toHaveTextContent("Suspended2");
+  expect(screen.getByRole("button", { name: /^Pending/ })).toHaveTextContent("Pending3");
+  expect(screen.queryByRole("button", { name: /^Rejected/ })).not.toBeInTheDocument();
+  expect(adminApi.fetchAdminUsersPage).toHaveBeenCalledWith({ role: "PHOTOGRAPHER", status: "incomplete", offset: 0, limit: 1 }, expect.anything());
 });
 
 it("links a photographer with no handle by user id", async () => {
@@ -100,8 +113,10 @@ it("links a photographer with no handle by user id", async () => {
 });
 
 it("pages with Load more", async () => {
-  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValueOnce(page([adminUser], 51))
-    .mockResolvedValueOnce({ items: [{ ...adminUser, userId: "photographer-2", brandName: "Second Studio" }], total: 51, offset: 1, limit: 50 });
+  // limit=1 calls are the tab counts; the list pages by 50.
+  vi.mocked(adminApi.fetchAdminUsersPage).mockImplementation(async (args) => args.limit === 1 ? page([], 0)
+    : args.offset ? { items: [{ ...adminUser, userId: "photographer-2", brandName: "Second Studio" }], total: 51, offset: 1, limit: 50 }
+    : page([adminUser], 51));
   mount();
   await screen.findByText("Test Studio");
   await userEvent.click(screen.getByRole("button", { name: "Load more" }));

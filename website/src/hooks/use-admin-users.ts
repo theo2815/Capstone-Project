@@ -52,6 +52,19 @@ export function useAdminPhotographersPage(status: AdminUserStatusFilter, q: stri
   });
 }
 
+// FT-39: one limit=1 request per tab, read for its total. Its key[3] is not one the user mutations patch
+// as a list, and the owner prefix means their refresh refetches it.
+export function useAdminPhotographerCount(status: AdminUserStatusFilter): number | undefined {
+  const user = useAuthStore((s) => s.user);
+  return useQuery({
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), "photographer-count", status],
+    queryFn: ({ signal }) => fetchAdminUsersPage({ role: "PHOTOGRAPHER", status, offset: 0, limit: 1 }, signal),
+    enabled: user?.role === "ADMIN",
+    staleTime: 30_000,
+    select: (page) => page.total,
+  }).data;
+}
+
 // AX-41: same owner prefix as the photographers list, so suspend and unsuspend refresh it.
 export function useAdminRunnersPage(q: string) {
   const user = useAuthStore((s) => s.user);

@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment, useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { CollapsibleReviewSlab } from "@/components/admin/admin-collapse";
@@ -46,6 +47,15 @@ export default function AdminPhotographerDetailPage() {
   const handle = (raw ?? "").trim().toLowerCase();
   const { view, loading, error, refetch } = useAdminPhotographerView(handle);
   const record = useAdminUserRecord(view?.row.userId ?? null);
+  const titleName = view && !view.row.handle
+    ? view.effectiveSettings?.brandName?.trim() || view.row.brandName || view.row.name
+    : null;
+  // A profile with no handle is opened by user id, which the layout's title would show; use the name.
+  // Spells out the admin layout's title template, which a client page cannot read.
+  const titleUserId = view?.row.userId;
+  useEffect(() => {
+    if (titleName) document.title = `${titleName} · Admin | QuickPitik`;
+  }, [titleName, titleUserId]);
 
   if (loading && !view) {
     return (
@@ -102,6 +112,7 @@ export default function AdminPhotographerDetailPage() {
         brandColor={effectiveSettings?.brandColor}
         avatarUrl={effectiveSettings?.avatarUrl ?? row.avatarUrl ?? null}
         record={record.data ?? null}
+        pending={row.verificationStatus === "pending" && row.suspendedAt === null}
       />
 
       {/* Actions come first in the DOM, so a phone reaches them before the eight sections; lg moves them to the side. */}
@@ -148,6 +159,7 @@ function Hero({
   brandColor,
   avatarUrl,
   record,
+  pending,
 }: {
   cover: CoverSource;
   displayName: string;
@@ -161,12 +173,22 @@ function Hero({
   brandColor?: EffectivePhotographerSettings["brandColor"];
   avatarUrl: string | null;
   record: AdminPhotographerRecord | null;
+  pending: boolean;
 }) {
+  const parts: ReactNode[] = [
+    handle ? `@${handle}` : "No handle yet",
+    <>member since <span className="tnum">{sentenceCaseDate(formatMemberSince(memberSince))}</span></>,
+    region?.trim() || "Region not set",
+    city.trim() || null,
+    <><span className="tnum">{decisionCount}</span> actions on file</>,
+  ].filter(Boolean);
   const brandHex =
     brandColor && brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
   return (
     <header className="mt-4 pb-8 md:pb-12 border-b border-line">
-      <div className="relative bg-bone-deep border border-line rounded-2xl aspect-[16/7] md:aspect-[16/5] overflow-hidden">
+      {/* No image: a short band, so the actions are not pushed off the first screen. */}
+      <div className={cn("relative bg-bone-deep border border-line rounded-2xl overflow-hidden",
+        cover.kind === "image" ? "aspect-[16/7] md:aspect-[16/5]" : "h-20 md:h-28")}>
         {cover.kind === "image" ? (
           // eslint-disable-next-line @next/next/no-img-element -- data URL preview; backend serves signed S3 URL.
           <img
@@ -210,10 +232,13 @@ function Hero({
             <AdminStatusPill label={statusLabel} tone={statusTone} />
           </div>
           <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl break-words">
-            {handle ? `@${handle}` : "No handle yet"} · member since{" "}
-            <span className="tnum">{sentenceCaseDate(formatMemberSince(memberSince))}</span> ·{" "}
-            {region ?? "Region not set"} · {city} · <span className="tnum">{decisionCount}</span> actions on file
+            {parts.map((part, i) => <Fragment key={i}>{i > 0 && " · "}{part}</Fragment>)}
           </p>
+          {pending && (
+            <Link href={`${ROUTES.ADMIN_INBOX}?type=verifications`} className={REVIEW_LINK}>
+              Review in Verifications →
+            </Link>
+          )}
         </div>
       </div>
       {/* PD8: what an admin weighs before acting; hidden until the record loads (an older backend has none). */}
@@ -225,6 +250,11 @@ function Hero({
               {record.sellerDetailsStatus
                 ? <SellerStatusPill reviewState={record.sellerDetailsStatus} />
                 : <span className="text-sm text-ink">Not submitted</span>}
+              {record.sellerDetailsStatus === "manual_review" && (
+                <Link href={`${ROUTES.ADMIN_INBOX}?type=seller-details`} className={cn(REVIEW_LINK, "ml-3")}>
+                  Review their ID check →
+                </Link>
+              )}
             </dd>
           </div>
           <div>
@@ -240,6 +270,8 @@ function Hero({
     </header>
   );
 }
+
+const REVIEW_LINK = "inline-flex min-h-[44px] items-center font-sans text-sm text-ink underline decoration-line-strong underline-offset-4 hover:decoration-fresh";
 
 /* ─────────────── COMPLETENESS ─────────────── */
 
@@ -259,7 +291,8 @@ function CompletenessSlab({
       id="completeness"
       number="01"
       title="Completeness"
-      caption="Settings checklist"
+      caption="What the photographer has filled in"
+      defaultOpen
       trailing={`${filled}/${total} fields`}
     >
       <CompletenessSection snapshot={effectiveSnapshot} />
