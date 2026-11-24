@@ -32,6 +32,7 @@ export default function AdminSalesPage() {
       <Header totalSales={kpis?.totalSalesCount} />
 
       <Slab
+        titleStyle="heading"
         id="kpis"
         number="01"
         title="Money"
@@ -85,6 +86,7 @@ export default function AdminSalesPage() {
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="trend"
         number="02"
         title="Trend"
@@ -94,6 +96,7 @@ export default function AdminSalesPage() {
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="performers"
         number="03"
         title="Top performers"
@@ -103,6 +106,7 @@ export default function AdminSalesPage() {
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="by-event"
         number="04"
         title="Sales by event"
@@ -112,6 +116,7 @@ export default function AdminSalesPage() {
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="refunds"
         number="05"
         title="Refund pulse"

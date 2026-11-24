@@ -453,6 +453,7 @@ function FlagSlab({
   const noun = totalCount === 1 ? "flag" : "flags";
   return (
     <Slab
+      titleStyle="heading"
       id={id}
       number={number}
       title={title}

@@ -336,6 +336,7 @@ export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: Reac
       )}
       {showError && <LoadError what="the verifications" onRetry={() => void refetch()} className="text-sm text-error" />}
       <Slab
+        titleStyle="heading"
         id="open-queue"
         number="01"
         title="Open queue"
@@ -377,6 +378,7 @@ export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: Reac
       </Slab>
 
       <Slab
+        titleStyle="heading"
         id="incomplete"
         number="02"
         title="Incomplete"
@@ -431,7 +433,7 @@ export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: Reac
 
       {afterIncomplete}
 
-      <Slab id="recent-decisions" number={afterIncomplete ? "04" : "03"} title="Decision history">
+      <Slab titleStyle="heading" id="recent-decisions" number={afterIncomplete ? "04" : "03"} title="Decision history">
         <AdminDecisionsTimeline />
       </Slab>
 
