@@ -276,7 +276,7 @@ export function VerificationsQueue() {
     if (!failed.length) setBulkRejectOpen(false);
     const failedNames = failed.map((id) => { const row = byId.get(id); return row ? row.brandName ?? row.name : id; }).join(", ");
     if (count) showToast({
-      kind: failed.length ? "error" : "info",
+      kind: failed.length ? "error" : "success",
       message: failed.length ? `${count} of ${ids.length} sent back. Not sent back, still ticked: ${failedNames}.` : `Sent back · ${count} ${count === 1 ? "photographer" : "photographers"}`,
     });
     return !failed.length;
@@ -288,7 +288,7 @@ export function VerificationsQueue() {
       ownDecisionRef.current = row.userId;
       const ok = await reject(row.userId, reason, rejectRevisions[row.userId]);
       if (ok) {
-        showToast({ kind: "info", message: `Sent back · ${row.brandName ?? row.name}` });
+        showToast({ kind: "success", message: `Sent back · ${row.brandName ?? row.name}` });
         setDrawerRejectOpen(false); setRowId("");
       }
       return ok;

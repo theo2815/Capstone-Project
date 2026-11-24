@@ -1,10 +1,11 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type { Dispute } from "@/lib/admin-disputes";
 import { useAuthStore } from "@/store/auth-store";
+import { useToastStore } from "@/store/toast-store";
 import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
 import { admin, dispute } from "@/test/fixtures/admin";
 import { DisputesQueue } from "./disputes-queue";
@@ -336,4 +337,77 @@ it("a line under the view tabs says what each tab means", () => {
   seed([dispute]);
   renderQueue();
   expect(screen.getByText("Needs you: waiting for your decision. Overdue: past the due date on the dispute. Refund run: approved QR Ph refunds you still have to pay in PayMongo.")).toBeInTheDocument();
+});
+
+// FT-24 (C-39, C-60, B-40): a decided dispute leaves the drawer, and the toast says where it went.
+describe("after a decision", () => {
+  const denyReasons = { items: [{ code: "preference", label: "Doesn't like how it looks", runnerText: "The photo arrived as shown.", noteRequired: false }], total: 1 };
+  // The server answers the decision with `after`, and its lists then hold `after`.
+  function serve(after: Dispute) {
+    vi.mocked(api.get).mockImplementation(async (path) => {
+      if (path === "/admin/disputes/deny-reasons") return denyReasons;
+      if (path.startsWith("/admin/disputes?")) return page([after]);
+      if (path === "/admin/kpis") return fixtures.kpis;
+      throw new Error(`unexpected GET ${path}`);
+    });
+    vi.spyOn(api, "post").mockResolvedValueOnce(after);
+  }
+  const lastToast = () => useToastStore.getState().toasts.at(-1);
+  beforeEach(() => useToastStore.getState().clear());
+
+  async function openDrawer(d: Dispute) {
+    seed([d]);
+    fixtures.search = `row=${d.id}`;
+    renderQueue();
+    return screen.findByRole("dialog");
+  }
+
+  async function approve(drawer: HTMLElement, user: ReturnType<typeof userEvent.setup>) {
+    await user.click(within(drawer).getByRole("button", { name: "Approve refund…" }));
+    await user.click(within(screen.getByRole("dialog", { name: `Approve refund · ${dispute.id}` })).getByRole("button", { name: "Review refund" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Confirm refund" })).getByRole("button", { name: "Confirm refund" }));
+  }
+
+  it("after Deny the drawer closes and the toast names the Closed tab", async () => {
+    const user = userEvent.setup();
+    serve({ ...dispute, status: "denied" });
+    const drawer = await openDrawer(dispute);
+    await user.click(within(drawer).getByRole("button", { name: "Deny…" }));
+    const dialog = screen.getByRole("dialog", { name: `Deny ${dispute.id}` });
+    await user.click(await within(dialog).findByRole("radio", { name: /Doesn't like/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Deny claim" }));
+    await waitFor(() => expect(fixtures.router.replace).toHaveBeenCalledWith("/admin/disputes", { scroll: false }));
+    expect(lastToast()).toMatchObject({ kind: "success", message: "Denied. The runner was sent your reason. It is now under Closed." });
+  });
+
+  it("after Escalate the drawer stays open and the toast says it stays under Needs you", async () => {
+    const user = userEvent.setup();
+    serve({ ...dispute, status: "escalated", attention: "escalated" });
+    const drawer = await openDrawer(dispute);
+    await user.click(within(drawer).getByRole("button", { name: "Escalate…" }));
+    await user.click(within(screen.getByRole("dialog", { name: `Escalate ${dispute.id}` })).getByRole("button", { name: "Escalate" }));
+    await waitFor(() => expect(lastToast()).toMatchObject({ kind: "success", message: "Escalated. It stays under Needs you." }));
+    expect(fixtures.router.replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent(dispute.id);
+  });
+
+  it("after an approval that finished the refund the drawer closes", async () => {
+    const user = userEvent.setup();
+    serve({ ...dispute, status: "resolved", resolution: "refund_full", refundAmount: 100 });
+    const drawer = await openDrawer(dispute);
+    await approve(drawer, user);
+    await waitFor(() => expect(fixtures.router.replace).toHaveBeenCalledWith("/admin/disputes", { scroll: false }));
+    expect(lastToast()).toMatchObject({ kind: "success", message: "Refunded ₱100.00 · dispute-1" });
+  });
+
+  it("after a QR Ph approval the drawer stays open with the refund panel", async () => {
+    const user = userEvent.setup();
+    const qrph: Dispute = { ...dispute, orderSnapshot: { ...dispute.orderSnapshot, paymentMethod: "qrph" } };
+    serve({ ...qrph, status: "escalated", resolution: "refund_full", refundAmount: 100, refundStatus: "manual_review" });
+    const drawer = await openDrawer(qrph);
+    await approve(drawer, user);
+    await waitFor(() => expect(lastToast()).toMatchObject({ kind: "success", message: "Refund approved. Next, send the runner the refund link." }));
+    expect(await within(screen.getByRole("dialog")).findByLabelText("Refund link")).toBeInTheDocument();
+    expect(fixtures.router.replace).not.toHaveBeenCalled();
+  });
 });
