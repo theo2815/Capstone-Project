@@ -89,7 +89,9 @@ export function AdminDisputeActionAside({
   const refundProblem = dispute.attention === "refund_problem" && dispute.refundStatus !== "manual_review";
   // A stuck refund is still in flight: the server refuses every decision until PayMongo answers (F4).
   const refundStuck = refundProblem && !refundFailed;
-  const isOpen = (dispute.status === "open" || isEscalated || refundFailed) && !refundStuck;
+  // Under 24 hours in flight the server refuses Escalate and Deny, and Approve only returns the same refund (G5).
+  const refundInFlight = dispute.attention === "refund_in_progress";
+  const isOpen = (dispute.status === "open" || isEscalated || refundFailed) && !refundStuck && !refundInFlight;
 
   function handleContinueResolve(args: PendingResolve) {
     if (submitting) return;
@@ -173,7 +175,7 @@ export function AdminDisputeActionAside({
     </>
   );
   // The server escalates open disputes only.
-  const escalateBtn = dispute.status === "open" && !refundStuck && (
+  const escalateBtn = dispute.status === "open" && !refundStuck && !refundInFlight && (
     <button
       type="button"
       onClick={() => setEscalateOpen(true)}
@@ -195,9 +197,13 @@ export function AdminDisputeActionAside({
       </Kicker>
       {submitting && <p role="status">{pendingAction(dispute.id)}</p>}
       <div className="mt-5 space-y-3">
-        {/* Same order as every footer: Escalate, Deny, then the green Approve refund last. */}
-        {!body && escalateBtn}
-        {!body && approveDeny}
+        {/* Same order as every footer: Escalate, Deny, then the green Approve refund last. One row when they fit. */}
+        {!body && (escalateBtn || approveDeny) && (
+          <div className="flex flex-wrap gap-2 [&>button]:w-auto [&>button]:flex-auto">
+            {escalateBtn}
+            {approveDeny}
+          </div>
+        )}
         {isOpen && dispute.refundable === false && dispute.refundBlockedMessage && (
           <p className="font-sans text-sm text-slate-soft">{dispute.refundBlockedMessage}</p>
         )}
@@ -217,7 +223,9 @@ export function AdminDisputeActionAside({
         {!isOpen && dispute.refundStatus === "manual_review" && <AdminRefundPanel key={dispute.id} dispute={dispute} onConfirmOpenChange={setPanelDialogOpen} />}
         {!isOpen && !refundProblem && dispute.refundStatus !== "manual_review" && (
           <p className="font-sans text-sm text-slate-soft">
-            This dispute is closed. No further actions are available.
+            {refundInFlight
+              ? "PayMongo is still processing this refund. Nothing to do yet: QuickPitik keeps checking by itself."
+              : "This dispute is closed. No further actions are available."}
           </p>
         )}
       </div>
@@ -270,7 +278,7 @@ export function AdminDisputeActionAside({
         onClose={() => setEscalateOpen(false)}
         onSubmit={handleEscalate}
         targetLabel={`Escalate ${dispute.id}`}
-        body="This marks the dispute as escalated and tells the runner and the photographer it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards."
+        body="This marks the dispute as escalated and tells the photographer, and the runner if they still have an account, that it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards."
       />
     </aside>
     {body}

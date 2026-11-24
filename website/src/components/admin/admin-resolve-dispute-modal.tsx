@@ -211,7 +211,8 @@ export function AdminResolveDisputeModal({
 
       <AdminTextarea
         id="resolve-note"
-        label="Reasoning (required, max 500)"
+        label="Note (required, max 500)"
+        hint="The runner sees this note on their order once the refund is finished. The photographer does not. It is also kept in the activity log."
         value={note}
         onChange={setNote}
         maxLength={500}
