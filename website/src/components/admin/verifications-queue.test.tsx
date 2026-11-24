@@ -46,6 +46,19 @@ it("the row opens through its title button, and the checkbox only selects", asyn
   expect(navigation.replace).toHaveBeenCalledWith(expect.stringContaining("row=photographer-1"), expect.anything());
 });
 
+it("FT-41: a slot renders between Incomplete and Decision history, which is then 04; without one it stays 03", () => {
+  client.setQueryData(key, [adminUser]);
+  const view = render(<QueryClientProvider client={client}><VerificationsQueue afterIncomplete={<section id="slot" />} /></QueryClientProvider>);
+  const slot = document.getElementById("slot")!;
+  const history = document.getElementById("recent-decisions")!;
+  expect(document.getElementById("incomplete")!.compareDocumentPosition(slot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(slot.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(history).getByText("04")).toBeInTheDocument();
+  view.unmount();
+  mount();
+  expect(within(document.getElementById("recent-decisions")!).getByText("03")).toBeInTheDocument();
+});
+
 it("Incomplete leaves out suspended photographers and links each row to its photographer", () => {
   mount([incomplete, suspendedIncomplete]);
   const slab = document.getElementById("incomplete")!;

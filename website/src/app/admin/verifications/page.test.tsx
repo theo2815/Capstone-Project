@@ -8,9 +8,14 @@ import AdminVerificationsPage from "./page";
 import { expectSectionIntro } from "@/test/admin-section-intro";
 import { ROUTES } from "@/lib/constants";
 
-// The two queues have their own tests; here only the header counts matter.
-vi.mock("@/components/admin/verifications-queue", () => ({ VerificationsQueue: () => null }));
-vi.mock("@/components/admin/seller-details-queue", () => ({ SellerDetailsQueue: () => null }));
+// The two queues have their own tests; here the header counts and where Seller details sits.
+// The stand-in queue renders its slot where the real one does: after Incomplete, before Decision history.
+vi.mock("@/components/admin/verifications-queue", () => ({
+  VerificationsQueue: ({ afterIncomplete }: { afterIncomplete?: React.ReactNode }) => <>{afterIncomplete}<p>Decision history</p></>,
+}));
+vi.mock("@/components/admin/seller-details-queue", () => ({
+  SellerDetailsQueue: ({ number = "04" }: { number?: string }) => <p>{`Seller details ${number}`}</p>,
+}));
 
 beforeEach(() => { useAuthStore.getState().setUser(admin); });
 afterEach(() => { cleanup(); useAuthStore.getState().logout(); vi.restoreAllMocks(); });
@@ -33,6 +38,18 @@ it("an older backend without the seller-details count, or a failed list, never s
   await new Promise((r) => setTimeout(r, 50));
   expect(within(header).getByText("Verifications", { selector: "p" })).toBeInTheDocument();
   expect(header).not.toHaveTextContent(/\d/);
+});
+
+it("FT-41: Seller details renders before Decision history, numbered 03", () => {
+  mount({}, new Promise(() => {}));
+  const order = screen.getAllByText(/^(Seller details \d\d|Decision history)$/).map((el) => el.textContent);
+  expect(order).toEqual(["Seller details 03", "Decision history"]);
+});
+
+it("FT-41: the two header counts link to their lists", async () => {
+  const header = mount({ pendingVerifications: 1, pendingSellerDetails: 3 }, Promise.resolve({ items: [adminUser], total: 1 }));
+  expect(await within(header).findByRole("link", { name: "Seller details · 3 waiting" })).toHaveAttribute("href", "#seller-details");
+  expect(await within(header).findByRole("link", { name: "1 profiles waiting" })).toHaveAttribute("href", "#open-queue");
 });
 
 it("shows its guide intro, look-alike links and definitions without hover", () => {

@@ -11,7 +11,7 @@ import { ROUTES } from "@/lib/constants";
 
 vi.mock("@/lib/api-admin", async (orig) => ({
   ...(await orig<typeof import("@/lib/api-admin")>()),
-  fetchAdminPayouts: vi.fn(), fetchAdminPayoutCounts: vi.fn(),
+  fetchAdminPayouts: vi.fn(), fetchAdminPayoutCounts: vi.fn(), fetchAdminKpis: vi.fn(),
 }));
 // The header is under test; the queue and reports have their own tests.
 vi.mock("@/components/admin/payouts-queue", () => ({ PayoutsQueue: () => null }));
@@ -28,6 +28,7 @@ beforeEach(() => {
   vi.mocked(adminApi.fetchAdminPayouts).mockResolvedValue(
     Array.from({ length: 200 }, (_, i) => ({ ...payoutCycle, id: `new-${i}`, status: "paid" as const })),
   );
+  vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({} as adminApi.AdminKpis);
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.resetAllMocks(); });
 
@@ -61,6 +62,19 @@ it("shows no awaiting review count when the counts route is missing", async () =
   await new Promise((done) => setTimeout(done, 20));
   expect(header()).not.toHaveTextContent(/\d waiting/);
   expect(header()).toHaveTextContent("to approve");
+});
+
+it("FT-41: with 2 open reports the header ends with a link to the reports; with none it says nothing", async () => {
+  vi.mocked(adminApi.fetchAdminPayoutCounts).mockResolvedValue({ pending_review: 3 });
+  vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({ openPayoutReports: 2 } as adminApi.AdminKpis);
+  const view = mount();
+  expect(await screen.findByRole("link", { name: "2 reports open" })).toHaveAttribute("href", "#payout-reports");
+  expect(header()).toHaveTextContent(/ · 2 reports open$/);
+  view.unmount(); client.clear();
+  vi.mocked(adminApi.fetchAdminKpis).mockResolvedValue({ openPayoutReports: 0 } as adminApi.AdminKpis);
+  mount();
+  await vi.waitFor(() => expect(header()).toHaveTextContent("3 waiting"));
+  expect(header()).not.toHaveTextContent("reports open");
 });
 
 it("shows its guide intro, look-alike links and definitions without hover", () => {

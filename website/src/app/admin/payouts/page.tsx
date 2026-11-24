@@ -4,7 +4,9 @@ import {
   PayoutsQueue,
 } from "@/components/admin/payouts-queue";
 import { useAdminPayoutCounts, usePendingPayoutsTotal } from "@/hooks/use-admin-payouts";
+import { useAdminKpis } from "@/hooks/use-admin-data";
 import { PayoutReportsSection } from "@/components/admin/payout-reports-section";
+import Link from "next/link";
 import { Kicker } from "@/components/ui/kicker";
 import { formatPrice } from "@/lib/utils";
 import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
@@ -20,10 +22,11 @@ export default function AdminPayoutsPage() {
   // AX-30: the server's count, not a filter of one loaded page; none on a backend without the counts route.
   const pendingCount = useAdminPayoutCounts()?.pending_review;
   const totalPending = usePendingPayoutsTotal(pendingCount);
+  const openReports = useAdminKpis()?.openPayoutReports;
 
   return (
     <>
-      <Header pendingCount={pendingCount} totalPending={totalPending} />
+      <Header pendingCount={pendingCount} totalPending={totalPending} openReports={openReports} />
       <PayoutsQueue />
       <PayoutReportsSection />
     </>
@@ -33,9 +36,11 @@ export default function AdminPayoutsPage() {
 function Header({
   pendingCount,
   totalPending,
+  openReports,
 }: {
   pendingCount: number | undefined;
   totalPending: number | undefined;
+  openReports: number | undefined;
 }) {
   return (
     <header className="pb-8 md:pb-12 border-b border-line">
@@ -43,6 +48,10 @@ function Header({
         Payouts
         {pendingCount !== undefined && <> · <span className="tnum">{pendingCount}</span> waiting</>}
         {totalPending !== undefined && <> · <span className="tnum">{formatPrice(totalPending)}</span> to approve</>}
+        {/* C-29 (W41.1): reports sit below the whole queue, so the header points at them. */}
+        {!!openReports && (
+          <> · <Link href="#payout-reports" className="underline underline-offset-4 hover:text-ink"><span className="tnum">{openReports}</span> reports open</Link></>
+        )}
       </Kicker>
       <h1 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight leading-[1.05] text-ink mt-3">
         Payouts.
