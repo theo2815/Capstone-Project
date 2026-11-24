@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Slab } from "@/components/profile-shell";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
-import { AdminPayoutRow, PayoutFlagLine, PayoutTableHeader, payoutStatusTone } from "@/components/admin/admin-payout-row";
+import { AdminPayoutRow, gaveFirstApproval, OWN_FIRST_APPROVAL_NOTE, PayoutFlagLine, PayoutTableHeader, payoutStatusTone } from "@/components/admin/admin-payout-row";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminPayoutBulkBar } from "@/components/admin/admin-payout-bulk-bar";
 import { AdminPayoutBulkApproveModal } from "@/components/admin/admin-payout-bulk-approve-modal";
@@ -23,6 +23,7 @@ import { useAdminPayoutById, useAdminPayoutCounts, useAdminPayoutsPage, usePayou
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
+import { useAuthStore } from "@/store/auth-store";
 import {
   useDrawerVerbs,
   useQueueKeyboardNav,
@@ -70,6 +71,7 @@ type MarkPaidTarget = AdminPayoutCycle;
 export function PayoutsQueue() {
   const { approve, hold, markPaid, reject, markProcessing, markFailed, markReturned, bulkApprove, bulkHold, isPending, pendingAction } = usePayoutActions();
   const { showToast } = useToast();
+  const adminId = useAuthStore((s) => s.user?.id);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
   // FT-16 (C-22): which payouts a bulk approve could not approve, and the server's reason for each.
@@ -283,10 +285,13 @@ export function PayoutsQueue() {
   async function handleConfirmSubmit() {
     if (!confirmTarget) return;
     const { kind, cycle } = confirmTarget;
-    const ok = await (kind === "approve" ? approve : markProcessing)(cycle.id);
-    if (!ok) return;
+    const result = await (kind === "approve" ? approve : markProcessing)(cycle.id);
+    if (!result) return;
     setConfirmTarget(null);
-    showToast({ kind: "success", message: `${kind === "approve" ? "Approval recorded" : "Processing"} · ${cycle.id}` });
+    // FT-23 (C-15): a first approval leaves the payout pending, waiting for a second admin (X1).
+    showToast({ kind: "success", message: kind === "processing" ? `Marked processing · ${cycle.id}`
+      : result !== true && result.status === "pending_review" ? `First approval recorded. A second admin must approve ${cycle.id}.`
+        : `Approved ${cycle.id}. Send the money, then mark it paid.` });
     // An approval closes its drawer; a processing payout stays actionable (mark paid / mark failed).
     if (kind === "approve" && openRow?.id === cycle.id) setRowId("");
   }
@@ -311,15 +316,14 @@ export function PayoutsQueue() {
     const ok = await fn(cycle.id, reason);
     if (ok) {
       setReasonTarget(null);
-      const label =
-        kind === "reject"
-          ? "Rejected"
-          : kind === "failed"
-            ? "Marked failed"
-            : "Marked returned";
+      // FT-23 (C-27): say who was told and where the money went (X2).
       showToast({
-        kind: kind === "reject" ? "info" : "success",
-        message: `${label} · ${cycle.id}`,
+        kind: "success",
+        message: kind === "reject"
+          ? "Rejected. The photographer was told, and the money is back in their balance."
+          : kind === "failed"
+            ? "Marked failed. The photographer was told, and the money is back in their balance."
+            : "Marked returned. The photographer was told to check their payout account.",
       });
       // All three land in a terminal state — close the drawer if it was open.
       if (openRow && openRow.id === cycle.id) setRowId("");
@@ -338,7 +342,7 @@ export function PayoutsQueue() {
       clearSelection();
       showToast({
         kind: "success",
-        message: `Approvals recorded · ${ids.length} payouts`,
+        message: `Approvals recorded for ${ids.length} ${ids.length === 1 ? "payout" : "payouts"}.`,
       });
     }
   }
@@ -359,8 +363,8 @@ export function PayoutsQueue() {
       if (ok) {
         setHoldTarget(null);
         showToast({
-          kind: "info",
-          message: `Held · ${target.payoutId}`,
+          kind: "success",
+          message: "On hold. The photographer was told why.",
         });
         // If the held cycle was the drawer's open row, close the drawer so
         // the queue state and the open detail don't drift apart.
@@ -379,8 +383,8 @@ export function PayoutsQueue() {
         setHoldTarget(null);
         clearSelection();
         showToast({
-          kind: "info",
-          message: `Held · ${target.payoutIds.length} payouts`,
+          kind: "success",
+          message: `${target.payoutIds.length} payouts on hold. The photographers were told why.`,
         });
       }
       return ok;
@@ -395,7 +399,7 @@ export function PayoutsQueue() {
       setMarkPaidTarget(null);
       showToast({
         kind: "success",
-        message: `Paid · ${target.id}`,
+        message: `Marked paid. The photographer was told, with reference ${reference}.`,
       });
       if (openRow && openRow.id === target.id) setRowId("");
     }
@@ -407,7 +411,7 @@ export function PayoutsQueue() {
       ? {
           E:
             (openRow.status === "pending_review" || openRow.status === "held") &&
-            !payoutActionsBlockedByHold(openRow)
+            !payoutActionsBlockedByHold(openRow) && !gaveFirstApproval(openRow, adminId)
               ? handleDrawerApprove
               : undefined,
           H:
@@ -587,6 +591,7 @@ export function PayoutsQueue() {
             <PayoutDrawerActions
               cycle={openRow}
               submitting={submitting}
+              ownApproval={gaveFirstApproval(openRow, adminId)}
               onApprove={handleDrawerApprove}
               onHold={handleDrawerHoldRequest}
               onMarkPaid={handleDrawerMarkPaidRequest}
@@ -762,6 +767,7 @@ function PayoutSubtitle({ cycle }: { cycle: AdminPayoutCycle }) {
 function PayoutDrawerActions({
   cycle,
   submitting,
+  ownApproval,
   onApprove,
   onHold,
   onMarkPaid,
@@ -772,6 +778,7 @@ function PayoutDrawerActions({
 }: {
   cycle: AdminPayoutCycle;
   submitting: boolean;
+  ownApproval: boolean;
   onApprove: () => void;
   onHold: () => void;
   onMarkPaid: () => void;
@@ -831,8 +838,11 @@ function PayoutDrawerActions({
           Mark paid…
         </button>
       )}
+      {(s === "pending_review" || s === "held") && ownApproval && (
+        <p id="payout-own-approval-note" className="font-sans text-sm text-slate">{OWN_FIRST_APPROVAL_NOTE}</p>
+      )}
       {(s === "pending_review" || s === "held") && (
-        <button type="button" disabled={blocked} onClick={onApprove} className={PRIMARY}>
+        <button type="button" disabled={blocked || ownApproval} aria-describedby={ownApproval ? "payout-own-approval-note" : undefined} onClick={onApprove} className={PRIMARY}>
           Approve
         </button>
       )}

@@ -91,6 +91,7 @@ it.each(["flag", "dispute", "payout", "report"])("%s does not turn an accepted c
   vi.spyOn(api, family === "report" ? "fetch" : "post").mockResolvedValue(family === "dispute" ? dispute : family === "payout" ? payoutCycle : report);
   vi.spyOn(client, "invalidateQueries").mockRejectedValue(new Error("Refresh unavailable"));
   const { result } = renderHook(() => useFamily(family), { wrapper });
-  await act(async () => { await expect(result.current.first()).resolves.toBe(true); });
+  // FT-23: payout approve resolves the updated payout, the other first actions resolve true.
+  await act(async () => { await expect(result.current.first()).resolves.toEqual(family === "payout" ? payoutCycle : true); });
   expect(useToastStore.getState().toasts.filter((toast) => toast.kind === "error")).toHaveLength(0);
 });
