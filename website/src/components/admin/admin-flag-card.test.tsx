@@ -6,7 +6,7 @@ import { canConfirmHold, canHide, type Flag } from "@/lib/admin-flags";
 import { AdminFlagCard, type FlagCardActions } from "./admin-flag-card";
 
 // The queue owns the action hook and modals; a lone card gets inert ones.
-const actions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onConfirm: vi.fn(async () => true) };
+const actions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onRestore: vi.fn(), onConfirm: vi.fn(async () => true) };
 
 // System flags (SystemFlagService) target events and photographers, not only photos.
 const base: Flag = {
@@ -89,11 +89,11 @@ it("a confirmed hold shows since when and offers no second confirm", () => {
 it("a relevance flag offers Resolve and both confirms say what happens to the hold and the photos", async () => {
   renderCard({ ...relevanceFlag, payoutHoldAt: "2026-11-12T03:00:00Z" });
   await userEvent.click(screen.getByRole("button", { name: "Resolve" }));
-  expect(screen.getByText("Ends the payout hold. Photos this flag hid stay hidden; you can restore them one by one.")).toBeInTheDocument();
+  expect(screen.getByText("Ends the payout hold. Photos this flag hid stay hidden; you can restore them one by one. If this flag holds the photographer's payouts and no other flag does, they are told the hold is lifted.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Confirm resolve" })).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-  expect(screen.getByText("False alarm. Ends the payout hold and puts back on sale every photo this flag hid.")).toBeInTheDocument();
+  expect(screen.getByText("False alarm. Ends the payout hold and puts back on sale every photo this flag hid. If this flag holds the photographer's payouts and no other flag does, they are told the hold is lifted.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Confirm dismiss" })).toBeInTheDocument();
 });
 
@@ -118,4 +118,16 @@ it("row values are not upper-cased, and the date is in sentence case", () => {
   renderCard(eventFlag);
   expect(screen.getByText("flag-9").closest(".uppercase")).toBeNull();
   expect(screen.getByText(/Nov \d\d · 2026/).closest(".uppercase")).toBeNull();
+});
+
+// FU-10 review: an inline "Confirm dismiss" left open must not survive the flag turning hidden (it would skip the Restore confirm).
+it("an open dismiss confirm goes away when the flag becomes hidden", async () => {
+  const photoFlag: Flag = { ...base, targetKind: "photo", targetId: "photo-9", photoId: "photo-9" };
+  const client = new QueryClient();
+  const { rerender } = render(<QueryClientProvider client={client}><AdminFlagCard flag={photoFlag} actions={actions} /></QueryClientProvider>);
+  await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.getByRole("button", { name: "Confirm dismiss" })).toBeInTheDocument();
+  rerender(<QueryClientProvider client={client}><AdminFlagCard flag={{ ...photoFlag, status: "hidden" }} actions={actions} /></QueryClientProvider>);
+  expect(screen.queryByRole("button", { name: "Confirm dismiss" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Restore photo & dismiss" })).toBeInTheDocument();
 });

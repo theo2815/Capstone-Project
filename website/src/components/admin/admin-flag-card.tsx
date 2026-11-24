@@ -34,6 +34,8 @@ export interface FlagCardActions {
   pendingAction: (flagId: string) => string | null;
   onHide: (flagId: string) => void;
   onEscalate: (flagId: string) => void;
+  /** Opens the queue's confirm before "Restore photo & dismiss" on a hidden flag (U10.5). */
+  onRestore: (flagId: string) => void;
   /** Runs a confirmed dismiss, hold or resolve; true when it went through. */
   onConfirm: (flagId: string, kind: FlagConfirmKind) => Promise<boolean>;
 }
@@ -91,7 +93,9 @@ export function AdminFlagCard({
 }: AdminFlagCardProps) {
   const submitting = actions.isPending(flag.id);
   // One inline confirm at a time: hold, resolve or dismiss.
-  const [confirm, setConfirm] = useState<FlagConfirmKind | null>(null);
+  const [picked, setConfirm] = useState<FlagConfirmKind | null>(null);
+  // A dismiss confirm opened before the flag turned hidden must not skip the Restore confirm (U10.5).
+  const confirm = picked === "dismiss" && flag.status === "hidden" ? null : picked;
   const confirmDismiss = confirm === "dismiss";
   const relevance = canResolve(flag);
   const toggleConfirm = (kind: FlagConfirmKind) => setConfirm((c) => (c === kind ? null : kind));
@@ -231,13 +235,13 @@ export function AdminFlagCard({
             <button
               type="button"
                 disabled={submitting}
-              onClick={() => toggleConfirm("dismiss")}
+              onClick={() => flag.status === "hidden" ? actions.onRestore(flag.id) : toggleConfirm("dismiss")}
               className={tertiaryBtn}
             >
-              {confirmDismiss
-                ? "Cancel"
-                : flag.status === "hidden"
-                  ? "Restore photo & dismiss"
+              {flag.status === "hidden"
+                ? "Restore photo & dismiss"
+                : confirmDismiss
+                  ? "Cancel"
                   : "Dismiss"}
             </button>
             {canEscalate(flag) && (
@@ -258,9 +262,7 @@ export function AdminFlagCard({
             <p className="font-sans text-sm text-ink-soft">
               {relevance || confirm === "hold"
                 ? relevanceConfirmText(confirm)
-                : flag.status === "hidden"
-                  ? "Reopen the photo for runners (unless another hidden flag still targets it) and mark this flag a false alarm."
-                  : "Close this flag as a false alarm. Nothing changes for the race or the photographer, and nobody is told. The dismissal is logged."}
+                : "Close this flag as a false alarm. Nothing changes for the race or the photographer, and nobody is told. The dismissal is logged."}
             </p>
             <button
               type="button"

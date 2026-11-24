@@ -7,6 +7,7 @@ import { Kicker } from "@/components/ui/kicker";
 import { AdminFlagCard, FlagStatusPill, type FlagCardActions } from "@/components/admin/admin-flag-card";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminFlagHideModal } from "@/components/admin/admin-flag-hide-modal";
+import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminEscalateModal } from "@/components/admin/admin-escalate-modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadError } from "@/components/ui/load-error";
@@ -53,12 +54,14 @@ const DONE_LABEL = {
   hold: "Payouts on hold",
   resolve: "Resolved",
 } as const;
+// U10.4: plain flags tell nobody on Dismiss (G14c); Photo Relevance flags keep "Dismissed".
+const DISMISSED_NOBODY_TOLD = "Dismissed. Nobody was told.";
 
 const secondaryBtn = `${BTN_SECONDARY} ${BTN_SIZE.sm}`;
 const tertiaryBtn = `${BTN_GHOST} ${BTN_SIZE.sm} px-3`;
 const dangerBtn = `${BTN_DANGER} ${BTN_SIZE.sm}`;
 
-type FlagModal = { kind: "hide" | "escalate" | null; id: string };
+type FlagModal = { kind: "hide" | "escalate" | "restore" | null; id: string };
 
 // Flags queue body — extracted from /admin/flags/page.tsx so the
 // universal /admin/inbox can render the same search-filtered four slabs.
@@ -119,9 +122,9 @@ export function FlagsQueue() {
   const dismissedTotal = dismissedList.total + resolvedList.total;
   const escalated = escalatedList.items;
 
-  const listRow = rowId
-    ? [openPage?.items ?? EMPTY_FLAGS, ...historyLists.map((l) => l.items)].flat().find((f) => f.id === rowId) ?? null
-    : null;
+  const findListed = (id: string) =>
+    [openPage?.items ?? EMPTY_FLAGS, ...historyLists.map((l) => l.items)].flat().find((f) => f.id === id) ?? null;
+  const listRow = rowId ? findListed(rowId) : null;
   // A flag past the loaded pages is read by id, so its link still opens.
   const rowQuery = useAdminFlagById(listRow ? "" : rowId);
   const openRow: Flag | null = listRow ?? rowQuery.data ?? null;
@@ -187,10 +190,11 @@ export function FlagsQueue() {
     verb: keyof typeof DONE_LABEL,
     id: string,
     action: () => Promise<boolean>,
+    doneLabel: string = DONE_LABEL[verb],
   ): Promise<boolean> {
     try {
       if (!(await action())) return false;
-      showToast({ kind: "success", message: `${DONE_LABEL[verb]} · ${id}` });
+      showToast({ kind: "success", message: `${doneLabel} · ${id}` });
       // A hold leaves the flag open: stay on it to hide the batch next.
       if (verb !== "hold" && id === rowId) setRowId("");
       return true;
@@ -208,7 +212,9 @@ export function FlagsQueue() {
   function confirmAction(id: string, kind: FlagConfirmKind) {
     if (kind === "hold") return runAction("hold", id, () => confirmHold(id));
     if (kind === "resolve") return runAction("resolve", id, () => resolve(id));
-    return runAction("dismiss", id, () => dismiss(id));
+    const target = openRow?.id === id ? openRow : findListed(id);
+    const plain = target !== null && !isRelevanceFlag(target);
+    return runAction("dismiss", id, () => dismiss(id), plain ? DISMISSED_NOBODY_TOLD : undefined);
   }
 
   const cardActions: FlagCardActions = {
@@ -216,12 +222,19 @@ export function FlagsQueue() {
     pendingAction,
     onHide: (id) => setModal({ kind: "hide", id }),
     onEscalate: (id) => setModal({ kind: "escalate", id }),
+    onRestore: (id) => setModal({ kind: "restore", id }),
     onConfirm: confirmAction,
   };
 
   async function handleHideSubmit(reason: string | null) {
     const { id } = modal;
     if (await runAction("hide", id, () => hide(id, reason))) closeModal();
+  }
+
+  // Only hidden flags reach this confirm, and a hidden flag is never a Photo Relevance flag (G14c).
+  async function handleRestoreConfirm() {
+    const { id } = modal;
+    if (await runAction("dismiss", id, () => dismiss(id), DISMISSED_NOBODY_TOLD)) closeModal();
   }
 
   async function handleEscalateSubmit(note: string | null) {
@@ -382,6 +395,7 @@ export function FlagsQueue() {
               }
               onConfirm={handleDrawerConfirm}
               onEscalate={() => cardActions.onEscalate(openRow.id)}
+              onRestore={() => cardActions.onRestore(openRow.id)}
             />
           }
         >
@@ -405,6 +419,18 @@ export function FlagsQueue() {
         targetLabel={`Escalate ${modal.id}`}
         body="Marks this flag as escalated so other admins can see it needs a second look. Nobody is told, nothing else changes, and you can still close it afterwards."
       />
+      <AdminConfirmModal
+        open={modal.kind === "restore"}
+        submitting={isPending(modal.id)}
+        onClose={closeModal}
+        onConfirm={() => void handleRestoreConfirm()}
+        title="Put this photo back on sale?"
+        confirmLabel="Restore photo & dismiss"
+      >
+        <p className="font-sans text-sm text-ink-soft">
+          This closes the flag as a false alarm and puts the photo back on sale, unless another flag still hides it. Nobody is told. A closed flag cannot be opened again.
+        </p>
+      </AdminConfirmModal>
     </>
   );
 }
@@ -515,6 +541,7 @@ function FlagDrawerActions({
   onToggleConfirm,
   onConfirm,
   onEscalate,
+  onRestore,
 }: {
   submitting: boolean;
   flag: Flag;
@@ -523,6 +550,7 @@ function FlagDrawerActions({
   onToggleConfirm: (kind: FlagConfirmKind) => void;
   onConfirm: () => void;
   onEscalate: () => void;
+  onRestore: () => void;
 }) {
   const relevance = isRelevanceFlag(flag);
   if (!canDismiss(flag)) {
@@ -533,7 +561,8 @@ function FlagDrawerActions({
     );
   }
 
-  if (confirm) {
+  // A dismiss confirm opened before the flag turned hidden must not skip the Restore confirm (U10.5).
+  if (confirm && !(confirm === "dismiss" && flag.status === "hidden")) {
     return (
       <>
         {(relevance || confirm === "hold") && (
@@ -557,9 +586,7 @@ function FlagDrawerActions({
             ? "Confirm hold"
             : confirm === "resolve"
               ? "Confirm resolve"
-              : flag.status === "hidden"
-                ? "Confirm restore"
-                : "Confirm dismiss"}
+              : "Confirm dismiss"}
         </button>
       </>
     );
@@ -587,7 +614,7 @@ function FlagDrawerActions({
       )}
       <button
         type="button" disabled={submitting}
-        onClick={() => onToggleConfirm("dismiss")}
+        onClick={() => flag.status === "hidden" ? onRestore() : onToggleConfirm("dismiss")}
         className={tertiaryBtn}
       >
         {flag.status === "hidden" ? "Restore photo & dismiss" : "Dismiss"}

@@ -94,9 +94,9 @@ export function relevanceConfirmText(kind: FlagConfirmKind): string {
     case "hold":
       return "Holds this photographer's payouts until you resolve or dismiss this flag. They are told in their inbox.";
     case "resolve":
-      return "Ends the payout hold. Photos this flag hid stay hidden; you can restore them one by one.";
+      return "Ends the payout hold. Photos this flag hid stay hidden; you can restore them one by one. If this flag holds the photographer's payouts and no other flag does, they are told the hold is lifted.";
     case "dismiss":
-      return "False alarm. Ends the payout hold and puts back on sale every photo this flag hid.";
+      return "False alarm. Ends the payout hold and puts back on sale every photo this flag hid. If this flag holds the photographer's payouts and no other flag does, they are told the hold is lifted.";
   }
 }
 
