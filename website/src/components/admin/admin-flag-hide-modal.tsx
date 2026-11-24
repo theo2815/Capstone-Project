@@ -74,18 +74,20 @@ export function AdminFlagHideModal({
           name="hide-reason"
           options={HIDE_REASONS}
           value={selectedReason}
-          onChange={setSelectedReason}
+          onChange={(reason) => { setSelectedReason(reason); setAttempted(false); }}
         />
       </AdminFormSection>
       <AdminTextarea
         id="hide-note"
         label={selectedReason === "other" ? "Note (required, max 280)" : "Note (optional, max 280)"}
+        hint="Seen by: admins only."
         error={attempted && noteMissing ? "Add a note: Other needs one." : null}
         value={note}
         onChange={setNote}
         maxLength={280}
         placeholder="Anything another admin should know"
       />
+      <p className="font-sans text-sm text-ink-soft">To undo, dismiss or resolve this flag: the photo goes back on sale unless another flag still hides it.</p>
       {!selectedReason && <p className="font-sans text-sm text-slate">Choose a reason to continue.</p>}
     </AdminFormModal>
   );

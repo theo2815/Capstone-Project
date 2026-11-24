@@ -16,7 +16,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: navigation.repl
 vi.mock("@/lib/constants", async (original) => ({ ...await original<object>(), ADMIN_FLAGS_ENABLED: true }));
 const flag: Flag = { id: "flag-1", photoId: "photo-1", eventId: "event-1", eventName: "Race", photographerHandle: "photographer", reportedBy: "runner", reason: "low_quality", note: "Blurry", status: "open", reportedAt: "2026-09-10T00:00:00Z", reviewedAt: null, reviewedBy: null, reviewerNote: null, photoSnapshot: { alt: "Runner", kmMark: null, bib: null, thumbnailUrl: null }, targetKind: "photo", targetId: "photo-1", payoutHoldAt: null };
 const relevanceFlag: Flag = { ...flag, id: "flag-2", photoId: null, reason: "batch_relevance_low", note: "event e1: copy 5/8", targetKind: "user", targetId: "user-1" };
-const inertActions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onConfirm: vi.fn(async () => true) };
+const inertActions: FlagCardActions = { isPending: () => false, pendingAction: () => null, onHide: vi.fn(), onEscalate: vi.fn(), onRestore: vi.fn(), onConfirm: vi.fn(async () => true) };
 // The flag list honours `status`, as the server does: the history slabs ask by status (AX-33).
 const serveFlags = (...flags: Flag[]) => vi.mocked(api.get).mockImplementation((async (url: string) => {
   if (url.includes("/relevance")) return { flagId: "flag-2", payoutHoldAt: null, batches: [] };
@@ -145,6 +145,38 @@ it.each([
   await waitFor(() => expect(screen.queryByRole("button", { name: confirm })).not.toBeInTheDocument());
   expect(post).toHaveBeenLastCalledWith(url, { resolutionNote: null });
   expect(useToastStore.getState().toasts.some((t) => t.kind === "success")).toBe(true);
+  // FU-10 (U10.4): a Photo Relevance flag keeps the plain "Dismissed" toast.
+  if (open === "Dismiss") expect(useToastStore.getState().toasts.some((t) => t.message === "Dismissed · flag-2")).toBe(true);
+});
+
+// FU-10 (U10.4): dismissing any other flag says nobody was told.
+it("dismissing a plain flag says nobody was told", async () => {
+  const user = userEvent.setup();
+  const post = vi.spyOn(api, "post").mockResolvedValue({ ...flag, status: "dismissed" });
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
+  await user.click(await screen.findByRole("button", { name: "Dismiss" }));
+  await user.click(screen.getByRole("button", { name: "Confirm dismiss" }));
+  await waitFor(() => expect(post).toHaveBeenLastCalledWith("/admin/flags/flag-1/dismiss", { resolutionNote: null }));
+  await waitFor(() => expect(useToastStore.getState().toasts.some((t) => t.message === "Dismissed. Nobody was told. · flag-1")).toBe(true));
+});
+
+// FU-10 (U10.5, O17): Restore on a hidden flag asks first, in a dialog, from the card and the drawer.
+it.each(["card", "drawer"])("%s Restore photo & dismiss opens a confirm before anything is sent", async (surface) => {
+  const user = userEvent.setup();
+  const hidden: Flag = { ...flag, status: "hidden", reviewedAt: "2026-09-11T00:00:00Z" };
+  serveFlags(hidden);
+  const post = vi.spyOn(api, "post").mockResolvedValue({ ...hidden, status: "dismissed" });
+  render(<QueryClientProvider client={client}><FlagsQueue /></QueryClientProvider>);
+  if (surface === "drawer") await user.click(await screen.findByRole("button", { description: "flag-1" }));
+  const scope = surface === "drawer" ? within(await screen.findByRole("dialog")) : screen;
+  await user.click(await scope.findByRole("button", { name: "Restore photo & dismiss" }));
+  const dialog = screen.getByRole("dialog", { name: "Put this photo back on sale?" });
+  expect(within(dialog).getByText("This closes the flag as a false alarm and puts the photo back on sale, unless another flag still hides it. Nobody is told. A closed flag cannot be opened again.")).toBeInTheDocument();
+  expect(post).not.toHaveBeenCalled();
+  await user.click(within(dialog).getByRole("button", { name: "Restore photo & dismiss" }));
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/admin/flags/flag-1/dismiss", { resolutionNote: null }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Put this photo back on sale?" })).not.toBeInTheDocument());
+  expect(useToastStore.getState().toasts.some((t) => t.message === "Dismissed. Nobody was told. · flag-1")).toBe(true);
 });
 
 it("buttons inside a clickable card do not open it or swallow other keys", async () => {
@@ -193,4 +225,18 @@ it("the Hide dialog says why Hide photo is off until a reason is picked", async 
   expect(screen.getByText("Choose a reason to continue.")).toBeInTheDocument();
   await user.click(screen.getByRole("radio", { name: "Violates platform policy" }));
   expect(screen.queryByText("Choose a reason to continue.")).not.toBeInTheDocument();
+});
+
+// FU-10 (U10.2, U10.3; FT-11): the Hide dialog says how to undo, who sees the note, and drops a stale note error.
+it("the Hide dialog says how to undo it and who sees the note, and its note error clears on a new reason", async () => {
+  const user = userEvent.setup();
+  render(<AdminFlagHideModal open onClose={() => {}} onSubmit={() => {}} flagId="flag-1" />);
+  expect(screen.getByText("To undo, dismiss or resolve this flag: the photo goes back on sale unless another flag still hides it.")).toBeInTheDocument();
+  expect(screen.getByRole("textbox")).toHaveAccessibleDescription("Seen by: admins only.");
+  await user.click(screen.getByRole("radio", { name: "Other (see note)" }));
+  await user.click(screen.getByRole("button", { name: "Hide photo" }));
+  expect(screen.getByText("Add a note: Other needs one.")).toBeInTheDocument();
+  await user.click(screen.getByRole("radio", { name: "Violates platform policy" }));
+  await user.click(screen.getByRole("radio", { name: "Other (see note)" }));
+  expect(screen.queryByText("Add a note: Other needs one.")).not.toBeInTheDocument();
 });
