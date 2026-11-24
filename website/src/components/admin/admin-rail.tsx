@@ -204,9 +204,9 @@ export function AdminRail() {
   const accountRoutes = ADMIN_ROUTES.filter((r) => r.group === "account");
 
   return (
-    <aside className="hidden md:flex md:flex-col md:sticky md:top-20 md:self-start pt-6 pb-6 md:pb-4 md:max-h-[calc(100vh-5rem)]">
+    <aside className="hidden lg:flex lg:flex-col lg:sticky lg:top-20 lg:self-start pt-6 pb-6 lg:pb-4 lg:max-h-[calc(100vh-5rem)]">
       {/* No "Admin" kicker: the header names the area, and all 14 rows must fit at 1366x768. Only the list scrolls, so the footer stays in view. */}
-      <nav aria-label="Admin sections" className="space-y-4 md:flex-1 md:min-h-0 md:overflow-y-auto">
+      <nav aria-label="Admin sections" className="space-y-4 lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
         <div>
           <Kicker
             as="p"
@@ -312,7 +312,7 @@ export function AdminRail() {
             type="button"
             onClick={toggleTipsDisabled}
             aria-pressed={tipsDisabled}
-            className="hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+            className="inline-flex min-h-11 -my-1.5 items-center hover:text-ink transition-colors rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
           >
             {tipsDisabled ? "Show tips" : "Hide tips"}
           </Kicker>
@@ -410,7 +410,7 @@ function RailRow({
           <span
             aria-hidden="true"
             className={cn(
-              "font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px] shrink-0 transition-colors",
+              "font-mono tnum text-[14px] min-[400px]:text-[15px] lg:text-[13px] shrink-0 transition-colors",
               isActive
                 ? "text-fresh"
                 : "text-slate-soft group-hover:text-slate",
@@ -431,7 +431,7 @@ function RailRow({
             {showCount && (
               <span
                 className={cn(
-                  "font-mono tnum text-[14px] min-[400px]:text-[15px] md:text-[13px]",
+                  "font-mono tnum text-[14px] min-[400px]:text-[15px] lg:text-[13px]",
                   isActive ? "text-ink" : "text-slate",
                 )}
                 aria-label={`${count} open`}

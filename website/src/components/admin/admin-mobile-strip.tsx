@@ -13,8 +13,8 @@ import { useAdminPaletteStore } from "@/store/admin-palette-store";
 import { cn } from "@/lib/utils";
 
 // Mobile-only chip strip for /admin/*. The sticky wrapper lives in
-// <AdminShell> so the strip pins under SiteHeader. Renders nothing ≥ md
-// (parent has `md:hidden`). Order: Search (opens the palette), the open
+// <AdminShell> so the strip pins under SiteHeader. Renders nothing ≥ lg
+// (parent has `lg:hidden`): tablets get the strip too. Order: Search (opens the palette), the open
 // total, the queue rows, a divider, then the other rows.
 export function AdminMobileStrip() {
   const pathname = usePathname();
@@ -26,7 +26,7 @@ export function AdminMobileStrip() {
   return (
     <div className="bg-bone/90 backdrop-blur-md border-b border-line">
       <nav aria-label="Admin sections" className="max-w-7xl mx-auto">
-        <ul className="flex items-center gap-2 overflow-x-auto px-6 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none] after:content-[''] after:w-[15%] after:shrink-0 md:after:hidden">
+        <ul className="flex items-center gap-2 overflow-x-auto px-6 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_85%,transparent)] lg:[mask-image:none] after:content-[''] after:w-[15%] after:shrink-0 lg:after:hidden">
           <li className="shrink-0">
             <button
               type="button"
