@@ -80,7 +80,7 @@ export function AdminMobileStrip() {
                   />
                   {route.label}
                   {count !== null && count > 0 && (
-                    <span className="tnum" aria-label={`${count} open`}>
+                    <span className="tnum" aria-label={`${count} waiting`}>
                       {count}
                     </span>
                   )}

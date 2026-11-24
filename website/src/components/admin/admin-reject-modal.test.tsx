@@ -63,6 +63,13 @@ it("FT-13: the send-back and reset intros say what state the profile is in after
   setup();
   expect(screen.getByRole("dialog")).toHaveTextContent("Ana gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.");
   cleanup();
+  // FU-6 (U6.2): a send-back of two or more speaks of them all; one keeps W13.3.
+  render(<AdminRejectModal open onClose={() => {}} onSubmit={async () => true} photographerName="2 photographers" count={2} />);
+  expect(screen.getByRole("dialog")).toHaveTextContent("2 photographers get your reason in their inbox. Their profiles go back to Incomplete so they can fix them. When they send them again, they wait here for your approval.");
+  cleanup();
+  render(<AdminRejectModal open onClose={() => {}} onSubmit={async () => true} photographerName="1 photographer" count={1} />);
+  expect(screen.getByRole("dialog")).toHaveTextContent("1 photographer gets your reason in their inbox. Their profile goes back to Incomplete so they can fix it. When they send it again, it waits here for your approval.");
+  cleanup();
   render(<AdminResetVerificationModal open onClose={() => {}} onSubmit={async () => true} photographerName="Ana" />);
   expect(screen.getByRole("dialog")).toHaveTextContent("Ana goes back to Incomplete and gets your reason in their inbox. Until they send their profile again and you approve it, they cannot upload and their public page does not open. Photos already sold keep working.");
 });
