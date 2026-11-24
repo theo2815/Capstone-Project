@@ -24,8 +24,8 @@ it("shows one chip per queue, in the shared order, with its KPI count", () => {
   render(<AdminInboxFilterChips value="verifications" />);
   const chips = screen.getAllByRole("button");
   expect(chips.map((c) => c.textContent?.replace(/\d+$/, "").trim())).toEqual(ADMIN_QUEUES.map((q) => q.label));
-  expect(screen.getByRole("button", { name: "Photo removals 8" })).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Payouts 6" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Photo removals, 8 waiting" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Payouts, 6 waiting" })).toBeTruthy();
   expect(screen.getByRole("button", { name: /^Verifications/ })).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -43,4 +43,17 @@ it("switching chips drops every other list's params, leaving only ?type=<new>", 
   fireEvent.click(screen.getByRole("button", { name: /^Disputes/ }));
   expect(replace).toHaveBeenCalledTimes(1);
   expect(replace).toHaveBeenCalledWith("/admin/inbox?type=disputes", { scroll: false });
+});
+
+it("the attention queue's chip carries the dot and says it needs attention; no other chip does", () => {
+  kpis.value = {
+    pendingVerifications: 0, approvedPhotographers: 0, suspended: 0, liveEvents: 0, decisionsThisWeek: 0,
+    openDisputes: 2, disputesNeedingAdmin: 2, openFlags: 0, pendingPayouts: 0, pendingEventRequests: 1,
+  };
+  render(<AdminInboxFilterChips value="verifications" />);
+  const disputes = screen.getByRole("button", { name: "Disputes, 2 waiting, needs attention" });
+  expect(disputes.querySelector(".breathe")).toBeTruthy();
+  expect(screen.getAllByRole("button").filter((b) => b.querySelector(".breathe"))).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: /needs attention/ })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: /^Event requests, 1 waiting$/ })).toBeTruthy();
 });
