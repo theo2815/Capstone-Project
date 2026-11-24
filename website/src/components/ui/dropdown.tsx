@@ -41,7 +41,19 @@ interface PanelPosition {
   maxHeight: number;
 }
 
-export function Dropdown({
+export function Dropdown(props: DropdownProps) {
+  return <DropdownCore {...props} />;
+}
+
+// Select mode's extras; the menu above never passes them.
+interface DropdownCoreProps extends DropdownProps {
+  popup?: "menu" | "listbox";
+  triggerClassName?: string;
+  invalid?: boolean;
+  panelLabel?: string;
+}
+
+function DropdownCore({
   trigger,
   children,
   align = "left",
@@ -52,7 +64,12 @@ export function Dropdown({
   ariaDescribedBy,
   disabled = false,
   onOpenChange,
-}: DropdownProps) {
+  popup = "menu",
+  triggerClassName,
+  invalid,
+  panelLabel,
+}: DropdownCoreProps) {
+  const itemSelector = `[role="${popup === "listbox" ? "option" : "menuitem"}"]:not(:disabled)`;
   const [isOpen, setIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [position, setPosition] = useState<PanelPosition>({
@@ -93,15 +110,19 @@ export function Dropdown({
     });
   }, [align]);
 
+  const focusChosen = useCallback(() => {
+    const options = panelRef.current?.querySelectorAll<HTMLButtonElement>(itemSelector) ?? [];
+    (Array.from(options).find((option) => option.getAttribute("aria-current") === "true" || option.getAttribute("aria-selected") === "true") ?? options[0])?.focus();
+  }, [itemSelector]);
+
   useLayoutEffect(() => {
     if (!isOpen) return;
     updatePosition();
     if (keyboardOpen.current && panelRef.current) {
-      const options = panelRef.current.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
-      (Array.from(options).find((option) => option.getAttribute("aria-current") === "true") ?? options[0])?.focus();
+      focusChosen();
       keyboardOpen.current = false;
     }
-  }, [isOpen, mounted, updatePosition]);
+  }, [isOpen, mounted, updatePosition, focusChosen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -143,8 +164,9 @@ export function Dropdown({
       ? createPortal(
           <div
             ref={panelRef}
-            role="menu"
-            aria-label={ariaLabel}
+            role={popup}
+            id={popup === "listbox" && id ? `${id}-listbox` : undefined}
+            aria-label={popup === "listbox" ? panelLabel : ariaLabel}
             onClick={() => { setIsOpen(false); triggerWrapRef.current?.querySelector("button")?.focus(); }}
             onKeyDown={(event) => {
               if (event.key === "Tab") {
@@ -152,10 +174,18 @@ export function Dropdown({
                 triggerWrapRef.current?.querySelector("button")?.focus();
                 return;
               }
+              const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(itemSelector));
+              const index = options.indexOf(document.activeElement as HTMLButtonElement);
+              // Type-ahead (select mode only): a letter moves to the next option that starts with it.
+              if (popup === "listbox" && event.key.length === 1 && event.key.trim() && !event.ctrlKey && !event.metaKey && !event.altKey) {
+                const key = event.key.toLowerCase();
+                const match = [...options.slice(index + 1), ...options.slice(0, index + 1)]
+                  .find((option) => option.textContent?.trim().toLowerCase().startsWith(key));
+                if (match) { event.preventDefault(); match.focus(); }
+                return;
+              }
               if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
               event.preventDefault();
-              const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
-              const index = options.indexOf(document.activeElement as HTMLButtonElement);
               const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
                 : (index + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
               options[next]?.focus();
@@ -195,18 +225,97 @@ export function Dropdown({
         onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           event.preventDefault();
+          // A list box opened by mouse: the arrow moves into it, as a native select does.
+          if (popup === "listbox" && expanded) { focusChosen(); return; }
           keyboardOpen.current = true;
           setIsOpen(true);
         }}
-        aria-haspopup="menu"
+        // combobox (allowed on <button>): the label names it and screen readers read the chosen option as its value.
+        role={popup === "listbox" ? "combobox" : undefined}
+        aria-haspopup={popup}
         aria-expanded={expanded}
+        aria-controls={expanded && popup === "listbox" && id ? `${id}-listbox` : undefined}
+        aria-invalid={invalid || undefined}
         aria-label={ariaLabel}
-        className="rounded-sm disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className={triggerClassName ?? "rounded-sm disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"}
       >
         {trigger}
       </button>
       {panel}
     </div>
+  );
+}
+
+interface DropdownSelectProps<V extends string> {
+  id: string;
+  value: V | "";
+  onChange: (next: V) => void;
+  options: ReadonlyArray<{ value: V; label: string; disabled?: boolean }>;
+  placeholder?: string;
+  disabled?: boolean;
+  ariaDescribedBy?: string;
+  invalid?: boolean;
+  panelClassName?: string;
+  className?: string;
+}
+
+/**
+ * Select mode: a form-field trigger (the AdminTextInput box, 44px) over the
+ * same portaled panel, as a list box. Label it with `<label htmlFor={id}>`.
+ */
+export function DropdownSelect<V extends string>({
+  id,
+  value,
+  onChange,
+  options,
+  placeholder,
+  disabled,
+  ariaDescribedBy,
+  invalid,
+  panelClassName,
+  className,
+}: DropdownSelectProps<V>) {
+  const [listLabel, setListLabel] = useState<string>();
+  const nameList = useCallback((open: boolean) => {
+    if (open) setListLabel((document.getElementById(id) as HTMLButtonElement | null)?.labels?.[0]?.textContent ?? undefined);
+  }, [id]);
+  const chosen = options.find((option) => option.value === value);
+  return (
+    <DropdownCore
+      popup="listbox"
+      id={id}
+      disabled={disabled}
+      ariaDescribedBy={ariaDescribedBy}
+      invalid={invalid}
+      panelLabel={listLabel}
+      onOpenChange={nameList}
+      panelClassName={panelClassName}
+      className={cn("block w-full", className)}
+      triggerClassName="flex w-full min-h-[44px] items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-left font-sans text-sm text-ink focus:outline-none focus:ring-2 focus:ring-fresh focus:border-fresh disabled:opacity-50 disabled:cursor-not-allowed"
+      trigger={
+        <>
+          <span className={cn("truncate", !chosen && "text-slate")}>{chosen?.label ?? placeholder}</span>
+          <svg className="size-4 shrink-0 text-slate" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6 L8 10 L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </>
+      }
+    >
+      {options.map((option) => (
+        <DropdownItem
+          key={option.value}
+          role="option"
+          aria-selected={option.value === value}
+          aria-current={undefined}
+          active={option.value === value}
+          disabled={option.disabled}
+          className="disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </DropdownItem>
+      ))}
+    </DropdownCore>
   );
 }
 
