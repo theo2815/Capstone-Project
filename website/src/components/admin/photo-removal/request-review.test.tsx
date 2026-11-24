@@ -356,7 +356,7 @@ it("runner cases have no evidence replace", async () => {
 it("a runner case without evidence offers only manual verify or cancel", async () => {
   serverCase = { ...runnerCase, status: "DRAFT", evidencePresent: false, evidenceCleanupState: "NONE" };
   const { container } = renderReview();
-  expect(await screen.findByRole("button", { name: "Cancel case" })).toBeDisabled();
+  expect(await screen.findByRole("button", { name: "Cancel request" })).toBeDisabled();
   expect(container.querySelector('input[type="file"]')).toBeNull();
   expect(screen.queryByRole("button", { name: "Match stored selfie" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Search" })).toBeNull();
@@ -376,7 +376,7 @@ it("the case page has an h1 while loading and on error", async () => {
   vi.mocked(removalApi.getAdminRemovalRequest).mockRejectedValue(new Error("down"));
   renderReview();
   expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-  expect(await screen.findByText("Couldn't load this case.")).toBeVisible();
+  expect(await screen.findByText("Couldn't load this request.")).toBeVisible();
   expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
 });
 
@@ -473,4 +473,20 @@ it("the event gallery loads more photos and keeps the first page", async () => {
   expect(await screen.findByRole("checkbox", { name: /photo-last/ })).toBeVisible();
   expect(screen.getByRole("checkbox", { name: /photo-0$/ })).toBeVisible();
   expect(removalApi.listRemovalPhotos).toHaveBeenLastCalledWith("case-1", { offset: 24, limit: 24 }, expect.anything());
+});
+
+// FT-32 (C-74, W32.1, W32.4): the header names the step, and a support request is called a request.
+it("the header says which step the request is in", async () => {
+  serverCase = draftCase;
+  renderReview();
+  expect(await screen.findByText("Step 1 of 4. Choose the photos this request is about, then verify them.")).toBeVisible();
+  expect(screen.getByText(`Support request · ${formatLongDate(draftCase.createdAt)}`)).toBeVisible();
+});
+
+it("the Verification method field gives an example", async () => {
+  const user = userEvent.setup();
+  serverCase = { ...draftCase, status: "DRAFT", evidencePresent: false };
+  renderReview();
+  await user.click(await screen.findByRole("checkbox", { name: /photo-orphan/ }));
+  expect(screen.getByLabelText("Verification method")).toHaveAttribute("placeholder", "For example: same bib, same race kit, selfie compared by eye");
 });

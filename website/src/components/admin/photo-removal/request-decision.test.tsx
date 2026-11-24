@@ -34,11 +34,19 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.resetAllMocks(); });
 
+const DECISION_NAME: Record<string, string> = {
+  "": "No decision", REMOVE: "Remove", RETAIN: "Retain", MORE_EVIDENCE: "Ask for more evidence", RETAIN_RESTRICTED: "Retain restricted (stays hidden)",
+};
+// FT-32 (C-78): the Decision control is the shared select (a list box), not a native select.
+async function pick(user: ReturnType<typeof userEvent.setup>, control: HTMLElement, decision: string) {
+  await user.click(control);
+  await user.click(screen.getByRole("option", { name: DECISION_NAME[decision] }));
+}
 function renderDecision() {
   return render(<QueryClientProvider client={client}><RemovalRequestDecision requestId="case-1" /></QueryClientProvider>);
 }
 async function decideItem(user: ReturnType<typeof userEvent.setup>, photoId: string, decision: string, reason: string) {
-  await user.selectOptions(await screen.findByLabelText(`Decision for ${photoId}`), decision);
+  await pick(user, await screen.findByLabelText(`Decision for ${photoId}`), decision);
   if (reason) await user.type(screen.getByLabelText(`Reason for ${photoId}`), reason);
 }
 
@@ -62,7 +70,7 @@ it("mixedResponsesRequireIndependentDecisions", async () => {
   expect(screen.getByRole("button", { name: "Authorize removal" })).toBeDisabled();
   expect(screen.getByText(/urgent reason is required/i)).toBeVisible();
 
-  await user.selectOptions(screen.getByLabelText("Decision for photo-b1"), "");
+  await pick(user, screen.getByLabelText("Decision for photo-b1"), "");
   await user.click(screen.getByRole("button", { name: "Authorize removal" }));
   await waitFor(() => expect(removalApi.decideRemovalRequest).toHaveBeenCalledTimes(1));
   const body = vi.mocked(removalApi.decideRemovalRequest).mock.calls[0][1];
@@ -85,7 +93,7 @@ it("choosing a decision shows its effect under the select", async () => {
     ["RETAIN_RESTRICTED", "The photo stays hidden and is not deleted. You review it again on the date you set."],
   ];
   for (const [decision, effect] of effects) {
-    await user.selectOptions(select, decision);
+    await pick(user, select, decision);
     const line = screen.getByText(effect);
     expect(select.getAttribute("aria-describedby")).toBe(line.id);
   }
@@ -293,9 +301,9 @@ it("select-all skips photos with other people", async () => {
   renderDecision();
   await user.type(await screen.findByLabelText("Reason for every selected photo"), "Runner verified by live check");
   await user.click(screen.getByRole("button", { name: "Select all single-face hidden photos" }));
-  expect(screen.getByLabelText("Decision for photo-s1")).toHaveValue("REMOVE");
-  expect(screen.getByLabelText("Decision for photo-s2")).toHaveValue("REMOVE");
-  expect(screen.getByLabelText("Decision for photo-g1")).toHaveValue("");
+  expect(screen.getByLabelText("Decision for photo-s1")).toHaveTextContent(/^Remove$/);
+  expect(screen.getByLabelText("Decision for photo-s2")).toHaveTextContent(/^Remove$/);
+  expect(screen.getByLabelText("Decision for photo-g1")).toHaveTextContent(/^No decision$/);
   expect(screen.getByLabelText("Reason for photo-s1")).toHaveValue("Runner verified by live check");
   await user.type(screen.getByLabelText("Reason for every selected photo"), ".");
   expect(screen.getByLabelText("Reason for photo-s2")).toHaveValue("Runner verified by live check.");
@@ -320,7 +328,7 @@ it("the confirm lists every selected photo", async () => {
 it("a reason field is not marked invalid before the admin types or leaves it", async () => {
   const user = userEvent.setup();
   renderDecision();
-  await user.selectOptions(await screen.findByLabelText("Decision for photo-a1"), "RETAIN_RESTRICTED");
+  await pick(user, await screen.findByLabelText("Decision for photo-a1"), "RETAIN_RESTRICTED");
   const reason = screen.getByLabelText("Reason for photo-a1");
   expect(reason).not.toHaveAttribute("aria-invalid");
   expect(screen.getByLabelText("Retention review date for photo-a1")).not.toHaveAttribute("aria-invalid");

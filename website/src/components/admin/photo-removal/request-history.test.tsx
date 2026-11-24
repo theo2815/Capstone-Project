@@ -66,7 +66,9 @@ it("records a guest notice follow-up and keeps the note after a failure", async 
   expect(await screen.findByRole("heading", { name: "Guest buyer notices" })).toBeInTheDocument();
   expect(screen.getAllByText(/guest@example\.test/).length).toBeGreaterThan(0);
   await user.type(screen.getByLabelText("Note what support told the requester or a guest buyer"), "Emailed the guest buyer about the removal");
-  await user.selectOptions(screen.getByLabelText("Guest buyer notice (optional)"), "notice-1");
+  // FT-32 (C-78): the notice control is the shared select (a list box).
+  await user.click(screen.getByLabelText("Guest buyer notice (optional)"));
+  await user.click(screen.getByRole("option", { name: "guest@example.test · order order-9" }));
   await user.click(screen.getByRole("button", { name: "Record update" }));
   expect(screen.getByRole("button", { name: "Recording…" })).toBeDisabled();
   await act(async () => { fail(new Error("Gateway timeout")); });

@@ -4,12 +4,14 @@ import { useRef, useState } from "react";
 import { useAdminRemovalActions, useAdminRemovalRequest, useRemovalHistory } from "@/hooks/use-photo-removal";
 import { AdminFieldLabel, AdminTextarea } from "@/components/admin/admin-form-fields";
 import { FieldError } from "@/components/ui/field-error";
-import { BTN_GHOST, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
+import { DropdownSelect } from "@/components/ui/dropdown";
+import { LoadError } from "@/components/ui/load-error";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { removalActionLabel, removalActorLabel, removalStateLabel } from "@/lib/admin-removal-labels";
 import { formatLongDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { REMOVAL_INPUT } from "./request-intake";
 import { ReviewCurrentState } from "./request-review";
 import type { PhotoRemovalRequestDto } from "@/types/photo-removal";
 
@@ -24,10 +26,12 @@ export function RemovalRequestHistory({ requestId }: { requestId: string }) {
   if (!detail.data) return null;
   return (
     <section aria-labelledby="removal-history" className="mt-12 space-y-6 border-t border-line pt-8">
-      <h2 id="removal-history" className="font-display text-xl font-extrabold text-ink">Case history</h2>
+      <h2 id="removal-history" className="font-display text-xl font-extrabold text-ink">Request history</h2>
       <SupportUpdate request={detail.data} refreshing={detail.isFetching} refresh={detail.refetch} />
-      {history.isLoading && <p role="status" className="text-sm text-slate">Loading history…</p>}
-      {!!history.error && <p role="alert" className="text-sm text-ink">Couldn&apos;t load the history. <button type="button" className={cn(BTN_GHOST, "underline")} onClick={() => void history.refetch()}>Try again</button></p>}
+      {history.isLoading && (
+        <div role="status" aria-busy="true" aria-label="Loading the history" className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+      )}
+      {!!history.error && <LoadError what="the history" onRetry={() => void history.refetch()} />}
       <ol className="space-y-3">
         {entries.map((entry) => (
           <li key={entry.id} className="border-l-2 border-line pl-4 text-sm space-y-0.5">
@@ -96,12 +100,10 @@ function SupportUpdate({ request, refreshing, refresh }: {
       {request.guestBuyerRemovalNotices.length > 0 && (
         <div className="space-y-2">
           <AdminFieldLabel htmlFor="removal-support-notice">Guest buyer notice (optional)</AdminFieldLabel>
-          <select id="removal-support-notice" value={noticeId} disabled={pending} onChange={(e) => setNoticeId(e.target.value)} className={REMOVAL_INPUT}>
-            <option value="">Runner support (no notice)</option>
-            {request.guestBuyerRemovalNotices.map((notice) => (
-              <option key={notice.noticeId} value={notice.noticeId}>{notice.recipientEmail} · order {notice.orderId}</option>
-            ))}
-          </select>
+          <DropdownSelect id="removal-support-notice" value={noticeId} disabled={pending} onChange={setNoticeId} options={[
+            { value: "", label: "Runner support (no notice)" },
+            ...request.guestBuyerRemovalNotices.map((notice) => ({ value: notice.noticeId, label: `${notice.recipientEmail} · order ${notice.orderId}` })),
+          ]} />
         </div>
       )}
       <FieldError message={error} id="removal-support-error" />
