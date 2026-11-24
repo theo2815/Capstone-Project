@@ -7,6 +7,8 @@ data class AdminSalesKpisDto(
     val gmv: BigDecimal,
     val platformRevenue: BigDecimal,
     val refundsIssued: BigDecimal,
+    // FU-3: the number of succeeded refunds in refundsIssued, same window.
+    val refundsIssuedCount: Long,
     val netPlatformRevenue: BigDecimal,
     val photographerKeep: BigDecimal,
     val totalSalesCount: Long,

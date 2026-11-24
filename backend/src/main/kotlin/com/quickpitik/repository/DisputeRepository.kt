@@ -75,6 +75,19 @@ interface DisputeRepository : JpaRepository<Dispute, UUID> {
         @Param("to") to: OffsetDateTime,
     ): BigDecimal
 
+    // FU-3: how many refunds make up sumSucceededRefundsInWindow, read from the same rows.
+    @Query(
+        """
+        SELECT COUNT(d) FROM Dispute d
+        WHERE d.refundStatus = 'succeeded'
+          AND d.refundedAt >= :from AND d.refundedAt < :to
+        """,
+    )
+    fun countSucceededRefundsInWindow(
+        @Param("from") from: OffsetDateTime,
+        @Param("to") to: OffsetDateTime,
+    ): Long
+
     @Query(
         value = """
         SELECT o.event_id, COALESCE(SUM(d.refund_amount_php), 0)

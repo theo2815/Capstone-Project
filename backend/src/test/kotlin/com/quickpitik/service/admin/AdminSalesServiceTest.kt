@@ -87,6 +87,20 @@ class AdminSalesServiceTest {
         assertEquals(BigDecimal("94.06"), dto.refundsIssued)
     }
 
+    // FU-3: the Sales tile's refund count comes from the server, same window as the sum.
+    @Test
+    fun `refunds issued count is the number of succeeded refunds in the window`() {
+        Mockito.`when`(transactions.sumPhotographerKeepInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(transactions.sumDiscountsInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(transactions.sumListGrossInWindow(anyArg(), anyArg())).thenReturn(BigDecimal.ZERO)
+        Mockito.`when`(disputes.sumSucceededRefundsInWindow(anyArg(), anyArg())).thenReturn(BigDecimal("94.06"))
+        Mockito.`when`(disputes.countSucceededRefundsInWindow(anyArg(), anyArg())).thenReturn(2L)
+
+        val dto = service.kpis("ytd")
+
+        assertEquals(2L, dto.refundsIssuedCount)
+    }
+
     @Test
     fun `per-event gmv is the list gross of its sales`() {
         val event = event()

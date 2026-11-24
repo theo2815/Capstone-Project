@@ -96,6 +96,28 @@ class AdminSalesIntegrationTest : PostgresIntegrationTest() {
         assertEquals(BigDecimal("94.06"), eventRow.refundsIssued)
     }
 
+    // FU-3: the year-to-date count is read from the same rows as the sum: two
+    // refunds this year count, a refund last year and a failed one do not.
+    @Test
+    fun `refunds issued count matches the refunds in each window`() {
+        val now = OffsetDateTime.now(ZoneOffset.ofHours(8))
+        val before = listOf(null, "month", "week").associateWith { service.kpis(it) }
+        val photographer = photographer()
+        val event = event()
+        val photo = photo(event.id, photographer.id)
+        val order = order(event.id)
+        dispute(order.id, photo.id, "40.00", "succeeded", now)
+        dispute(order.id, photo.id, "60.00", "succeeded", now)
+        dispute(order.id, photo.id, "50.00", "failed", now)
+        dispute(order.id, photo.id, "70.00", "succeeded", now.minusYears(1))
+
+        before.forEach { (range, was) ->
+            val after = service.kpis(range)
+            assertEquals(2L, after.refundsIssuedCount - was.refundsIssuedCount, "range=$range")
+            assertEquals(BigDecimal("100.00"), after.refundsIssued.subtract(was.refundsIssued), "range=$range")
+        }
+    }
+
     // M-16: a ledger minted at an older 80 % keep. Dividing by today's 75 %
     // would report 226.67; GMV is the list price the items sold at, less the
     // listed share a refund reversed (half of the ₱125 item, all of the ₱100).

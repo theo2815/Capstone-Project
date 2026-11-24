@@ -156,12 +156,12 @@ class EventDtoMapper(
     companion object {
         internal val PH_ZONE: ZoneId = ZoneId.of("Asia/Manila")
 
-        // Mirrors website/src/lib/event-catalog.ts. ACTIVE events flip from
-        // "upcoming" → "live" on race day (Asia/Manila) and from "live" →
-        // "open" once the 4-day upload window closes. The window/archive
-        // boundary lives on the FE today; backend only differentiates
-        // upcoming / live / open via the date and surfaces archived via
-        // EventStatus.ARCHIVED.
+        // The admin rule (Asia/Manila date): an ACTIVE event is "upcoming" before
+        // race day, "live" on race day only, and "open" (Recent) on every later
+        // day with no age limit; COMPLETED is "open"; DRAFT is "upcoming"; "past" (Archive) is the
+        // ARCHIVED status only, never by age. The website's public rule
+        // (deriveEventState in website/src/lib/event-catalog.ts: live for race
+        // day plus 3 days, archive from 90 days) differs on purpose (FU-3, O1).
         // EventRepository's ADMIN_EVENT_FILTER repeats these rules in SQL: change both together.
         fun deriveAdminEventState(event: Event, today: LocalDate = LocalDate.now(PH_ZONE)): String =
             when (event.status) {
