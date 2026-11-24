@@ -42,14 +42,14 @@ it.each(["pending", "change_pending"] as const)("retains %s rejection input thro
   const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
   const label = reviewStatus === "pending" ? "Send back" : "Decline";
-  await user.click(screen.getByRole("button", { name: label }));
+  await user.click(screen.getByRole("button", { name: `${label}…` }));
   const dialog = screen.getByRole("dialog"); const reason = within(dialog).getByLabelText("Reason (max 500)");
   expect(dialog).toHaveTextContent(/sees your reason in their inbox. Write what they should change./);
   expect(reason).toHaveAccessibleDescription("Seen by: the photographer."); // FT-33 (W33.1)
   await user.type(reason, "Please clarify pricing"); await user.click(within(dialog).getByRole("button", { name: label }));
   expect(reason).toBeDisabled(); await user.keyboard("{Escape}{Enter}"); expect(post).toHaveBeenCalledTimes(1);
   expect(within(dialog).getByRole("button", { name: reviewStatus === "pending" ? "Sending back…" : "Declining…" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Approve", hidden: true })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approve…", hidden: true })).toBeDisabled();
   await act(async () => { fail(new Error("Unavailable")); });
   expect(reason).toHaveValue("Please clarify pricing"); await waitFor(() => expect(reason).toBeEnabled()); expect(dialog).toBeInTheDocument();
   post.mockResolvedValueOnce({ ...adminEvent, reviewStatus: reviewStatus === "pending" ? "rejected" : "approved" });
@@ -62,7 +62,7 @@ it("awaits approval before success and prevents duplicate submission", async () 
   let confirm!: (value: unknown) => void;
   const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise((resolve) => { confirm = resolve; }));
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await userEvent.click(screen.getByRole("button", { name: "Approve…" }));
   const submit = within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" });
   await userEvent.click(submit); await userEvent.click(submit);
   expect(submit).toBeDisabled(); expect(post).toHaveBeenCalledTimes(1); expect(useToastStore.getState().toasts).toEqual([]);
@@ -74,14 +74,14 @@ it("awaits approval before success and prevents duplicate submission", async () 
 it("Approve asks first and says what goes public", async () => {
   const post = vi.spyOn(api, "post").mockResolvedValue(adminEvent); const user = userEvent.setup();
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
   expect(post).not.toHaveBeenCalled();
   const dialog = screen.getByRole("dialog", { name: "Approve this event?" });
   expect(dialog).toHaveTextContent("Cebu Race goes live and uploads open.");
   expect(dialog).toHaveTextContent("Public · link and profile");
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(post).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
   await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Approve" }));
   expect(post).toHaveBeenCalledWith(`/admin/events/${adminEvent.id}/approve`, { expectedRevision: 4 });
 });
@@ -90,7 +90,7 @@ it("approving a price change names the old and new pricing", async () => {
   client.setQueryData(key, [{ ...adminEvent, reviewStatus: "change_pending", pendingChange: change }]);
   const post = vi.spyOn(api, "post"); const user = userEvent.setup();
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
   const dialog = screen.getByRole("dialog", { name: "Apply this pricing change?" });
   expect(dialog).toHaveTextContent(describePricing({ pricingMode: "paid", pricePerPhoto: 80, watermarkPolicy: "platform" }));
   expect(dialog).toHaveTextContent(describePricing(change));
@@ -163,13 +163,13 @@ it("approving a race edit names the changed fields", async () => {
   client.setQueryData(key, [{ ...adminEvent, eventType: "ROAD_RACE", reviewStatus: "change_pending",
     pendingChange: { kind: "race_edit", fields: { title: "Cebu City Marathon", date: "2026-09-11" }, coverS3Key: "events/x/cover.jpg", requestedBy: "u", requestedAt: "2026-09-09T00:00:00Z" } }]);
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await userEvent.click(screen.getByRole("button", { name: "Approve…" }));
   expect(screen.getByRole("dialog", { name: "Apply this race edit?" })).toHaveTextContent("Cebu Race takes the new title, date, cover photo.");
 });
 it("a failed approve keeps the confirm open and lets the admin try again", async () => {
   const post = vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Unavailable")); const user = userEvent.setup();
   render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
-  await user.click(screen.getByRole("button", { name: "Approve" }));
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
   const dialog = screen.getByRole("dialog");
   await user.click(within(dialog).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(within(dialog).getByRole("button", { name: "Approve" })).toBeEnabled());
@@ -206,7 +206,7 @@ it("shows duplicate candidates and decides only after the API answers", async ()
   expect(screen.getByRole("link", { name: "Cebu Marathon" })).toHaveAttribute("href", "/events/cebu-marathon");
   expect(screen.getByText("It may be the same race as one already listed.")).toBeInTheDocument();
   expect(screen.getByText("Ana Cruz · @anashoots")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Approve as a new race" }));
+  await user.click(screen.getByRole("button", { name: "Approve as a new race…" }));
   const approveDialog = screen.getByRole("dialog", { name: "Approve as a new race?" });
   expect(approveDialog).toHaveTextContent("It stays its own race, apart from Cebu Marathon.");
   await user.click(within(approveDialog).getByRole("button", { name: "Cancel" }));
@@ -217,7 +217,7 @@ it("shows duplicate candidates and decides only after the API answers", async ()
   expect(screen.getByText(/will cover/)).toHaveTextContent("Ana Cruz will cover Cebu Marathon");
   await user.click(screen.getByRole("button", { name: "Join race" }));
   expect(post).toHaveBeenCalledWith(`/admin/events/${race.id}/same-race`, { targetEventId: target.id, expectedRevision: 4 });
-  expect(screen.getByRole("button", { name: "Approve as a new race" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Approve as a new race…" })).toBeDisabled();
   expect(client.getQueryData(key)).toEqual([race]); expect(useToastStore.getState().toasts).toEqual([]);
   await act(async () => { confirm(target); });
   await waitFor(() => expect(client.getQueryData(key)).toEqual([]));
@@ -309,4 +309,16 @@ it("loading shows skeleton rows, and a failed load says Couldn't load event requ
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByText("Couldn't load event requests.")).toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+// FT-35 (C-62): Send back or Decline first, Same race next, Approve last; each opens a dialog, so each ends in "…".
+it.each([
+  ["pending", false, ["Send back…", "Approve…"]],
+  ["change_pending", false, ["Decline…", "Approve…"]],
+  ["pending", true, ["Send back…", "Same race as an existing one…", "Approve as a new race…"]],
+] as const)("a %s request (duplicate: %s) lists its buttons stop first, Approve last", (reviewStatus, duplicate, expected) => {
+  client.setQueryData(key, [duplicate ? race : { ...adminEvent, status: "DRAFT", reviewStatus }]);
+  render(<QueryClientProvider client={client}><EventRequestsQueue /></QueryClientProvider>);
+  const names = screen.getAllByRole("button").map((b) => b.textContent).filter((n) => /^(Send back|Decline|Same race|Approve)/.test(n ?? ""));
+  expect(names).toEqual(expected);
 });

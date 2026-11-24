@@ -307,14 +307,15 @@ function RowActions({
       {canApprove && ownApproval && (
         <p id={noteId} className="font-sans text-sm text-slate basis-full text-right">{OWN_FIRST_APPROVAL_NOTE}</p>
       )}
-      {canApprove && (
-        <button type="button" disabled={submitting || blocked || ownApproval} aria-describedby={ownApproval ? noteId : undefined} onClick={onApprove} className={PILL}>
-          Approve
+      {/* Same order as the drawer: the stop first, the forward step last. */}
+      {canHold && (
+        <button type="button" disabled={submitting} onClick={onHold} className={GHOST}>
+          Hold…
         </button>
       )}
       {canMarkProcessing && (
         <button type="button" disabled={submitting || blocked} onClick={onMarkProcessing} className={PILL}>
-          Mark processing
+          Mark processing…
         </button>
       )}
       {canMarkPaid && (
@@ -322,9 +323,9 @@ function RowActions({
           Mark paid…
         </button>
       )}
-      {canHold && (
-        <button type="button" disabled={submitting} onClick={onHold} className={GHOST}>
-          Hold…
+      {canApprove && (
+        <button type="button" disabled={submitting || blocked || ownApproval} aria-describedby={ownApproval ? noteId : undefined} onClick={onApprove} className={PILL}>
+          Approve…
         </button>
       )}
     </div>

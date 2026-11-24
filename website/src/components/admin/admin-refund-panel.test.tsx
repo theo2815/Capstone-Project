@@ -264,7 +264,7 @@ describe("manual refund panel", () => {
       renderAside(sentLink);
       expect(screen.getByText("Check PayMongo")).toBeInTheDocument();
       expect(screen.getByText("If the refund was claimed, mark it refunded. If the link is still unclaimed, cancel the refund.")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Mark refunded" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Mark refunded…" })).toBeEnabled();
       expect(screen.getByRole("button", { name: "Cancel refund…" })).toBeEnabled();
     });
 
@@ -321,7 +321,7 @@ describe("manual refund panel", () => {
     const user = userEvent.setup();
     vi.spyOn(api, "post").mockRejectedValueOnce(new Error("Backend unavailable"));
     renderAside(parked);
-    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    await user.click(screen.getByRole("button", { name: "Mark refunded…" }));
     const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
     await user.type(within(dialog).getByLabelText("PayMongo refund reference"), REF);
     await user.click(within(dialog).getByRole("button", { name: "Mark refunded" }));
@@ -334,7 +334,7 @@ describe("manual refund panel", () => {
     fixtures.search = `row=${parked.id}`;
     render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
     const drawer = await screen.findByRole("dialog");
-    await user.click(within(drawer).getByRole("button", { name: "Mark refunded" }));
+    await user.click(within(drawer).getByRole("button", { name: "Mark refunded…" }));
     expect(screen.getByRole("dialog", { name: "Mark refunded" })).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Mark refunded" })).not.toBeInTheDocument();
@@ -348,7 +348,7 @@ describe("manual refund panel", () => {
     fixtures.search = `row=${parked.id}`;
     render(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
     const drawer = await screen.findByRole("dialog");
-    await user.click(within(drawer).getByRole("button", { name: "Mark refunded" }));
+    await user.click(within(drawer).getByRole("button", { name: "Mark refunded…" }));
     act(() => { client.setQueryData(adminDisputeKeys.page(admin.id, { view: "needs_me" }), { pages: [{ items: [{ ...parked, status: "resolved", refundStatus: "succeeded" }], total: 1, offset: 0, limit: 50 }], pageParams: [0] }); });
     await waitFor(() => expect(screen.queryByText("pay_abc123")).not.toBeInTheDocument());
     await user.keyboard("{Escape}");
@@ -360,7 +360,7 @@ describe("manual refund panel", () => {
     const user = userEvent.setup();
     const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...parked, status: "resolved", refundStatus: "refunded" });
     renderAside(parked);
-    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    await user.click(screen.getByRole("button", { name: "Mark refunded…" }));
     expect(post).not.toHaveBeenCalled();
     const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
     expect(dialog).toHaveTextContent("Only do this after PayMongo shows this payment as Refunded.");
@@ -374,7 +374,7 @@ describe("manual refund panel", () => {
     const user = userEvent.setup();
     const post = vi.spyOn(api, "post").mockResolvedValueOnce({ ...parked, status: "resolved", refundStatus: "succeeded" });
     renderAside(parked);
-    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    await user.click(screen.getByRole("button", { name: "Mark refunded…" }));
     const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
     const submit = within(dialog).getByRole("button", { name: "Mark refunded" });
     expect(submit).toBeDisabled();
@@ -415,7 +415,7 @@ describe("manual refund panel", () => {
       new ApiError([{ code: "VALIDATION_ERROR", message: "That is the payment ID. Paste the refund's reference.", field: "refundReference" }], 400),
     );
     renderAside(parked);
-    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    await user.click(screen.getByRole("button", { name: "Mark refunded…" }));
     const dialog = screen.getByRole("dialog", { name: "Mark refunded" });
     await user.type(within(dialog).getByLabelText("PayMongo refund reference"), REF);
     await user.click(within(dialog).getByRole("button", { name: "Mark refunded" }));
@@ -431,7 +431,7 @@ describe("manual refund panel", () => {
         <AdminRefundPanel dispute={parked} onConfirmOpenChange={onOpen} />
       </QueryClientProvider>,
     );
-    await user.click(screen.getByRole("button", { name: "Mark refunded" }));
+    await user.click(screen.getByRole("button", { name: "Mark refunded…" }));
     expect(onOpen).toHaveBeenLastCalledWith(true);
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Mark refunded" })).not.toBeInTheDocument();
@@ -448,7 +448,7 @@ describe("manual refund panel", () => {
     await user.click(screen.getByRole("button", { name: "Send to runner" }));
     await user.click(screen.getByRole("button", { name: "Send link" }));
     expect(screen.getByRole("button", { name: "Copy payment ID", hidden: true })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Mark refunded", hidden: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark refunded…", hidden: true })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send to runner", hidden: true })).toBeDisabled();
     await act(async () => { release({ ...parked, refundLinkUrl: "https://pay.example/r/1" }); });
   });

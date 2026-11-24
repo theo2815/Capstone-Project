@@ -820,7 +820,7 @@ function PayoutDrawerActions({
       )}
       {s === "approved" && (
         <button type="button" disabled={blocked} onClick={onMarkProcessing} className={SECONDARY}>
-          Mark processing
+          Mark processing…
         </button>
       )}
       {s === "processing" && (
@@ -838,7 +838,7 @@ function PayoutDrawerActions({
       )}
       {(s === "pending_review" || s === "held") && (
         <button type="button" disabled={blocked || ownApproval} aria-describedby={ownApproval ? "payout-own-approval-note" : undefined} onClick={onApprove} className={PRIMARY}>
-          Approve
+          Approve…
         </button>
       )}
     </>

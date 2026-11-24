@@ -180,7 +180,7 @@ it("a held profile shows the hold line and an Approve button", async () => {
   const drawer = await screen.findByRole("dialog");
   await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
   expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
-  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "Approve…" })).toBeInTheDocument();
 });
 it("a held profile shows Approve from the detail answer when the list has no row for it", async () => {
   rows = []; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
@@ -188,7 +188,7 @@ it("a held profile shows Approve from the detail answer when the list has no row
   vi.mocked(api.get).mockImplementation(async (path) => path === `/admin/users/${adminUser.userId}` ? { ...adminUser, adminHold: true, decisionLog: [] } : listGet(path));
   mount(true);
   const drawer = await screen.findByRole("dialog");
-  expect(await within(drawer).findByRole("button", { name: "Approve" })).toBeInTheDocument();
+  expect(await within(drawer).findByRole("button", { name: "Approve…" })).toBeInTheDocument();
   expect(within(drawer).getByText(HOLD_LINE)).toBeInTheDocument();
 });
 it("the drawer subtitle has no empty place between two dots when region and city are blank", async () => {
@@ -216,13 +216,13 @@ it("the detail answer's hold wins over a stale list row", async () => {
   mount(true);
   const drawer = await screen.findByRole("dialog");
   await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}`)); await act(async () => {});
-  expect(within(drawer).getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  expect(within(drawer).getByRole("button", { name: "Approve…" })).toBeInTheDocument();
 });
 it("a profile that is not held has no hold line and no Approve button", async () => {
   navigation.search = `row=${adminUser.userId}`; mount(true);
   const drawer = await screen.findByRole("dialog");
   expect(within(drawer).queryByText(HOLD_LINE)).toBeNull();
-  expect(within(drawer).queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Approve…" })).toBeNull();
 });
 it("approve waits for the server before showing success and shows the server's error on a conflict", async () => {
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
@@ -232,7 +232,7 @@ it("approve waits for the server before showing success and shows the server's e
   const request = deferred<unknown>(); const post = vi.spyOn(api, "post").mockReturnValueOnce(request.promise);
   mount(true); const user = userEvent.setup();
   const drawer = await screen.findByRole("dialog");
-  await user.click(within(drawer).getByRole("button", { name: "Approve" }));
+  await user.click(within(drawer).getByRole("button", { name: "Approve…" }));
   await user.click(within(screen.getByRole("dialog", { name: "Approve Test Studio?" })).getByRole("button", { name: "Approve" }));
   expect(post).toHaveBeenCalledTimes(1);
   expect(post).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}/approve`, { expectedRevision: 7 });
@@ -242,7 +242,7 @@ it("approve waits for the server before showing success and shows the server's e
   useToastStore.getState().clear();
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows);
   post.mockRejectedValueOnce(new ApiError([{ code: "CONFLICT", field: "", message: "This profile is not on hold." }], 409));
-  await user.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Approve" }));
+  await user.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Approve…" }));
   await user.click(within(screen.getByRole("dialog", { name: "Approve Test Studio?" })).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(useToastStore.getState().toasts.map((t) => [t.kind, t.message])).toEqual([["error", "This profile is not on hold."]]));
 });
@@ -315,7 +315,7 @@ it("FT-13: Approve on a held profile asks first and calls the server only from t
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
   const post = vi.spyOn(api, "post").mockResolvedValue({ ...adminUser, adminHold: false });
   mount(true); const user = userEvent.setup();
-  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Approve" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Approve…" }));
   const confirm = screen.getByRole("dialog", { name: "Approve Test Studio?" });
   expect(confirm).toHaveTextContent("This releases the hold. If their ID check has passed, the profile goes live now and they are told. If it has not, the profile goes live by itself when the check passes.");
   expect(post).not.toHaveBeenCalled();
@@ -342,7 +342,7 @@ it("FT-13: an open row decided by someone else closes with a toast; this admin's
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows);
   vi.spyOn(api, "post").mockImplementation(async () => { rows = [{ ...adminUser, verificationStatus: "approved", adminHold: false }]; return rows[0]; });
   mount(true); const user = userEvent.setup();
-  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Approve" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Approve…" }));
   await user.click(within(screen.getByRole("dialog", { name: "Approve Test Studio?" })).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(toasts()).toEqual([["success", "Hold released · Test Studio"]]));
   await act(async () => { await client.invalidateQueries(); });
@@ -360,7 +360,7 @@ it("FT-13: a partly failed bulk send back names the rows still ticked", async ()
 it("FT-13: when the row is decided elsewhere under the approve confirm, the confirm does not come back by itself", async () => {
   rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
   mount(true); const user = userEvent.setup();
-  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Approve" }));
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Approve…" }));
   expect(screen.getByRole("dialog", { name: "Approve Test Studio?" })).toBeInTheDocument();
   rows = [{ ...adminUser, verificationStatus: "approved", adminHold: false }];
   await act(async () => { await client.invalidateQueries(); });
@@ -369,6 +369,14 @@ it("FT-13: when the row is decided elsewhere under the approve confirm, the conf
   rows = [{ ...adminUser, adminHold: true }];
   await act(async () => { await client.invalidateQueries(); });
   await user.click(await screen.findByRole("button", { name: "Test Studio" }));
-  expect(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Approve" })).toBeInTheDocument();
+  expect(await within(await screen.findByRole("dialog")).findByRole("button", { name: "Approve…" })).toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "Approve Test Studio?" })).toBeNull();
+});
+// FT-35 (C-62): Send back first, the green Approve last; both open a dialog, so both end in "…".
+it("a held profile's drawer buttons read Send back, then Approve", async () => {
+  rows = [{ ...adminUser, adminHold: true }]; client.setQueryData(key, rows); navigation.search = `row=${adminUser.userId}`;
+  mount(true);
+  const drawer = await screen.findByRole("dialog");
+  const footer = drawer.querySelector("footer")!;
+  expect(within(footer).getAllByRole("button").map((b) => b.textContent)).toEqual(["Send back…", "Approve…"]);
 });

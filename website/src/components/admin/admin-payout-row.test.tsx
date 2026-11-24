@@ -26,7 +26,7 @@ it("the row opens through a button named by its title, and is not itself a butto
 it("the checkbox and an inline action do not open the row, by click or Enter", async () => {
   const { props } = renderRow();
   await userEvent.click(screen.getByRole("checkbox", { name: `Select payout ${payoutCycle.id}` }));
-  const approve = screen.getByRole("button", { name: "Approve" });
+  const approve = screen.getByRole("button", { name: "Approve…" });
   await userEvent.click(approve);
   fireEvent.keyDown(approve, { key: "Enter" });
   expect(props.onToggleSelect).toHaveBeenCalledTimes(1);
@@ -51,4 +51,14 @@ it("a pending row with a first approval says it waits for a second admin", () =>
   cleanup();
   renderRow();
   expect(screen.queryByText(/Waiting for a second admin/)).not.toBeInTheDocument();
+});
+
+// FT-35 (C-26, C-62): the stop first, the forward step last; a button that opens a dialog ends in "…".
+const actionNames = () => screen.getAllByRole("button").map((b) => b.textContent).filter((n) => /^(Hold|Mark|Approve)/.test(n ?? ""));
+it("row buttons read stop first and the forward step last, each with its ellipsis", () => {
+  renderRow();
+  expect(actionNames()).toEqual(["Hold…", "Approve…"]);
+  cleanup();
+  renderRow({ ...payoutCycle, status: "approved" });
+  expect(actionNames()).toEqual(["Hold…", "Mark processing…", "Mark paid…"]);
 });

@@ -153,14 +153,6 @@ export function AdminDisputeActionAside({
     <>
       <button
         type="button"
-        onClick={() => setResolveOpen(true)}
-        disabled={submitting}
-        className={primaryFreshBtn}
-      >
-        Approve refund…
-      </button>
-      <button
-        type="button"
         onClick={() => {
           setDenyCode(null);
           setDenyOpen(true);
@@ -169,6 +161,14 @@ export function AdminDisputeActionAside({
         className={dangerBtn}
       >
         Deny…
+      </button>
+      <button
+        type="button"
+        onClick={() => setResolveOpen(true)}
+        disabled={submitting}
+        className={primaryFreshBtn}
+      >
+        Approve refund…
       </button>
     </>
   );
@@ -195,6 +195,8 @@ export function AdminDisputeActionAside({
       </Kicker>
       {submitting && <p role="status">{pendingAction(dispute.id)}</p>}
       <div className="mt-5 space-y-3">
+        {/* Same order as every footer: Escalate, Deny, then the green Approve refund last. */}
+        {!body && escalateBtn}
         {!body && approveDeny}
         {isOpen && dispute.refundable === false && dispute.refundBlockedMessage && (
           <p className="font-sans text-sm text-slate-soft">{dispute.refundBlockedMessage}</p>
@@ -202,7 +204,6 @@ export function AdminDisputeActionAside({
         {isOpen && dispute.refundable === true && (
           <p className="font-sans text-sm text-slate-soft">A full refund can be approved now.</p>
         )}
-        {!body && escalateBtn}
         {refundProblem && (
           <div className="space-y-3 font-sans text-sm text-ink-soft">
             <RefundPaymentReference dispute={dispute} disabled={submitting} />
@@ -282,8 +283,8 @@ export function AdminDisputeActionAside({
         aria-label="Dispute actions"
         className="sticky bottom-0 -mx-6 mt-10 flex flex-wrap gap-1.5 border-t border-line bg-bone px-6 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] [&>button]:w-auto [&>button]:flex-auto [&>button]:px-2"
       >
-        {approveDeny}
         {escalateBtn}
+        {approveDeny}
       </div>
     )}
     </>
