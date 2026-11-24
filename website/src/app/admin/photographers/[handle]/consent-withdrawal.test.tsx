@@ -61,6 +61,8 @@ it("a withdrawn photographer shows the date and the Clear withdrawal action", ()
   );
   expect(within(section()).getByRole("button", { name: "Clear withdrawal" })).toBeEnabled();
   expect(within(section()).queryByRole("button", { name: "Record withdrawal" })).not.toBeInTheDocument();
+  // FT-12 (W12.10): the caption says when to record one, so it goes once a withdrawal is recorded.
+  expect(within(section()).queryByText("Use this only when the photographer has emailed to withdraw consent.")).not.toBeInTheDocument();
 });
 
 it("recording asks for a confirm, calls the route once and shows the new state only after the server answers", async () => {
@@ -69,9 +71,9 @@ it("recording asks for a confirm, calls the route once and shows the new state o
   const user = userEvent.setup(); mount();
   const action = within(section()).getByRole("button", { name: "Record withdrawal" });
   await user.click(action);
-  const dialog = screen.getByRole("dialog", { name: "Record that this photographer withdrew consent?" });
+  const dialog = screen.getByRole("dialog", { name: "Record a consent withdrawal" });
   expect(dialog).toHaveTextContent(
-    'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are.',
+    'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are. The photographer is not told by QuickPitik. You can clear it later with Clear withdrawal.',
   );
   expect(put).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Record withdrawal" }));
@@ -99,7 +101,7 @@ it("clearing asks for a confirm, calls the route once and shows the new state on
   await user.click(within(section()).getByRole("button", { name: "Clear withdrawal" }));
   const dialog = screen.getByRole("dialog", { name: "Clear the withdrawal?" });
   expect(dialog).toHaveTextContent(
-    "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms.",
+    "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms. The photographer is not told by QuickPitik.",
   );
   expect(del).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Clear withdrawal" }));

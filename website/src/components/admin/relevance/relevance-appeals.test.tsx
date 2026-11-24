@@ -89,7 +89,7 @@ it("the decide buttons are disabled until the evidence was opened", async () => 
   expect(won).toBeDisabled();
   expect(within(d).getByRole("button", { name: "Reject appeal…" })).toBeDisabled();
   expect(within(d).queryByText("Junk samples")).not.toBeInTheDocument();
-  expect(within(d).getByText("Opening the samples records that you looked at them. Then you can decide: accepting puts the photos back on sale, rejecting keeps them off sale.")).toBeInTheDocument();
+  expect(within(d).getByText("Opening the samples records that you looked at them. Then you can decide: accepting lifts the hide (on a whole-batch hide, the full check puts the good photos back as it measures them), rejecting keeps the photos off sale.")).toBeInTheDocument();
   await user.click(within(d).getByRole("button", { name: "Open the samples" }));
   await waitFor(() => expect(won).toBeEnabled());
   expect(within(d).getByRole("button", { name: "Reject appeal…" })).toBeEnabled();

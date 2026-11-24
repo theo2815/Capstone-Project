@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { usePrivateQuerySession } from "@/hooks/use-private-query-session";
 import { useInfiniteList } from "@/hooks/use-infinite-list";
 import {
@@ -27,6 +27,8 @@ import type {
   RelevanceHiddenPhoto,
   RelevanceTab,
 } from "@/lib/admin-relevance";
+import { heldPhotosRefetchMs } from "@/lib/admin-relevance";
+import type { PaginatedResponse } from "@/types/api";
 
 // RV-1.11a: every key sits under ["admin", "relevance"], so one invalidation refreshes the page.
 const STALE_MS = 60_000;
@@ -48,10 +50,15 @@ export function useRelevanceCases(tab: RelevanceTab, repeat = false) {
 }
 
 // RV-2.6: a batch's holds, restored ones included (they stay listed, greyed).
-export function useRelevanceHiddenPhotos(caseId: string) {
+export function useRelevanceHiddenPhotos(caseId: string, detail?: RelevanceCaseDetail) {
   const session = usePrivateQuerySession("ADMIN");
+  const qc = useQueryClient();
+  const queryKey = ["admin", "relevance", "hidden-photos", caseId, ...session.key];
+  // FU-11: the last read's total says whether a hide is still running; every read renders this again.
+  const total = qc.getQueryData<InfiniteData<PaginatedResponse<unknown>>>(queryKey)?.pages[0]?.total;
   return useInfiniteList<RelevanceHiddenPhoto & { id: string }>({
-    queryKey: ["admin", "relevance", "hidden-photos", caseId, ...session.key],
+    queryKey,
+    refetchInterval: detail && total !== undefined ? heldPhotosRefetchMs(detail, total) : false,
     fetchPage: async (offset, limit, signal) => {
       const page = await fetchRelevanceHiddenPhotos(caseId, { offset, limit }, signal);
       // One photo can carry a hold of each kind, so the key is the pair.

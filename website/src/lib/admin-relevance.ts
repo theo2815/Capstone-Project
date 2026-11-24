@@ -286,8 +286,19 @@ export const CONSEQUENCES_TEXT = {
 
 // FT-20 (C-52, C-54; W20.8, W20.9): how to choose a restore, and the size of a whole-batch hide or restore.
 export const RESTORE_GUIDE = "Look at the junk samples first. If most are real photos of this race, restore the batch.";
-export const batchCountLine = (photos: number, photographer: string) => `${photos.toLocaleString()} photos in this batch, from ${photographer}.`;
+export const batchCountLine = (photos: number, photographer: string) =>
+  `${photos.toLocaleString()} ${photos === 1 ? "photo" : "photos"} in this batch, from ${photographer}.`;
 export const HIDE_PROGRESS = "You can follow the progress under Held photos.";
+
+/**
+ * FU-11: Held photos are read again every 10 seconds while a current whole-batch hide is still placing its holds (one
+ * hold row per photo, a chunk at a time). A junk-only hide follows the measuring, so the website cannot tell its end.
+ * shortcut: "still running" is fewer hold rows than the batch's photos; a batch that lost photos after the check, or a
+ * withdrawn consent, keeps polling while the drawer is open. Send the server's hide-finished stamp in the case if that matters.
+ */
+export const heldPhotosRefetchMs = (detail: Pick<RelevanceCaseDetail, "case" | "stage">, heldTotal: number): number | false =>
+  detail.stage === "APPLIED" && detail.case.appliedMode !== "RECORD_ONLY" && detail.case.action === "HIDE_ALL"
+    && heldTotal < detail.case.batchPhotos ? 10_000 : false;
 
 export const HIDDEN_PHOTOS_EMPTY = "No photo of this batch is held.";
 export const PHOTO_RESTORED = "Photo restored";
@@ -309,7 +320,8 @@ export const restoresHolds = (stage: string) => stage === "APPLIED" || stage ===
 
 /**
  * The actions a case offers. Record-only never acts (P18): it offers only the batch restore, and only while a
- * releasable hold exists (seeded rows). A closed case offers only the restore (`restoresHolds`). Can't tell actions need action NONE:
+ * releasable hold exists (seeded rows), and Looks fine on a Can't tell case (FU-11, O9: the server allows it in every
+ * mode). A closed case offers only the restore (`restoresHolds`). Can't tell actions need action NONE:
  * a Can't tell an admin hid offers the restores instead. The mode itself is not readable here; the server refuses.
  */
 export function caseActions(
@@ -331,7 +343,9 @@ export function caseActions(
   if (acting && hiding) return ["restore", "keep_hidden", ...holdPayouts, ...endHold];
   if (acting && row.verdict === "CANT_TELL" && row.action === "NONE") return ["looks_fine", "hide_batch", ...endHold];
   const noConsentActions: RelevanceCaseAction[] = noConsent ? ["hide_batch", ...holdPayouts] : [];
-  return [...(restoresHolds(detail.stage) && hasReleasable ? (["restore"] as const) : []), ...noConsentActions, ...endHold];
+  const looksFine: RelevanceCaseAction[] =
+    detail.stage === "APPLIED" && row.verdict === "CANT_TELL" && row.action === "NONE" ? ["looks_fine"] : [];
+  return [...looksFine, ...(restoresHolds(detail.stage) && hasReleasable ? (["restore"] as const) : []), ...noConsentActions, ...endHold];
 }
 
 /** Why a sample counts as junk, or that it was not judged while a cut-off is unset. */
@@ -378,7 +392,7 @@ export const APPEAL_TEXT = {
   reason: "Photographer's reason",
   samples: "Samples",
   openSamples: "Open the samples",
-  openSamplesHint: "Opening the samples records that you looked at them. Then you can decide: accepting puts the photos back on sale, rejecting keeps them off sale.",
+  openSamplesHint: "Opening the samples records that you looked at them. Then you can decide: accepting lifts the hide (on a whole-batch hide, the full check puts the good photos back as it measures them), rejecting keeps the photos off sale.",
   openFailed: "Could not record that you opened the samples. Try again.",
   note: "Note (admins only, optional)",
   noteHint: "The photographer never sees this note.",
@@ -413,8 +427,8 @@ export const CONSENT_WITHDRAWAL_TEXT = {
   notWithdrawn: "Consent to automatic hides and payout holds: not withdrawn.",
   record: "Record withdrawal",
   recordConfirmButton: "Record withdrawal",
-  recordTitle: "Record that this photographer withdrew consent?",
-  recordConfirm: 'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are.',
+  recordTitle: "Record a consent withdrawal",
+  recordConfirm: 'Use this when the photographer asks by email to withdraw consent. From now on nothing of theirs is taken off sale and no payout is held automatically. Their cases are shown to admins as "would have hidden". Photos already off sale and payouts already on hold stay as they are. The photographer is not told by QuickPitik. You can clear it later with Clear withdrawal.',
   recording: "Recording…",
   recorded: "Withdrawal recorded",
   recordFailed: "Couldn't record the withdrawal — please try again.",
@@ -423,7 +437,7 @@ export const CONSENT_WITHDRAWAL_TEXT = {
   clear: "Clear withdrawal",
   clearConfirmButton: "Clear withdrawal",
   clearTitle: "Clear the withdrawal?",
-  clearConfirm: "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms.",
+  clearConfirm: "Use this only when the photographer asks to give consent again. Automatic hides and payout holds can then apply to them again, if they accepted the current Terms. The photographer is not told by QuickPitik.",
   clearing: "Clearing…",
   cleared: "Withdrawal cleared",
   clearFailed: "Couldn't clear the withdrawal — please try again.",
