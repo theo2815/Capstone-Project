@@ -220,7 +220,12 @@ export function useAdminEventActions() {
       recoveryNotice: (id: string) => adminIntentRecoveryNotice(useAuthStore.getState().user?.id ?? "", id === "create" ? "event.create" : "event.update", id),
       isPending: (id: string) => mutation.isPending([{ kind: "event", id }]),
       pendingAction: (id: string) => mutation.pendingAction([{ kind: "event", id }]),
-      createEvent: (args: CreateAdminEventArgs) => run("create", "Creating…", "create", () => keyed("event.create", "create", args, (key) => createAdminEvent(args, key))),
+      // FT-22: resolves the server's row (or false), so the page can open the tab the server filed it under.
+      createEvent: async (args: CreateAdminEventArgs) => {
+        let row: AdminEventRow | undefined;
+        const ok = await run("create", "Creating…", "create", async () => (row = await keyed("event.create", "create", args, (key) => createAdminEvent(args, key))));
+        return ok && row ? row : false;
+      },
       editEvent: (id: string, patch: UpdateAdminEventPatch) => run(id, "Saving…", "update", () => keyed("event.update", id, patch, (key) => updateAdminEvent(id, patch, key))),
       deleteEvent: (id: string) => run(id, "Deleting…", "delete", () => deleteAdminEvent(id), id),
       approve: (id: string, revision?: number) => run(id, "Approving…", "approve", () => approveAdminEvent(id, revision)),

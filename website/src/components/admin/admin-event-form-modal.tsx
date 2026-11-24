@@ -136,6 +136,7 @@ export function AdminEventFormModal({
     };
   }, []);
   const submittingRef = useRef(false);
+  const fieldsRef = useRef<HTMLDivElement>(null);
   const draftTarget = useRef<string | null>(null);
   const wasOpen = useRef(false);
 
@@ -203,9 +204,9 @@ export function AdminEventFormModal({
   const parsedPrice = parsePrice(price, freeEvent);
   const priceValid = parsedPrice !== null;
   const shown = (id: string) => attempted || left.has(id);
-  const priceHint = !priceValid && shown("event-price-per-photo")
+  const priceError = !priceValid && shown("event-price-per-photo")
     ? "Enter a price above zero (e.g. 80 or 80.50)."
-    : undefined;
+    : null;
   const nameError = !trimmedName && shown("event-name") ? "Add a title." : null;
   const locationError = !trimmedLocation && shown("event-location") ? "Add the place." : null;
   const dateError = !dateValid && shown("event-date") ? "Pick the date." : null;
@@ -227,7 +228,12 @@ export function AdminEventFormModal({
 
   async function handleSubmit() {
     if (submitting || pending || submittingRef.current) return;
-    if (!fieldsValid || !pairValid || parsedPrice === null) { setAttempted(true); return; }
+    if (!fieldsValid || !pairValid || parsedPrice === null) {
+      setAttempted(true);
+      // noValidate (FT-22) also drops the browser's move to the first problem: do it after the errors render.
+      requestAnimationFrame(() => fieldsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"], button[aria-describedby$="-error"]')?.focus());
+      return;
+    }
     // User cleared an existing cover (Remove button) and didn't replace it.
     // The new file branch takes precedence in the parent + backend if the
     // user actually picked a replacement.
@@ -282,7 +288,7 @@ export function AdminEventFormModal({
       : "Save changes";
   const intro =
     mode === "create"
-      ? "Title, location, and date populate the event card across the app. The cover banner is optional — events without a cover fall back to the dark-text banner."
+      ? "Title, location, and date populate the event card across the app. The cover banner is optional — events without a cover fall back to the dark-text banner. The date decides which tab the event appears under."
       : `Update what runners see across /events, the photographer upload picker, and the admin board.`;
 
   return (
@@ -296,11 +302,13 @@ export function AdminEventFormModal({
       submitting={submitting || pending}
       pendingLabel={mode === "create" ? "Creating…" : "Saving…"}
       escDisabled={locationOpen}
+      noValidate
     >
-      {/* Blur marks a field as left; the browser's own check on submit (which also
-          focuses the first problem) counts as an attempt. When a press moved focus, the error waits for the press to end: shown mid-press,
+      {/* Blur marks a field as left; a submit with a field missing counts as an attempt (handleSubmit,
+          FT-22: no browser bubble). When a press moved focus, the error waits for the press to end: shown mid-press,
           its line pushes the pressed button down and the click is lost. */}
       <div
+        ref={fieldsRef}
         className="space-y-5"
         onBlur={(e) => {
           const id = e.target.id;
@@ -309,7 +317,6 @@ export function AdminEventFormModal({
           if (pressing.current) window.addEventListener("pointerup", () => setTimeout(mark), { once: true });
           else mark();
         }}
-        onInvalid={() => setAttempted(true)}
       >
       {recoveryNotice && <p role="status" className="font-sans text-sm text-slate">{recoveryNotice}</p>}
       {raceOptions.length > 0 && (
@@ -351,6 +358,7 @@ export function AdminEventFormModal({
         disabled={submitting || pending || regionsLoading || !!regionsError}
         panelClassName="z-[70]"
         onOpenChange={setLocationOpen}
+        required={pairRequired}
         errors={{
           region: catalogReady && pair.regionCode && !selectedRegion ? "Unrecognized region. Choose a current region to change this pair."
             : attempted && catalogReady && pairRequired && !pair.regionCode ? "Choose a region before saving." : null,
@@ -385,7 +393,8 @@ export function AdminEventFormModal({
         prefix="₱"
         placeholder="80"
         inputClassName="tnum"
-        hint={priceHint}
+        required
+        error={priceError}
       />
       {mode === "edit" && !event?.eventType && <p className="font-sans text-sm text-slate">Changing the price re-prices every photo already in this event. Orders already paid keep the price they were charged.</p>}
       {mode === "edit" && event?.eventType && <RacePriceList eventId={event.id} />}
@@ -541,6 +550,8 @@ function parsePrice(raw: string, allowZero = false): number | null {
   if (trimmed === "") return allowZero ? 0 : null;
   const num = Number(trimmed);
   if (!Number.isFinite(num) || num < 0 || (num === 0 && !allowZero)) return null;
+  // Whole centavos only: the form skips the browser's step check (FT-22), and the server rounds 0.001 to ₱0.00.
+  if (Math.round(num * 100) / 100 !== num) return null;
   return num;
 }
 

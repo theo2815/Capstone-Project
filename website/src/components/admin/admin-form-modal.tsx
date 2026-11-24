@@ -45,6 +45,8 @@ interface AdminFormModalProps {
   tone?: Tone;
   /** Why the last attempt failed; shown above the footer. */
   error?: string | null;
+  /** Skip the browser's own "Please fill out this field." bubble; the form reports its own errors. */
+  noValidate?: boolean;
   children: ReactNode;
 }
 export function AdminFormModal({
@@ -61,6 +63,7 @@ export function AdminFormModal({
   escDisabled = false,
   tone = "primary",
   error,
+  noValidate = false,
   children,
 }: AdminFormModalProps) {
   function handle(e: FormEvent) {
@@ -79,7 +82,7 @@ export function AdminFormModal({
       escDisabled={escDisabled || submitting}
       hideClose={submitting}
     >
-      <form onSubmit={handle} className="space-y-5">
+      <form onSubmit={handle} noValidate={noValidate} className="space-y-5">
         {intro && (
           <p className="font-sans text-sm text-ink-soft">{intro}</p>
         )}
