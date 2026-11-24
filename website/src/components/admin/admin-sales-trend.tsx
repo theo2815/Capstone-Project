@@ -9,7 +9,7 @@ import { SALES_TREND_WEEKS } from "@/lib/admin-sales";
 import { cn, formatPrice } from "@/lib/utils";
 import { AdminTrendChart } from "./admin-trend-chart";
 
-// 12-week GMV bars for /admin/sales, from GET /admin/sales/trend. Wraps
+// 12-week total-sales bars for /admin/sales, from GET /admin/sales/trend. Wraps
 // <AdminTrendChart> with weekly label formatting + peso readout so the same
 // visual idiom serves both daily activity (Overview) and weekly money (Sales).
 const WEEK_FORMATTER = new Intl.DateTimeFormat("en-PH", {
@@ -31,6 +31,8 @@ export function AdminSalesTrend() {
     [series],
   );
   const total = data.reduce((sum, p) => sum + p.amount, 0);
+  // Same all-zero check as the Overview trend: a sentence, not an empty grey chart.
+  const noSales = !!series?.every((p) => p.gmv === 0);
 
   if (!series && trendQuery.isError) {
     return (
@@ -60,19 +62,25 @@ export function AdminSalesTrend() {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
-        <Kicker>Weekly GMV · last {series.length} weeks</Kicker>
+        <Kicker>Weekly total sales · last {series.length} weeks</Kicker>
         <Kicker tone="soft" tnum>
           {formatPrice(total)} total
         </Kicker>
       </div>
 
-      <AdminTrendChart
-        data={data}
-        unitLabel="GMV"
-        ariaLabel={`Weekly gross merchandise volume for the last ${series.length} weeks`}
-        formatLabel={formatWeekLabel}
-        formatValue={formatPrice}
-      />
+      {noSales ? (
+        <p className="font-sans text-sm text-ink-soft">
+          No sales in the last {series.length} weeks.
+        </p>
+      ) : (
+        <AdminTrendChart
+          data={data}
+          unitLabel="total sales"
+          ariaLabel={`Weekly total sales for the last ${series.length} weeks`}
+          formatLabel={formatWeekLabel}
+          formatValue={formatPrice}
+        />
+      )}
     </div>
   );
 }

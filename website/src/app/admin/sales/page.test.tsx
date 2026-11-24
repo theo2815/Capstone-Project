@@ -64,12 +64,11 @@ it("shows no refund rate for a week without sales, even when an older sale was r
   state.week = { data: { ...week, gmv: 0, refundsIssued: 50 }, isError: false, isFetching: false, refetch: vi.fn() };
   render(<AdminSalesPage />);
   expect(screen.queryByText("0.00%")).toBeNull();
-  expect(screen.getByText("of this week's gross merch volume").closest("li")).toHaveTextContent("—");
+  expect(screen.getByText("of this week's total sales").closest("li")).toHaveTextContent("—");
 });
 
-it("reads the cut and the year's photo count from their values, not fixed copy", () => {
+it("reads the year's photo count from its value, not fixed copy", () => {
   render(<AdminSalesPage />);
-  expect(screen.getByText("25% of every sale")).toBeInTheDocument();
   expect(screen.getByText(/photos sold so far this year/)).toHaveTextContent("400 photos sold so far this year.");
 });
 
@@ -86,4 +85,30 @@ it("shows its guide intro, look-alike links and definitions without hover", () =
 it("the open refunds line says they wait for a decision", () => {
   render(<AdminSalesPage />);
   expect(screen.getByText("waiting for a decision")).toBeInTheDocument();
+});
+
+it("every money tile says its period, and the platform's share has one name (FT-26)", () => {
+  render(<AdminSalesPage />);
+  // The guide's definitions also name these terms, so find each tile by its caption.
+  expect(screen.getByText("400 photos sold · year to date").parentElement).toHaveTextContent(/^Total sales₱48,000\.00/);
+  expect(screen.getByText("QuickPitik's share after refunds · year to date").parentElement).toHaveTextContent(/^Platform cut₱9,600\.00/);
+  expect(screen.getAllByText("refunded to runners · year to date")).toHaveLength(1);
+  // The backend's net figure is the cut by construction, so there is no fourth tile.
+  expect(screen.queryByText("Net platform revenue")).toBeNull();
+  expect(screen.queryByText("Platform cut after refunds")).toBeNull();
+  for (const gone of [/Gross merch/, /Platform revenue/, /GMV/, /% of every sale/]) expect(screen.queryByText(gone)).toBeNull();
+});
+
+it("the section captions name their period in plain words (FT-26)", () => {
+  render(<AdminSalesPage />);
+  for (const caption of ["Year to date", "Total sales per week", "Sortable · estimates are marked", "This week and year to date"]) {
+    expect(screen.getByText(caption)).toBeInTheDocument();
+  }
+});
+
+it("the refund pulse names the open disputes in words (FT-26)", () => {
+  render(<AdminSalesPage />);
+  const row = screen.getByText("Disputes still open").closest("li")!;
+  expect(row).toHaveTextContent("0 open, 0 escalated");
+  expect(screen.queryByText("Open · escalated")).toBeNull();
 });

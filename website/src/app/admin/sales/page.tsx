@@ -13,18 +13,14 @@ import { ROUTES } from "@/lib/constants";
 import { useAdminSalesKpisQuery } from "@/hooks/use-admin-data";
 import { useRefundPulse } from "@/lib/admin-sales";
 import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
-import { PLATFORM_CUT_RATE } from "@/lib/platform-economics";
 import { cn, formatPrice } from "@/lib/utils";
 
 // /admin/sales — revenue intelligence. Five slabs:
 //   01 KPIs            server KPIs only (`range=ytd`); never a browser estimate
 //   02 Weekly trend    server weekly series (`/admin/sales/trend`)
 //   03 Top performers  server top photographers (year to date) and event order sums
-//   04 Sales by event  server order sums; browser-derived rows badged Implied
+//   04 Sales by event  server order sums; browser-derived rows badged Estimate
 //   05 Refund pulse    server refunds; rate against `range=week` GMV
-//
-// Per-photo price + cut rate live in lib/platform-economics.ts so this page
-// and the photographer-facing PlatformCutModal stay in lockstep.
 
 export default function AdminSalesPage() {
   const kpisQuery = useAdminSalesKpisQuery("ytd");
@@ -39,7 +35,7 @@ export default function AdminSalesPage() {
         id="kpis"
         number="01"
         title="Money"
-        caption="GMV and where it splits"
+        caption="Year to date"
       >
         {!kpis && kpisQuery.isError ? (
           <div role="alert" className="space-y-3">
@@ -60,33 +56,29 @@ export default function AdminSalesPage() {
             className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8"
             aria-busy="true"
           >
-            {Array.from({ length: 4 }, (_, i) => (
+            {Array.from({ length: 3 }, (_, i) => (
               <Skeleton key={i} className="h-40 w-full rounded-2xl" />
             ))}
           </div>
         ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 md:gap-8">
           <AdminStatTile
-            kicker="Gross merch volume"
+            kicker="Total sales"
             value={formatPrice(kpis.gmv)}
             caption={`${kpis.totalSalesCount.toLocaleString()} ${
               kpis.totalSalesCount === 1 ? "photo sold" : "photos sold"
-            }`}
+            } · year to date`}
           />
+          {/* One tile: the backend's netPlatformRevenue equals platformRevenue, refunds already taken out. */}
           <AdminStatTile
-            kicker="Platform revenue"
+            kicker="Platform cut"
             value={formatPrice(kpis.platformRevenue)}
-            caption={`${Math.round(PLATFORM_CUT_RATE * 100)}% of every sale`}
+            caption="QuickPitik's share after refunds · year to date"
           />
           <AdminStatTile
             kicker="Refunds issued"
             value={formatPrice(kpis.refundsIssued)}
-            caption={refundCaption(kpis.refundsIssued, refunds.refundCount)}
-          />
-          <AdminStatTile
-            kicker="Net platform revenue"
-            value={formatPrice(kpis.netPlatformRevenue)}
-            caption="cut minus refunds"
+            caption={`${refundCaption(kpis.refundsIssued, refunds.refundCount)} · year to date`}
           />
         </div>
         )}
@@ -96,7 +88,7 @@ export default function AdminSalesPage() {
         id="trend"
         number="02"
         title="Trend"
-        caption="GMV per week"
+        caption="Total sales per week"
       >
         <AdminSalesTrend />
       </Slab>
@@ -114,7 +106,7 @@ export default function AdminSalesPage() {
         id="by-event"
         number="04"
         title="Sales by event"
-        caption="Sortable · implied figures flagged"
+        caption="Sortable · estimates are marked"
       >
         <AdminSalesEventTable />
       </Slab>
@@ -123,7 +115,7 @@ export default function AdminSalesPage() {
         id="refunds"
         number="05"
         title="Refund pulse"
-        caption="Pressure on net revenue"
+        caption="This week and year to date"
       >
         <RefundPulseSummary refundsIssued={kpis?.refundsIssued} />
       </Slab>
@@ -171,11 +163,11 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
         <PulseRow
           label="Refund rate"
           value={rate === null ? "—" : `${rate.toFixed(2)}%`}
-          caption="of this week's gross merch volume"
+          caption="of this week's total sales"
         />
         <PulseRow
-          label="Open · escalated"
-          value={`${refunds.openCount} · ${refunds.escalatedCount}`}
+          label="Disputes still open"
+          value={`${refunds.openCount} open, ${refunds.escalatedCount} escalated`}
           caption="waiting for a decision"
         />
       </ul>

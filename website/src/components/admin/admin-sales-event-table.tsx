@@ -19,7 +19,7 @@ type SortDir = "asc" | "desc";
 const PAGE_SIZE = 10;
 
 const SORT_OPTIONS: Array<{ key: SortKey; label: string; defaultDir: SortDir }> = [
-  { key: "gmv", label: "GMV", defaultDir: "desc" },
+  { key: "gmv", label: "Total sales", defaultDir: "desc" },
   { key: "name", label: "Name", defaultDir: "asc" },
   { key: "date", label: "Date", defaultDir: "desc" },
   { key: "refunds", label: "Refunds", defaultDir: "desc" },
@@ -76,16 +76,22 @@ export function AdminSalesEventTable() {
 
   return (
     <div>
-      <div className="mb-5">
-        <AdminStatusTabs
-          label="Sort events by"
-          tabs={SORT_OPTIONS.map((opt) => ({
-            key: opt.key,
-            label: opt.key === sortKey ? `${opt.label} ${sortDir === "asc" ? "↑" : "↓"}` : opt.label,
-          }))}
-          value={sortKey}
-          onChange={handleSort}
-        />
+      {/* The label takes the tabs' own top margin and a 44px box, so it sits beside the first row of tabs. */}
+      <div className="mb-5 flex items-start gap-x-4">
+        <Kicker tone="soft" aria-hidden="true" className="mt-8 md:mt-10 min-h-[44px] flex items-center shrink-0">
+          Sort by
+        </Kicker>
+        <div className="flex-1 basis-0 min-w-0">
+          <AdminStatusTabs
+            label="Sort events by"
+            tabs={SORT_OPTIONS.map((opt) => ({
+              key: opt.key,
+              label: opt.key === sortKey ? `${opt.label} ${sortDir === "asc" ? "↑" : "↓"}` : opt.label,
+            }))}
+            value={sortKey}
+            onChange={handleSort}
+          />
+        </div>
       </div>
 
       {/* One desktop grid sizes the columns; the headings and every row are subgrids of it, so a big
@@ -97,7 +103,7 @@ export function AdminSalesEventTable() {
         >
           <Kicker tone="soft">Event</Kicker>
           <Kicker tone="soft" className="text-right">Date</Kicker>
-          <Kicker tone="soft" className="text-right">GMV</Kicker>
+          <Kicker tone="soft" className="text-right">Total sales</Kicker>
           <Kicker tone="soft" className="text-right">Platform cut</Kicker>
           <Kicker tone="soft" className="text-right">Refunds</Kicker>
         </div>
@@ -136,7 +142,7 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
               </p>
               {row.implied && (
                 <Kicker tone="soft" className="border border-line rounded-full px-2 py-0.5">
-                  Implied
+                  Estimate
                 </Kicker>
               )}
             </div>
@@ -146,8 +152,8 @@ function EventTableRow({ row }: { row: SalesEventRow }) {
           </div>
 
           <DataCell label="Date" value={formatLongDate(row.date, true)} mono />
-          <DataCell label="GMV" value={formatPrice(row.impliedGmv)} emphasis />
-          <DataCell label="Cut" value={formatPrice(row.impliedCut)} />
+          <DataCell label="Total sales" value={formatPrice(row.impliedGmv)} emphasis />
+          <DataCell label="Platform cut" value={formatPrice(row.impliedCut)} />
           <DataCell
             label="Refunds"
             value={row.refundsIssued > 0 ? `−${formatPrice(row.refundsIssued)}` : "—"}
