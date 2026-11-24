@@ -65,6 +65,13 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
         term: "Automatic check",
         meaning: "a rule the system runs by itself, for example on a new profile picture or a changed payout name.",
       },
+      { term: "Escalate", meaning: "marks a flag for a second look. Nobody is told, and any admin can still act on it." },
+      { term: "Escalated", meaning: "flags marked for a second look." },
+      {
+        term: "Hold payouts",
+        meaning:
+          "on an older Photo Relevance flag: stops the photographer's payouts until the flag is closed. The photographer is told.",
+      },
     ],
   },
   {
@@ -143,6 +150,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
       { term: "Retain", meaning: "keep the photo and put it back on sale." },
       { term: "Retain restricted", meaning: "keep the photo but leave it hidden, with a date to review it again." },
       { term: "Guest buyer", meaning: "someone who bought without an account; QuickPitik cannot message them." },
+      { term: "Source", meaning: "who filed the request: the runner, or support on their behalf." },
     ],
   },
   {
@@ -151,12 +159,12 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
     label: "Events",
     body: "Every event. Add one, edit its details and price, or hide it.",
     intro:
-      "Every event on QuickPitik. Add one, edit its details and price, or hide it. An event moves between the tabs by itself as its date passes.",
+      "Every event on QuickPitik. Add one, edit its details and price, or hide it. A published event moves from Upcoming to Live now to Recent by itself as its date passes. It moves to Archive only when its status is Archived.",
     instead: [{ when: "To approve an event a photographer made", label: "Event requests", href: ROUTES.ADMIN_EVENT_REQUESTS }],
     terms: [
-      { term: "Live now", meaning: "race day and the few days right after it." },
-      { term: "Recent", meaning: "the weeks after that, while the photos are on sale." },
-      { term: "Archive", meaning: "older events." },
+      { term: "Live now", meaning: "race day only. From the next day the event is under Recent." },
+      { term: "Recent", meaning: "every day after race day. An event stays here until its status is Archived." },
+      { term: "Archive", meaning: "events whose status is Archived. Age alone never moves an event here." },
     ],
   },
   {
@@ -190,6 +198,7 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
     intro:
       "A report, not a to-do list: totals as they stand right now, the decisions made this week, and the last 30 days.",
     instead: [{ when: "For today's work", label: "Inbox", href: ROUTES.ADMIN_INBOX }],
+    terms: [{ term: "Overdue", meaning: "past the due date on the dispute." }],
   },
   {
     number: "13",
@@ -205,6 +214,8 @@ const ADMIN_SECTION_GUIDE_ALL: ReadonlyArray<AdminSectionGuideEntry> = [
         term: "Estimate",
         meaning: "worked out from an event's photo count because no sales figure has arrived for it yet.",
       },
+      { term: "Refund pulse", meaning: "refunds and disputes: how much went back to runners, and what is still open." },
+      { term: "Escalated", meaning: "open disputes marked for more review." },
     ],
   },
   {
