@@ -254,7 +254,9 @@ class SellerDetailsService(
         }
         val page = sellerDetailsRepository.findForAdmin(filter, OffsetLimitPageable(params))
         val emails = userRepository.findAllById(page.content.map { it.userId }).associate { it.id to it.email }
-        return PaginatedResponse.of(page.content.map { it.toAdminRowDto(emails[it.userId].orEmpty()) }, page.totalElements, params)
+        return PaginatedResponse.of(page.content.map {
+            it.toAdminRowDto(emails[it.userId].orEmpty(), identityProperties.livenessMinConfidence, identityProperties.faceMinSimilarity)
+        }, page.totalElements, params)
     }
 
     /** E4: one record with 5-minute file links; every view is logged (which files, never the links). */
@@ -289,7 +291,10 @@ class SellerDetailsService(
             val user = users[m.userId]
             RepeatMatchDto(m.userId, user?.email.orEmpty(), m.matchedOn.map { it.name }, user?.suspendedAt != null)
         }
-        return row.toAdminDto(email(row.userId), matches, files, linksExpireAt)
+        return row.toAdminDto(
+            email(row.userId), matches, files, linksExpireAt,
+            identityProperties.livenessMinConfidence, identityProperties.faceMinSimilarity,
+        )
     }
 
     /** E5: only a MANUAL_REVIEW record at the revision the admin opened. */
