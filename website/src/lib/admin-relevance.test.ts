@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { alertKindLabel, caseActions, verdictNoteLabel, type RelevanceCaseDetail, type RelevanceCaseRow } from "./admin-relevance";
+import {
+  alertKindLabel, batchCountLine, caseActions, heldPhotosRefetchMs, verdictNoteLabel, type RelevanceCaseDetail, type RelevanceCaseRow,
+} from "./admin-relevance";
 
 // RVF-19: the closed-case restore (RVF-11), the no-consent mark (RVF-9) and the words-only labels (RVF-7, W3).
 const row: RelevanceCaseRow = {
@@ -37,6 +39,30 @@ describe("caseActions", () => {
     expect(caseActions(detail(recordOnly({ verdictNote: "NO_CONSENT" })), false)).toEqual(["hide_batch"]);
     expect(caseActions(detail(recordOnly({ verdictNote: null })), false)).toEqual([]);
   });
+
+  it("FU-11 (O9): a record-only Can't tell case offers Looks fine, which the server allows in every mode", () => {
+    const cantTell = recordOnly({ verdict: "CANT_TELL", action: "NONE", wouldHave: false, junkPercent: 40 });
+    expect(caseActions(detail(cantTell), false)).toEqual(["looks_fine"]);
+    expect(caseActions(detail(cantTell, "CLOSED"), false)).toEqual([]);
+  });
+});
+
+it("FU-11 (U11.2): the batch line says one photo or many", () => {
+  expect(batchCountLine(1, "@juanshots")).toBe("1 photo in this batch, from @juanshots.");
+  expect(batchCountLine(2, "@juanshots")).toBe("2 photos in this batch, from @juanshots.");
+  expect(batchCountLine(0, "@juanshots")).toBe("0 photos in this batch, from @juanshots.");
+});
+
+it("FU-11: the held photos are read again every 10 seconds only while a whole-batch hide is still running", () => {
+  const d = (r: RelevanceCaseRow, stage = "APPLIED") => ({ case: r, stage });
+  expect(heldPhotosRefetchMs(d(row), 419)).toBe(10_000);
+  expect(heldPhotosRefetchMs(d({ ...row, verdict: "CANT_TELL", verdictNote: "ADMIN_HIDE" }), 0)).toBe(10_000);
+  // Every photo of the batch is held: the hide is through.
+  expect(heldPhotosRefetchMs(d(row), 420)).toBe(false);
+  expect(heldPhotosRefetchMs(d(row, "CLOSED"), 0)).toBe(false);
+  expect(heldPhotosRefetchMs(d(recordOnly({})), 0)).toBe(false);
+  expect(heldPhotosRefetchMs(d({ ...row, action: "HIDE_JUNK" }), 0)).toBe(false);
+  expect(heldPhotosRefetchMs(d({ ...row, verdict: "CANT_TELL", action: "NONE" }), 0)).toBe(false);
 });
 
 it("the words-only note and alert have labels", () => {

@@ -130,7 +130,7 @@ export function RelevanceCaseActions({
 /** The batch's holds, restored ones greyed, with a single-photo restore while the case is current or closed. */
 export function RelevanceHiddenPhotos({ detail }: { detail: RelevanceCaseDetail }) {
   const caseId = detail.case.caseId;
-  const query = useRelevanceHiddenPhotos(caseId);
+  const query = useRelevanceHiddenPhotos(caseId, detail);
   const { restorePhoto, isPending } = useRelevanceActions();
   const { showToast } = useToast();
   const current = restoresHolds(detail.stage);

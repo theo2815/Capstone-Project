@@ -104,6 +104,31 @@ it("a can't tell case shows Looks fine and Hide batch", async () => {
   expect(within(hidden).queryByRole("button", { name: "Hide batch…" })).not.toBeInTheDocument();
 });
 
+it("FU-11 (O9): a record-only can't tell case offers Looks fine only", async () => {
+  const user = userEvent.setup();
+  rows = [{ ...cantTell, appliedMode: "RECORD_ONLY" }];
+  mount();
+  const d = await drawer();
+  await within(d).findByRole("button", { name: "Looks fine…" });
+  expect(buttons(d).filter((b) => b !== "Close")).toEqual(["Looks fine…"]);
+  await user.click(within(d).getByRole("button", { name: "Looks fine…" }));
+  await user.click(screen.getByRole("button", { name: "Confirm looks fine" }));
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith("/admin/relevance/cases/c1/looks-fine"));
+});
+
+it("FU-11: while a whole-batch hide runs, the held photos are read again every 10 seconds; then it stops", async () => {
+  rows = [autoHide];
+  holds = async () => ({ items: [hold("p1")], total: 1, offset: 0, limit: 100 });
+  mount();
+  await within(await drawer()).findByRole("list", { name: "Held photos" });
+  const intervals = () => client.getQueryCache().find({ queryKey: ["admin", "relevance", "hidden-photos", "c1"], exact: false })!
+    .observers.map((o) => o.options.refetchInterval);
+  expect(intervals()).toContain(10_000);
+  holds = async () => ({ items: Array.from({ length: 100 }, (_, i) => hold(`p${i}`)), total: 420, offset: 0, limit: 100 });
+  await act(async () => { await client.invalidateQueries({ queryKey: ["admin", "relevance", "hidden-photos"] }); });
+  await waitFor(() => expect(intervals()).not.toContain(10_000));
+});
+
 it("each action waits for the server before the row changes", async () => {
   const user = userEvent.setup();
   let release!: (v: unknown) => void;
