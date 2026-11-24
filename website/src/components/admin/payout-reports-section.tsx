@@ -3,10 +3,11 @@
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAdminPayoutById, useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import { ADMIN_PAYOUT_STATUS_LABEL } from "@/lib/admin-payouts";
 import { useAdminKpis } from "@/hooks/use-admin-data";
+import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -61,7 +62,8 @@ const STATUSES = Object.keys(PAYOUT_REPORT_STATUS_LABEL) as PayoutReportStatus[]
 const parseStatus = (raw: string): PayoutReportStatus =>
   STATUSES.includes(raw as PayoutReportStatus) ? (raw as PayoutReportStatus) : "open";
 
-export function PayoutReportsSection() {
+// keyScope: the second list on its page (Payouts), so J/K/Enter work here only while focus is inside it.
+export function PayoutReportsSection({ keyScope = false }: { keyScope?: boolean } = {}) {
   const { acknowledge, resolve, isPending, pendingAction } = usePayoutReportActions();
   const [status, setStatus] = useUrlState<PayoutReportStatus>("reportStatus", "open", { parse: parseStatus });
   const list = useAdminPayoutReportsPage(status);
@@ -92,6 +94,19 @@ export function PayoutReportsSection() {
       : null),
     [reportRowId, reports, picked],
   );
+
+  const scopeRef = useRef<HTMLDivElement>(null);
+  const rowIds = useMemo(() => reports.map((r) => r.id), [reports]);
+  const { focusedId, setFocusedId } = useQueueKeyboardNav({
+    rowIds,
+    disabled: !!reportRowId,
+    onActivate: (id) => {
+      setPicked(reports.find((r) => r.id === id) ?? null);
+      setReportRowId(id);
+    },
+    scopeRef: keyScope ? scopeRef : undefined,
+  });
+  useEffect(() => { if (reportRowId) setFocusedId(reportRowId); }, [reportRowId, setFocusedId]);
 
   async function handleAcknowledge(note: string) {
     if (!openReport || submitting) return;
@@ -126,6 +141,8 @@ export function PayoutReportsSection() {
       caption="Filed against payouts they didn't receive or expect"
       trailing={openCount !== undefined ? <span className="tnum">{openCount} open</span> : undefined}
     >
+      {/* Inside the Slab, so the Slab stays a sibling of the slabs before it (its first: styles). */}
+      <div ref={scopeRef} data-kbd-scope={keyScope ? "" : undefined}>
       <AdminStatusTabs
         label="Report status"
         tabs={STATUSES.map((key) => ({
@@ -156,6 +173,7 @@ export function PayoutReportsSection() {
               <li key={report.id}>
                 <ReportRow
                   report={report}
+                  focused={focusedId === report.id}
                   cycleAmount={cyclesById.get(report.payoutCycleId)?.amount}
                   onOpen={() => { setPicked(report); setReportRowId(report.id); }}
                 />
@@ -224,6 +242,7 @@ export function PayoutReportsSection() {
           }
         />
       )}
+      </div>
     </Slab>
   );
 }
@@ -232,6 +251,7 @@ interface ReportRowProps {
   report: PayoutReport;
   cycleAmount: number | undefined;
   onOpen: () => void;
+  focused: boolean;
 }
 
 function CycleLink({ cycleId }: { cycleId: string }) {
@@ -246,9 +266,9 @@ function CycleLink({ cycleId }: { cycleId: string }) {
 }
 
 // AX-4 row pattern: the title button covers the card; the cycle link sits above it.
-function ReportRow({ report, cycleAmount, onOpen }: ReportRowProps) {
+function ReportRow({ report, cycleAmount, onOpen, focused }: ReportRowProps) {
   return (
-    <article className="relative rounded-2xl border border-line bg-bone hover:bg-bone-deep/60 transition-colors px-4 py-4 md:px-5 md:py-5">
+    <article data-row-id={report.id} className={cn("relative rounded-2xl border border-line bg-bone hover:bg-bone-deep/60 transition-colors px-4 py-4 md:px-5 md:py-5", focused && "ring-2 ring-ink ring-offset-2 ring-offset-bone")}>
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">

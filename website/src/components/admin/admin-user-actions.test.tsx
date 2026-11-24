@@ -378,5 +378,7 @@ it("a held profile's drawer buttons read Send back, then Approve", async () => {
   mount(true);
   const drawer = await screen.findByRole("dialog");
   const footer = drawer.querySelector("footer")!;
-  expect(within(footer).getAllByRole("button").map((b) => b.textContent)).toEqual(["Send back…", "Approve…"]);
+  // FT-36: Send back… carries its R key cap, which stays out of the button's name.
+  expect(within(footer).getAllByRole("button").map((b) => b.textContent)).toEqual(["Send back…R", "Approve…"]);
+  expect(within(footer).getByRole("button", { name: "Send back…" })).toBeInTheDocument();
 });

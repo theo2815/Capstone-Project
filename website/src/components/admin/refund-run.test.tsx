@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -136,4 +136,15 @@ it("loading shows skeleton rows, and a failed load says Couldn't load refunds. w
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByText("Couldn't load refunds.")).toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+it("FT-36: J rings the first refund and Enter opens it", async () => {
+  fixtures.search = "view=refund_run";
+  seed([parked(1), parked(2)]);
+  wrap(<DisputesQueue />);
+  const first = (await screen.findByText("@runner-1")).closest("article") as HTMLElement;
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  expect(first.className).toContain("ring-2");
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(fixtures.router.replace.mock.calls.at(-1)?.[0]).toContain("row=dispute-1");
 });

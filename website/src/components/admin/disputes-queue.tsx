@@ -205,7 +205,7 @@ export function DisputesQueue() {
         )}
 
         {view === "refund_run" ? (
-          <RefundRun onOpen={handleOpenRow} />
+          <RefundRun onOpen={handleOpenRow} focusedId={focusedId} />
         ) : list.isLoading ? (
           <div aria-busy="true" className="space-y-4">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>
         ) : list.error && items.length === 0 ? (

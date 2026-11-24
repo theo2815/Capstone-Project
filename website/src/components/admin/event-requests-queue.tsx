@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AdminConfirmModal, AdminFormModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/button-styles";
 import Link from "next/link";
 import { useAdminEvents, useAdminEventActions } from "@/hooks/use-admin-events";
+import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import { useRaceTypes } from "@/hooks/use-race-types";
 import { useRegions } from "@/hooks/use-regions";
 import { useToast } from "@/hooks/use-toast";
@@ -100,7 +101,18 @@ export function EventRequestsQueue() {
   }
 
   const changes = rows?.filter((r) => r.reviewStatus === "change_pending").length ?? 0;
-  const shown = rows?.filter((r) => kind === "all" || (r.reviewStatus === "change_pending") === (kind === "changes"));
+  const shown = useMemo(() => rows?.filter((r) => kind === "all" || (r.reviewStatus === "change_pending") === (kind === "changes")), [rows, kind]);
+  const listRef = useRef<HTMLUListElement>(null);
+  const rowIds = useMemo(() => (shown ?? []).map((r) => r.id), [shown]);
+  const { focusedId } = useQueueKeyboardNav({
+    rowIds,
+    disabled: rejecting !== null || joining !== null || approving !== null,
+    // A request has no drawer: Enter puts focus on its buttons, and each of them asks first.
+    onActivate: (id) => {
+      const li = Array.from(listRef.current?.children ?? []).find((el) => (el as HTMLElement).dataset.rowId === id);
+      li?.querySelector("button")?.focus();
+    },
+  });
 
   return (
     // ER4: the page header (or the Inbox chip) already names the queue; the h2 stays for screen readers.
@@ -140,11 +152,12 @@ export function EventRequestsQueue() {
           {shown?.length === 0 ? (
             <p className="font-sans text-sm text-slate-soft pt-6">Nothing of this kind is waiting.</p>
           ) : (
-            <ul className="divide-y divide-line border-b border-line">
+            <ul ref={listRef} className="divide-y divide-line border-b border-line">
               {shown?.map((row) => (
                 <RequestRow
                   key={row.id}
                   row={row}
+                  focused={focusedId === row.id}
                   busy={isPending(row.id)}
                   pendingLabel={pendingAction(row.id)}
                   onApprove={() => setApprovingId(row.id)}
@@ -296,6 +309,7 @@ function waitingLine(row: AdminEventRow) {
 
 function RequestRow({
   row,
+  focused,
   busy,
   pendingLabel,
   onApprove,
@@ -303,6 +317,7 @@ function RequestRow({
   onSameRace,
 }: {
   row: AdminEventRow;
+  focused: boolean;
   busy: boolean;
   pendingLabel: string | null;
   onApprove: () => void;
@@ -330,7 +345,7 @@ function RequestRow({
 
   return (
     // Side by side only from lg: at md the admin sidebar leaves too little room.
-    <li className="py-5 md:py-6 flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-8">
+    <li data-row-id={row.id} className={cn("py-5 md:py-6 flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-8", focused && "ring-2 ring-inset ring-ink")}>
       <div className="flex-1 min-w-0">
         <div className="mb-4 w-full sm:w-56 aspect-[16/9] rounded-xl overflow-hidden border border-line bg-bone-deep">
           {row.bannerUrl ? (

@@ -17,6 +17,7 @@ import {
 import { PAGE_SIZE } from "@/lib/pagination-config";
 import { ROUTES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { KBD_CLASS } from "@/components/admin/keyboard-hint-pill";
 import { AdminRejectModal } from "@/components/admin/admin-reject-modal";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
@@ -490,7 +491,7 @@ export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: Reac
                 onClick={() => openRejection(false)}
                 className={`${BTN_DANGER} ${BTN_SIZE.sm}`}
               >
-                Send back…
+                Send back…<kbd aria-hidden="true" className={`${KBD_CLASS} hidden md:inline`}>R</kbd>
               </button>
               {openRow.adminHold && (
                 <button

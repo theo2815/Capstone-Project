@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -21,6 +21,7 @@ let client: QueryClient;
 let reports: PayoutReport[];
 let total: number;
 beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn();
   reports = [report];
   total = 1;
   useAuthStore.getState().setUser(admin);
@@ -197,4 +198,12 @@ it("loading shows skeleton rows, and a failed load says Couldn't load payout rep
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByText("Couldn't load payout reports.")).toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+});
+
+it("FT-36: J then Enter opens the first report", async () => {
+  renderSection();
+  await screen.findByRole("button", { name: /report-1/ });
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
 });

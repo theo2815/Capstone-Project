@@ -15,7 +15,7 @@ import { useAdminPaletteStore } from "@/store/admin-palette-store";
 // Four hooks split by surface:
 //   - useAdminLegendShortcut() — global `?` toggles the shortcut legend.
 //     Mount once inside <AdminShell>.
-//   - useQueueKeyboardNav({ rowIds, disabled, onActivate }) — J/K cycle
+//   - useQueueKeyboardNav({ rowIds, disabled, onActivate, scopeRef? }) — J/K cycle
 //     through queue rows, Enter (from the page, not a control) activates the focused id. The queue
 //     threads the returned focusedId to its row components and slaps a
 //     data-row-id="<id>" attribute on each row root so the hook can scroll
@@ -56,12 +56,32 @@ interface QueueNavOpts {
   rowIds: string[];
   disabled: boolean;
   onActivate: (id: string) => void;
+  // A second list on one page: its container carries `data-kbd-scope` and is passed here. It takes
+  // J/K/Enter only while focus is inside it; the list with no scopeRef is the primary one and takes the rest.
+  scopeRef?: RefObject<HTMLElement | null>;
+}
+
+// The scoped list that last took a key. J/K blur the row, so the next key comes from the page body
+// and must stay with that list.
+let lastScope: Element | null = null;
+
+function ownsKey(target: EventTarget | null, scope: HTMLElement | null): boolean {
+  const onBody = target === document.body;
+  // A drawer or dialog (portaled to the body) sits over the lists: its keys never move one behind it.
+  if (target instanceof Element && target.closest('[role="dialog"]')) return false;
+  const held = target instanceof Element ? target.closest("[data-kbd-scope]") : null;
+  const owner = held ?? (onBody && lastScope?.isConnected ? lastScope : null);
+  if (scope ? owner !== scope : owner !== null) return false;
+  if (scope) lastScope = scope;
+  else if (!onBody) lastScope = null;
+  return true;
 }
 
 export function useQueueKeyboardNav({
   rowIds,
   disabled,
   onActivate,
+  scopeRef,
 }: QueueNavOpts) {
   const legendOpen = useAdminLegendStore((s) => s.open);
   const paletteOpen = useAdminPaletteStore((s) => s.open);
@@ -81,11 +101,12 @@ export function useQueueKeyboardNav({
   // calm on small movements and snaps just enough on big jumps.
   useEffect(() => {
     if (!focusedId) return;
-    const el = document.querySelector(
+    // Within the list's own scope: a photographer can be a row in both lists on one page.
+    const el = (scopeRef?.current ?? document).querySelector(
       `[data-row-id="${cssEscape(focusedId)}"]`,
     ) as HTMLElement | null;
     if (el) el.scrollIntoView({ block: "nearest" });
-  }, [focusedId]);
+  }, [focusedId, scopeRef]);
 
   // Capture latest onActivate without re-binding the listener on every
   // render — queues commonly hand a freshly-bound handler.
@@ -104,11 +125,14 @@ export function useQueueKeyboardNav({
       const isK = key === "k" || key === "K";
       const isEnter = key === "Enter";
       if (!isJ && !isK && !isEnter) return;
+      if (!ownsKey(e.target, scopeRef?.current ?? null)) return;
 
       const idx = focusedId ? rowIds.indexOf(focusedId) : -1;
       // J/K moves the row ring, so real focus must leave the old row too, or Enter would open that one.
+      // A scoped list is entered through its own controls (a filter), so it also takes focus off those.
       const active = document.activeElement;
-      if (!isEnter && active instanceof HTMLElement && active.closest("[data-row-id]")) active.blur();
+      const scope = scopeRef?.current;
+      if (!isEnter && rowIds.length > 0 && active instanceof HTMLElement && (active.closest("[data-row-id]") || scope?.contains(active))) active.blur();
 
       if (isJ) {
         if (rowIds.length === 0) return;
@@ -134,7 +158,7 @@ export function useQueueKeyboardNav({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [effectiveDisabled, rowIds, focusedId]);
+  }, [effectiveDisabled, rowIds, focusedId, scopeRef]);
 
   const setFocusedId = useCallback((id: string | null) => {
     setFocusedIdState(id);

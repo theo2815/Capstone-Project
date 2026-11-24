@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { KICKER_SIZE_CLASS } from "@/components/ui/kicker";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { AdminConfirmModal } from "@/components/admin/admin-form-modal";
 import { AdminTextarea } from "@/components/admin/admin-form-fields";
@@ -15,6 +15,7 @@ import { Modal } from "@/components/ui/modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LoadError } from "@/components/ui/load-error";
 import { useAdminKpis } from "@/hooks/use-admin-data";
+import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
 import {
   useAdminSellerDetailsActions,
   useAdminSellerDetailsList,
@@ -24,7 +25,7 @@ import { EMPTY_ADMIN_USERS, useAdminPhotographerSettings, useAdminUsers } from "
 import { useToast } from "@/hooks/use-toast";
 import { useUrlState } from "@/hooks/use-url-state";
 import { ApiError } from "@/lib/api";
-import { SELLER_ID_TYPES, type AdminSellerDetails, type AdminSellerFilter, type RepeatMatch } from "@/lib/api-seller-details";
+import { SELLER_ID_TYPES, type AdminSellerDetails, type AdminSellerDetailsRow, type AdminSellerFilter, type RepeatMatch } from "@/lib/api-seller-details";
 import { captureAuthSession } from "@/lib/auth-session";
 import { ROUTES } from "@/lib/constants";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
@@ -58,6 +59,7 @@ type FilterKey = (typeof FILTERS)[number][0];
 const FILTER_COUNT = { manual_review: "waiting", auto_approved: "auto-approved", all: "in all" } as const;
 const FILTER_EMPTY = { manual_review: "No seller details waiting. You're caught up.", auto_approved: "No auto-approved seller details.", all: "No seller details yet." } as const;
 const LINK_LIFETIME_MS = 5 * 60_000;
+const EMPTY_ROWS: AdminSellerDetailsRow[] = [];
 const REASON_ID = "seller-reject-reason";
 const idLabel = (value: string) => SELLER_ID_TYPES.find((t) => t.value === value)?.label ?? value;
 const statusLabel = (reviewState: string) => STATUS_LABEL[reviewState] ?? reviewState;
@@ -79,7 +81,8 @@ const rowReason = (codes: string[]) => {
 // SC-2b: admins review photographers' seller details (ID photos, a selfie
 // holding the ID) on the verifications page, separate from verification itself.
 // AA-I16: manual-review cases first (the server sorts), with the automatic results.
-export function SellerDetailsQueue({ number = "04" }: { number?: string } = {}) {
+// keyScope: the second list on its page (Verifications), so J/K/Enter work here only while focus is inside it.
+export function SellerDetailsQueue({ number = "04", keyScope = false }: { number?: string; keyScope?: boolean } = {}) {
   const [rawFilter, setFilter] = useUrlState<string>("sd", "manual_review");
   const key: FilterKey = FILTERS.find(([k]) => k === rawFilter)?.[0] ?? "manual_review";
   const status: AdminSellerFilter = key === "all" ? null : key;
@@ -91,12 +94,23 @@ export function SellerDetailsQueue({ number = "04" }: { number?: string } = {}) 
   const list = useAdminSellerDetailsList(status, limit);
   // Absent until the backend sends it (AX-8): the tab then shows no count rather than 0.
   const waiting = useAdminKpis()?.pendingSellerDetails;
-  const rows = list.data?.items ?? [];
+  const rows = list.data?.items ?? EMPTY_ROWS;
   const total = list.data?.total ?? 0;
+  const scopeRef = useRef<HTMLDivElement>(null);
+  const rowIds = useMemo(() => rows.map((r) => r.userId), [rows]);
+  const { focusedId, setFocusedId } = useQueueKeyboardNav({
+    rowIds,
+    disabled: !!openId,
+    onActivate: setOpenId,
+    scopeRef: keyScope ? scopeRef : undefined,
+  });
+  useEffect(() => { if (openId) setFocusedId(openId); }, [openId, setFocusedId]);
 
   return (
     <Slab id="seller-details" number={number} title="Seller details" caption="ID checks before uploads"
       trailing={<span className="tnum">{total} {FILTER_COUNT[key]}</span>}>
+      {/* Inside the Slab, so the Slab stays a sibling of the slabs before it (its first: styles). */}
+      <div ref={scopeRef} data-kbd-scope={keyScope ? "" : undefined}>
       <AdminStatusTabs label="Filter seller details" value={key} onChange={setFilter}
         tabs={FILTERS.map(([k, label]) => ({ key: k, label, count: k === "manual_review" ? waiting : undefined }))} />
       <div className="pt-6">
@@ -114,9 +128,9 @@ export function SellerDetailsQueue({ number = "04" }: { number?: string } = {}) 
             {rows.map((row) => {
               const reason = row.reviewState === "manual_review" ? rowReason(row.reasonCodes ?? []) : null;
               return (
-              <li key={row.userId}>
+              <li key={row.userId} data-row-id={row.userId}>
                 <button type="button" onClick={() => setOpenId(row.userId)}
-                  className="w-full flex items-center justify-between gap-4 border-b border-line pb-3 text-left hover:bg-bone-deep/50">
+                  className={cn("w-full flex items-center justify-between gap-4 border-b border-line pb-3 text-left hover:bg-bone-deep/50", focusedId === row.userId && "ring-2 ring-ink ring-offset-2 ring-offset-bone")}>
                   <span className="min-w-0">
                     <span className="block font-display text-base text-ink truncate">{row.legalName}</span>
                     <span className="block font-sans text-sm text-slate-soft mt-1">
@@ -136,6 +150,7 @@ export function SellerDetailsQueue({ number = "04" }: { number?: string } = {}) 
       )}
       </div>
       {openId && <SellerDetailsDrawer userId={openId} onClose={() => setOpenId("")} />}
+      </div>
     </Slab>
   );
 }

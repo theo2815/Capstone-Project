@@ -434,3 +434,23 @@ it("the record loads behind a skeleton, and a failed record says Couldn't load s
   expect(within(alert).getByText("Couldn't load seller details.")).toBeInTheDocument();
   expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
 });
+
+it("FT-36: J then Enter opens the first row", async () => {
+  renderQueue();
+  await screen.findByRole("button", { name: /Juan Dela Cruz/ });
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});
+
+it("FT-36: on Verifications (keyScope) the keys answer once focus is inside Seller details", async () => {
+  render(<QueryClientProvider client={client}><SellerDetailsQueue keyScope /></QueryClientProvider>);
+  await screen.findByRole("button", { name: /Juan Dela Cruz/ });
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  screen.getByRole("button", { name: /^Needs review/ }).focus();
+  act(() => { fireEvent.keyDown(document.activeElement!, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.activeElement!, { key: "Enter" }); });
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});

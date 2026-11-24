@@ -44,6 +44,7 @@ import {
 import { FlagRelevanceEvidence } from "@/components/admin/flag-relevance-evidence";
 import { LogoPlaceholder } from "@/components/ui/logo-placeholder";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
+import { KBD_CLASS } from "@/components/admin/keyboard-hint-pill";
 
 const DONE_LABEL = {
   hide: "Hidden",
@@ -605,7 +606,7 @@ function FlagDrawerActions({
           onClick={onHide}
           className={dangerBtn}
         >
-          Hide…
+          Hide…<kbd aria-hidden="true" className={`${KBD_CLASS} hidden md:inline`}>H</kbd>
         </button>
       )}
     </>

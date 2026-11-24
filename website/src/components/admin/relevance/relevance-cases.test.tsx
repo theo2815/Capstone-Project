@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -36,6 +36,7 @@ let one: () => Promise<RelevanceCaseDetail>;
 let kpis: () => Promise<unknown>;
 let client: QueryClient;
 beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn();
   fixtures.search = "";
   fixtures.router.replace.mockClear();
   useAuthStore.getState().setUser(admin);
@@ -290,4 +291,12 @@ it("the drawer explains the verdict and Technical details is closed by default",
   expect(within(drawer).getByText("Evidence used: Junk share")).toBeInTheDocument();
   expect(within(drawer).getByText("Junk band")).toBeInTheDocument();
   expect(within(drawer).getByText("Summary sent to the model")).toBeInTheDocument();
+});
+
+it("FT-36: J then Enter opens the first case", async () => {
+  render(<QueryClientProvider client={client}><RelevanceCases /></QueryClientProvider>);
+  await screen.findByText("Cebu City Marathon 2003");
+  act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
+  act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
+  expect(fixtures.router.replace.mock.calls.at(-1)?.[0]).toContain("row=c1");
 });

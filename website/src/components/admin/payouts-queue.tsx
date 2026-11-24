@@ -39,6 +39,7 @@ import {
 } from "@/lib/admin-payouts";
 import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
+import { KBD_CLASS } from "@/components/admin/keyboard-hint-pill";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 
 interface SingleHoldTarget {
@@ -810,7 +811,7 @@ function PayoutDrawerActions({
     <>
       {(s === "pending_review" || s === "approved" || s === "processing") && (
         <button type="button" disabled={submitting} onClick={onHold} className={DANGER}>
-          Hold…
+          Hold…<kbd aria-hidden="true" className={`${KBD_CLASS} hidden md:inline`}>H</kbd>
         </button>
       )}
       {(s === "pending_review" || s === "approved" || s === "held") && (
@@ -838,7 +839,7 @@ function PayoutDrawerActions({
       )}
       {(s === "pending_review" || s === "held") && (
         <button type="button" disabled={blocked || ownApproval} aria-describedby={ownApproval ? "payout-own-approval-note" : undefined} onClick={onApprove} className={PRIMARY}>
-          Approve…
+          Approve…{!blocked && !ownApproval && <kbd aria-hidden="true" className={`${KBD_CLASS} hidden md:inline`}>E</kbd>}
         </button>
       )}
     </>

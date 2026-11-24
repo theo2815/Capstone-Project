@@ -28,7 +28,7 @@ export default function AdminPayoutsPage() {
     <>
       <Header pendingCount={pendingCount} totalPending={totalPending} openReports={openReports} />
       <PayoutsQueue />
-      <PayoutReportsSection />
+      <PayoutReportsSection keyScope />
     </>
   );
 }

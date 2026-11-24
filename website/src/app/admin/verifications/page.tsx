@@ -21,7 +21,7 @@ export default function AdminVerificationsPage() {
     <>
       <Header pendingCount={pendingCount} sellerDetailsCount={sellerDetailsCount} />
       {/* C-01: the ID checks sit above the history; slab numbers follow W41.3. */}
-      <VerificationsQueue afterIncomplete={<SellerDetailsQueue number="03" />} />
+      <VerificationsQueue afterIncomplete={<SellerDetailsQueue number="03" keyScope />} />
     </>
   );
 }
