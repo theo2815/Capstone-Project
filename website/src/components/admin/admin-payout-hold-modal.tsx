@@ -29,9 +29,12 @@ const HOLD_REASONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "manual_check", label: "We are checking this payout by hand" },
   { value: "other", label: "Other (see note)" },
 ];
+const NOTE_SEPARATOR = " — ";
+// FU-9 (FT-33): the server refuses a reason over 255 characters, so the note leaves room for the longest label.
+const NOTE_MAX = 255 - Math.max(...HOLD_REASONS.map((r) => r.label.length)) - NOTE_SEPARATOR.length;
 
 // Hold-payout modal — used both for single-row and bulk hold actions.
-// Same shape as suspend/reject — radio + 280-char note composed into the
+// Same shape as suspend/reject — radio + note (NOTE_MAX) composed into the
 // reason string passed to usePayoutActions().hold or .bulkHold.
 export function AdminPayoutHoldModal({
   open,
@@ -59,7 +62,7 @@ export function AdminPayoutHoldModal({
       HOLD_REASONS.find((r) => r.value === selectedReason)?.label ??
       selectedReason;
     const composed =
-      note.trim().length > 0 ? `${label} — ${note.trim()}` : label;
+      note.trim().length > 0 ? `${label}${NOTE_SEPARATOR}${note.trim()}` : label;
     setFailed(false);
     setFailed((await onSubmit(composed)) === false);
   }
@@ -103,7 +106,7 @@ export function AdminPayoutHoldModal({
           name="hold-reason"
           options={HOLD_REASONS}
           value={selectedReason}
-          onChange={setSelectedReason}
+          onChange={(reason) => { setSelectedReason(reason); setAttempted(false); }}
         />
       </AdminFormSection>
       <AdminTextarea
@@ -112,7 +115,7 @@ export function AdminPayoutHoldModal({
         error={attempted && noteMissing ? "Add a note: Other needs one." : null}
         value={note}
         onChange={setNote}
-        maxLength={280}
+        maxLength={NOTE_MAX}
         placeholder="What context should the photographer see?"
         hint="Seen by: the photographer, exactly as written."
       />

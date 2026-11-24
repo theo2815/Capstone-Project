@@ -74,6 +74,8 @@ export interface AdminPayoutCycle {
    */
   approvedBy: string | null;
   secondApprovedBy: string | null;
+  /** FU-2: the server's two-admin rule for this payout, before or after a first approval. Absent on an older backend. */
+  needsTwoApprovals?: boolean;
   payoutAccount: PayoutAccountSnapshot;
   /** Open relevance flag on this photographer, if any (PE-2.2). */
   relevanceFlagId: string | null;
@@ -84,6 +86,14 @@ export interface AdminPayoutCycle {
 /** Approve, Mark processing and Mark paid are refused by the server while this is true. */
 export function payoutActionsBlockedByHold(cycle: Pick<AdminPayoutCycle, "relevanceHold">): boolean {
   return cycle.relevanceHold;
+}
+
+/** FU-9 (U9.2): what the Approve confirm says this approval does. Null when an older backend leaves it unknown. */
+export function payoutApproveNote(cycle: Pick<AdminPayoutCycle, "approvedBy" | "needsTwoApprovals">): string | null {
+  if (cycle.approvedBy || cycle.needsTwoApprovals === false) {
+    return "The photographer is told it is approved. No money moves until you send it. Until you mark it processing, you can still hold or reject it.";
+  }
+  return cycle.needsTwoApprovals ? "Nobody is told yet. A different admin must give the second approval." : null;
 }
 
 export const PAYOUT_HOLD_REASON = "Payouts paused: a photo check on this photographer is still open";

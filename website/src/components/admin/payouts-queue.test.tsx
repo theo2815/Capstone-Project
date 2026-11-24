@@ -10,6 +10,7 @@ import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
 import { StepUpProvider } from "@/components/auth/step-up-provider";
 import { PayoutsQueue } from "./payouts-queue";
+import { gaveFirstApproval } from "./admin-payout-row";
 
 const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -194,6 +195,42 @@ it("the admin who gave the first approval cannot approve again; without approved
   await user.keyboard("e");
   expect(screen.queryByRole("dialog", { name: "Approve payout" })).not.toBeInTheDocument();
   expect(post).not.toHaveBeenCalled();
+});
+
+// FU-9 (O5): the server says whether two admins are needed; when it says no, your own first approval does not block you.
+it("the first-approver block follows needsTwoApprovals", async () => {
+  rows = [
+    { ...payoutCycle, approvedBy: admin.id, needsTwoApprovals: false },
+    { ...payoutCycle, id: "cycle-2", approvedBy: admin.id, needsTwoApprovals: true },
+    // A hold keeps the first approval, and the server still refuses this admin's second one.
+    { ...payoutCycle, id: "cycle-3", status: "held", approvedBy: admin.id, needsTwoApprovals: true },
+  ]; client.setQueryData(key, rows);
+  await mount();
+  const single = document.querySelector<HTMLElement>(`[data-row-id="${payoutCycle.id}"]`)!;
+  const two = document.querySelector<HTMLElement>('[data-row-id="cycle-2"]')!;
+  expect(within(single).getByRole("button", { name: "Approve…" })).toBeEnabled();
+  expect(single).not.toHaveTextContent("You gave the first approval.");
+  expect(within(two).getByRole("button", { name: "Approve…" })).toBeDisabled();
+  expect(gaveFirstApproval(rows[2]!, admin.id)).toBe(true);
+});
+
+// FU-9 (U9.2): the Approve confirm says who is told, picked by needsTwoApprovals and approvedBy.
+it.each([
+  ["one approval is enough", { needsTwoApprovals: false }, "completes"],
+  ["the second of two", { needsTwoApprovals: true, approvedBy: "admin-b" }, "completes"],
+  ["the first of two", { needsTwoApprovals: true }, "first"],
+  ["an older backend, after another admin's approval", { approvedBy: "admin-b" }, "completes"],
+  ["an older backend, no approval yet", {}, "none"],
+] as const)("the Approve confirm for %s", async (_name, extra, expected) => {
+  const user = userEvent.setup();
+  rows = [{ ...payoutCycle, ...extra }]; client.setQueryData(key, rows);
+  await mount();
+  await user.click(screen.getByRole("button", { name: "Approve…" }));
+  const modal = screen.getByRole("dialog", { name: "Approve payout" });
+  const completes = "The photographer is told it is approved. No money moves until you send it. Until you mark it processing, you can still hold or reject it.";
+  const first = "Nobody is told yet. A different admin must give the second approval.";
+  expect(modal.textContent!.includes(completes)).toBe(expected === "completes");
+  expect(modal.textContent!.includes(first)).toBe(expected === "first");
 });
 
 // FT-23 (C-15, W23.4): the approval that completes a payout says what to do next.
