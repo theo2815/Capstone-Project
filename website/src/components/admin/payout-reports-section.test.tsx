@@ -6,7 +6,9 @@ import { api } from "@/lib/api";
 import type { PayoutReport } from "@/lib/admin-payout-reports";
 import { useAuthStore } from "@/store/auth-store";
 import { useToastStore } from "@/store/toast-store";
-import { admin, report } from "@/test/fixtures/admin";
+import { admin, payoutCycle, report } from "@/test/fixtures/admin";
+import { formatLongDate } from "@/lib/format";
+import { formatPrice } from "@/lib/utils";
 import { PayoutReportsSection } from "./payout-reports-section";
 
 vi.mock("next/navigation", () => ({
@@ -106,6 +108,41 @@ it("keeps a typed reply when a refresh drops the report from the list", async ()
   await waitFor(() => expect(screen.getByText("No open reports. You're caught up.")).toBeInTheDocument());
   // Query again: the node captured above would keep its value even after unmounting.
   expect(within(screen.getByRole("dialog", { name: /acknowledge · report-1/i })).getByRole("textbox")).toHaveValue("Checking with GCash.");
+});
+
+it("FT-41: a report whose payout is outside the list shows its amount, status, paid date and reference in the drawer", async () => {
+  const user = userEvent.setup();
+  const paid = { ...payoutCycle, status: "paid" as const, paidAt: "2026-09-12T00:00:00Z", paymentReference: "GC-12345" };
+  const fallback = vi.mocked(api.get).getMockImplementation()!;
+  // The 200-row list holds no cycle-1; only a lookup by its id finds it.
+  vi.mocked(api.get).mockImplementation(async (path: string, ...rest) =>
+    path.startsWith("/admin/payouts?") && path.includes("q=cycle-1") ? { items: [paid], total: 1, offset: 0, limit: 200 } : fallback(path, ...rest));
+  const byId = () => vi.mocked(api.get).mock.calls.filter(([p]) => p.includes("q=cycle-1")).length;
+  renderSection();
+  const card = (await screen.findByRole("button", { name: /report-1/ })).closest("article")!;
+  // No request per card: the list card shows no amount it does not already have.
+  expect(card).not.toHaveTextContent(formatPrice(paid.amount));
+  expect(byId()).toBe(0);
+  await user.click(within(card).getByRole("button", { name: /report-1/ }));
+  const drawer = screen.getByRole("dialog");
+  await waitFor(() => expect(drawer).toHaveTextContent(`Amount · ${formatPrice(paid.amount)}`));
+  expect(drawer).toHaveTextContent("Status · Paid");
+  expect(drawer).toHaveTextContent(`Paid on · ${formatLongDate(paid.paidAt)}`);
+  expect(drawer).toHaveTextContent("Reference · GC-12345");
+  expect(byId()).toBe(1);
+});
+
+it("FT-41: a pending payout shows its status, and no paid date or reference", async () => {
+  const user = userEvent.setup();
+  const fallback = vi.mocked(api.get).getMockImplementation()!;
+  vi.mocked(api.get).mockImplementation(async (path: string, ...rest) =>
+    path.includes("q=cycle-1") ? { items: [payoutCycle], total: 1, offset: 0, limit: 200 } : fallback(path, ...rest));
+  renderSection();
+  await user.click(await screen.findByRole("button", { name: /report-1/ }));
+  const drawer = screen.getByRole("dialog");
+  await waitFor(() => expect(drawer).toHaveTextContent("Status · Pending review"));
+  expect(drawer).not.toHaveTextContent("Paid on");
+  expect(drawer).not.toHaveTextContent("Reference");
 });
 
 it("says what each report tab means", async () => {

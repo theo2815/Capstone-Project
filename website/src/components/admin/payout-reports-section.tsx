@@ -4,7 +4,8 @@ import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
+import { useAdminPayoutById, useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
+import { ADMIN_PAYOUT_STATUS_LABEL } from "@/lib/admin-payouts";
 import { useAdminKpis } from "@/hooks/use-admin-data";
 import { Slab } from "@/components/profile-shell";
 import { Kicker } from "@/components/ui/kicker";
@@ -206,7 +207,7 @@ export function PayoutReportsSection() {
           {submitting && <p role="status">{pendingAction(reportRowId)}</p>}
           <ReportDetailBody
             report={openReport}
-            cycleAmount={cyclesById.get(openReport.payoutCycleId)?.amount}
+            listedAmount={cyclesById.get(openReport.payoutCycleId)?.amount}
           />
         </AdminDetailDrawer>
       )}
@@ -339,10 +340,13 @@ function ReportActions({ report, submitting, onAcknowledge, onResolve }: ReportA
 
 interface ReportDetailBodyProps {
   report: PayoutReport;
-  cycleAmount: number | undefined;
+  listedAmount: number | undefined;
 }
 
-function ReportDetailBody({ report, cycleAmount }: ReportDetailBodyProps) {
+function ReportDetailBody({ report, listedAmount }: ReportDetailBodyProps) {
+  // C-33, C-34: the list holds the newest 200 payouts only, so the open report reads its own by id.
+  const payout = useAdminPayoutById(report.payoutCycleId).data;
+  const cycleAmount = payout?.amount ?? listedAmount;
   return (
     <div className="space-y-10">
       <section>
@@ -356,6 +360,21 @@ function ReportDetailBody({ report, cycleAmount }: ReportDetailBodyProps) {
           {cycleAmount !== undefined && (
             <Kicker as="p" tone="soft" tnum className="mt-2">
               Amount · {formatPrice(cycleAmount)}
+            </Kicker>
+          )}
+          {payout && (
+            <Kicker as="p" tone="soft" className="mt-2">
+              Status · {ADMIN_PAYOUT_STATUS_LABEL[payout.status] ?? payout.status}
+            </Kicker>
+          )}
+          {payout?.paidAt && (
+            <Kicker as="p" tone="soft" tnum className="mt-2">
+              Paid on · {formatLongDate(payout.paidAt)}
+            </Kicker>
+          )}
+          {payout?.paymentReference && (
+            <Kicker as="p" tone="soft" tnum className="mt-2 break-all">
+              Reference · {payout.paymentReference}
             </Kicker>
           )}
         </div>

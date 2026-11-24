@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 import Link from "next/link";
 import { Slab } from "@/components/profile-shell";
@@ -73,7 +73,8 @@ import { useRegions } from "@/hooks/use-regions";
 // on the right always opens. URL state via ?row=<userId> so refresh and
 // browser-back behave; the drawer mirrors the chip route pattern.
 //
-export function VerificationsQueue() {
+// FT-41: the Verifications page puts Seller details in `afterIncomplete`, above the history; the Inbox passes nothing.
+export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: ReactNode } = {}) {
   const users = useAdminUsers();
   const effective = users.data ?? EMPTY_ADMIN_USERS;
   const { isPending: loading, refetch } = users;
@@ -427,7 +428,9 @@ export function VerificationsQueue() {
         )}
       </Slab>
 
-      <Slab id="recent-decisions" number="03" title="Decision history">
+      {afterIncomplete}
+
+      <Slab id="recent-decisions" number={afterIncomplete ? "04" : "03"} title="Decision history">
         <AdminDecisionsTimeline />
       </Slab>
 

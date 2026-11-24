@@ -107,6 +107,23 @@ it("default list asks for manual_review, and labels and actions read reviewState
   expect(await within(dialog).findByRole("button", { name: "Approve" })).toBeInTheDocument();
 });
 
+it("FT-41: opening a row writes ?sd-row=, and a link with ?sd-row= opens it", async () => {
+  await openRecord();
+  expect(new URLSearchParams(nav.get()).get("sd-row")).toBe("u1");
+  cleanup();
+  nav.set("sd-row=u1");
+  renderQueue();
+  expect(await screen.findByRole("dialog")).toHaveTextContent("Juan Dela Cruz");
+});
+
+it("FT-41: the slab number is 04 unless the page gives another", async () => {
+  const view = renderQueue();
+  expect(within(document.getElementById("seller-details")!).getByText("04")).toBeInTheDocument();
+  view.unmount();
+  render(<QueryClientProvider client={client}><SellerDetailsQueue number="03" /></QueryClientProvider>);
+  expect(within(document.getElementById("seller-details")!).getByText("03")).toBeInTheDocument();
+});
+
 it("the filter reads and writes ?sd=, and only Needs review carries the KPI count", async () => {
   nav.set("sd=auto_approved");
   renderQueue();
@@ -212,13 +229,14 @@ it("the failed-try count shows when above zero and is absent at zero", async () 
   const first = await openRecord();
   expect(await within(first).findByText("Failed automatic tries")).toBeInTheDocument();
   expect(within(first).getByText("Failed automatic tries").nextElementSibling).toHaveTextContent(/^2$/);
-  cleanup();
+  // The open row is in the URL (FT-41): start each round from a URL with none.
+  cleanup(); nav.set("");
   for (const extra of [{ failedAutoChecks: 0 }, {}]) {
     serve(extra);
     const dialog = await openRecord();
     await within(dialog).findByText("ID number on file");
     expect(within(dialog).queryByText("Failed automatic tries")).not.toBeInTheDocument();
-    cleanup();
+    cleanup(); nav.set("");
   }
 });
 
@@ -295,7 +313,7 @@ it("scores show their pass mark when the backend sends it, and the bare score wh
   const first = await openRecord();
   expect(await within(first).findByText("72.4% (needs 95%)")).toBeInTheDocument();
   expect(within(first).getByText("99.6% (needs 99%)")).toBeInTheDocument();
-  cleanup();
+  cleanup(); nav.set("");
   serve({});
   const dialog = await openRecord();
   expect(await within(dialog).findByText("72.4%")).toBeInTheDocument();

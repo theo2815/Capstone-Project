@@ -79,14 +79,15 @@ const rowReason = (codes: string[]) => {
 // SC-2b: admins review photographers' seller details (ID photos, a selfie
 // holding the ID) on the verifications page, separate from verification itself.
 // AA-I16: manual-review cases first (the server sorts), with the automatic results.
-export function SellerDetailsQueue() {
+export function SellerDetailsQueue({ number = "04" }: { number?: string } = {}) {
   const [rawFilter, setFilter] = useUrlState<string>("sd", "manual_review");
   const key: FilterKey = FILTERS.find(([k]) => k === rawFilter)?.[0] ?? "manual_review";
   const status: AdminSellerFilter = key === "all" ? null : key;
   // Paging belongs to one filter, so a tab click or Back/Forward starts on the first page.
   const [paging, setPaging] = useState<{ key: FilterKey; limit: number }>({ key, limit: PAGE_SIZE.ADMIN_INCREMENT });
   const limit = paging.key === key ? paging.limit : PAGE_SIZE.ADMIN_INCREMENT;
-  const [openId, setOpenId] = useState<string | null>(null);
+  // C-11: the open row lives in the URL, so a reload reopens it and a link can point at it.
+  const [openId, setOpenId] = useUrlState<string>("sd-row", "");
   const list = useAdminSellerDetailsList(status, limit);
   // Absent until the backend sends it (AX-8): the tab then shows no count rather than 0.
   const waiting = useAdminKpis()?.pendingSellerDetails;
@@ -94,7 +95,7 @@ export function SellerDetailsQueue() {
   const total = list.data?.total ?? 0;
 
   return (
-    <Slab id="seller-details" number="04" title="Seller details" caption="ID checks before uploads"
+    <Slab id="seller-details" number={number} title="Seller details" caption="ID checks before uploads"
       trailing={<span className="tnum">{total} {FILTER_COUNT[key]}</span>}>
       <AdminStatusTabs label="Filter seller details" value={key} onChange={setFilter}
         tabs={FILTERS.map(([k, label]) => ({ key: k, label, count: k === "manual_review" ? waiting : undefined }))} />
@@ -134,7 +135,7 @@ export function SellerDetailsQueue() {
         </>
       )}
       </div>
-      {openId && <SellerDetailsDrawer userId={openId} onClose={() => setOpenId(null)} />}
+      {openId && <SellerDetailsDrawer userId={openId} onClose={() => setOpenId("")} />}
     </Slab>
   );
 }
