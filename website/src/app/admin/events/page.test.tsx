@@ -99,8 +99,8 @@ it.each(["create", "edit"])("retains %s form input and canonical rows after fail
   if (mode === "create") {
     await user.type(within(dialog).getByLabelText(/^Location/), "Cebu");
     fireEvent.change(within(dialog).getByLabelText(/^Date/), { target: { value: adminEvent.date } });
-    await user.clear(within(dialog).getByLabelText("Price per photo · PHP"));
-    await user.type(within(dialog).getByLabelText("Price per photo · PHP"), "80");
+    await user.clear(within(dialog).getByLabelText(/^Price per photo · PHP/));
+    await user.type(within(dialog).getByLabelText(/^Price per photo · PHP/), "80");
     await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
     await user.click(screen.getByRole("menuitem", { name: eventRegions[0].name }));
     await user.click(within(dialog).getByRole("button", { name: /^Province:/ }));
@@ -351,4 +351,57 @@ it("a row in the Recent tab reads Recent, its tab name (FT-15, B-31)", async () 
   await mountLoaded();
   expect(screen.getByRole("article")).toHaveTextContent("Recent");
   expect(screen.queryByText("Open for sale")).not.toBeInTheDocument();
+});
+
+// FT-22 (R-02): after a create the page opens the tab the server filed the event under.
+async function createFromForm(name: string, date: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /new event/i }));
+  const dialog = screen.getByRole("dialog", { name: "Create event" });
+  await user.type(within(dialog).getByLabelText(/^Title/), name);
+  await user.type(within(dialog).getByLabelText(/^Location/), "Cebu");
+  fireEvent.change(within(dialog).getByLabelText(/^Date/), { target: { value: date } });
+  await user.type(within(dialog).getByLabelText(/^Price per photo · PHP/), "80");
+  await user.click(within(dialog).getByRole("button", { name: /^Region:/ }));
+  await user.click(screen.getByRole("menuitem", { name: eventRegions[0].name }));
+  await user.click(within(dialog).getByRole("button", { name: /^Province:/ }));
+  await user.click(screen.getByRole("menuitem", { name: "Cebu" }));
+  await user.click(within(dialog).getByRole("button", { name: "Create event" }));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
+}
+it("creating an event dated next month opens Upcoming and the toast names the tab (FT-22, R-02)", async () => {
+  const next = new Date(); next.setMonth(next.getMonth() + 1);
+  const date = next.toISOString().slice(0, 10);
+  const created = { ...adminEvent, id: "e-new", slug: "next-race", name: "Next Race", date, state: "upcoming" as const };
+  vi.spyOn(api, "post").mockImplementation(async () => { rows = [...rows, created]; return created; });
+  nav.set("q=Cebu");
+  await mountLoaded();
+  await createFromForm("Next Race", date);
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Upcoming/, pressed: true })).toBeInTheDocument());
+  expect(new URLSearchParams(nav.get()).get("status")).toBe("upcoming");
+  await waitFor(() => expect(new URLSearchParams(nav.get()).has("q")).toBe(false));
+  expect(await screen.findByText("Next Race")).toBeInTheDocument();
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Created Next Race. It is under Upcoming.");
+});
+it("a past-dated event opens the tab the server put it under, not a guess from its date (FT-22)", async () => {
+  const past = new Date(); past.setDate(past.getDate() - 2);
+  const date = past.toISOString().slice(0, 10);
+  const created = { ...adminEvent, id: "e-past", slug: "past-race", name: "Past Race", date, state: "open" as const };
+  vi.spyOn(api, "post").mockImplementation(async () => { rows = [...rows, created]; return created; });
+  await mountLoaded();
+  await createFromForm("Past Race", date);
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Recent/, pressed: true })).toBeInTheDocument());
+  expect(useToastStore.getState().toasts.at(-1)?.message).toBe("Created Past Race. It is under Recent.");
+});
+it("with no event in any tab the empty text says how to add the first one (FT-22, B-29)", async () => {
+  rows = []; client.setQueryData(key, rows);
+  await mountLoaded();
+  expect(await screen.findByText("No events yet. Use + New event to add the first one.")).toBeInTheDocument();
+  expect(screen.queryByText("No live events right now.")).not.toBeInTheDocument();
+});
+it("an empty tab keeps its own text while another tab holds an event (FT-22)", async () => {
+  rows = [{ ...adminEvent, state: "upcoming" }]; client.setQueryData(key, rows);
+  await mountLoaded();
+  expect(await screen.findByText("No live events right now.")).toBeInTheDocument();
+  expect(screen.queryByText(/No events yet/)).not.toBeInTheDocument();
 });

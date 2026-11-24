@@ -23,7 +23,7 @@ function fillCreate() {
   fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: "Race" } });
   fireEvent.change(screen.getByLabelText(/^Location/), { target: { value: "Venue" } });
   fireEvent.change(screen.getByLabelText(/^Date/), { target: { value: "2026-11-01" } });
-  fireEvent.change(screen.getByLabelText("Price per photo · PHP"), { target: { value: "80" } });
+  fireEvent.change(screen.getByLabelText(/^Price per photo · PHP/), { target: { value: "80" } });
 }
 
 async function pick(field: string, option: string) {
@@ -169,7 +169,7 @@ it("shows no error before the admin leaves a field or tries to submit", async ()
   expect(screen.getByText("Add a title.")).toBeInTheDocument();
   expect(screen.getByLabelText(/^Title/)).toHaveAttribute("aria-invalid", "true");
   expect(screen.queryByText("Add the place.")).not.toBeInTheDocument();
-  fireEvent.blur(screen.getByLabelText("Price per photo · PHP"));
+  fireEvent.blur(screen.getByLabelText(/^Price per photo · PHP/));
   expect(screen.getByText(/Enter a price above zero/)).toBeInTheDocument();
 });
 
@@ -190,15 +190,6 @@ it("cover controls are 44 px house buttons (EV4)", () => {
   expect(screen.getByText("Upload cover").closest("label")).toHaveClass("rounded-full", "min-h-[44px]", "focus-within:outline-2");
 });
 
-it("treats the browser's own required check as a submit attempt", () => {
-  mount("create");
-  const title = screen.getByLabelText(/^Title/);
-  fireEvent.invalid(title);
-  expect(screen.getByText("Add a title.")).toBeInTheDocument();
-  expect(screen.getByText("Add the place.")).toBeInTheDocument();
-  expect(screen.getByText("Pick the date.")).toBeInTheDocument();
-});
-
 it("a press that leaves a field shows its error after the press, not during it", async () => {
   mount("create");
   fireEvent.pointerDown(document.body);
@@ -215,7 +206,7 @@ it("says what a price or a date change does, in edit mode only (FT-15, B-30)", (
   expect(screen.getByText("The date decides which tab the event sits under and when uploads close.")).toBeInTheDocument();
   cleanup(); mount("create");
   expect(screen.queryByText(/re-prices every photo/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/decides which tab/)).not.toBeInTheDocument();
+  expect(screen.queryByText("The date decides which tab the event sits under and when uploads close.")).not.toBeInTheDocument();
 });
 
 it("leaves the price line to the race price block on a shared race (FT-15)", () => {
@@ -223,4 +214,50 @@ it("leaves the price line to the race price block on a shared race (FT-15)", () 
   mount("edit", { ...adminEvent, eventType: "ROAD_RACE" });
   expect(screen.queryByText(/re-prices every photo/)).not.toBeInTheDocument();
   expect(screen.getByText("The date decides which tab the event sits under and when uploads close.")).toBeInTheDocument();
+});
+
+it("an empty create shows the site's own error under every required field, with no browser bubble (FT-22, R-04)", async () => {
+  const { submit } = mount("create");
+  const form = document.body.querySelector("form");
+  expect(form).toHaveAttribute("novalidate");
+  expect(screen.getByLabelText(/^Price per photo · PHP/)).toBeRequired();
+  expect(screen.getByText(/^Price per photo · PHP/, { selector: "label" })).toHaveTextContent("Price per photo · PHP (required)");
+  expect(screen.getByText(/^Region/, { selector: "label" })).toHaveTextContent("Region (required)");
+  expect(screen.getByText(/^Province/, { selector: "label" })).toHaveTextContent("Province (required)");
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  const errors = screen.getAllByRole("alert").map((n) => n.textContent);
+  expect(errors).toEqual(expect.arrayContaining([
+    "Add a title.", "Add the place.", "Choose a region before saving.", "Pick the date.", "Enter a price above zero (e.g. 80 or 80.50).",
+  ]));
+  // One error style: the price error is a field error, tied to its input.
+  expect(screen.getByLabelText(/^Price per photo · PHP/)).toHaveAttribute("aria-describedby", "event-price-per-photo-error");
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("the create intro says the date decides the tab (FT-22, W22.2)", () => {
+  mount("create");
+  expect(screen.getByText("Title, location, and date populate the event card across the app. The cover banner is optional — events without a cover fall back to the dark-text banner. The date decides which tab the event appears under.")).toBeInTheDocument();
+});
+
+it("an empty submit moves focus to the first field with a problem (FT-22 review)", async () => {
+  mount("create");
+  fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: "Race" } });
+  fireEvent.change(screen.getByLabelText(/^Location/), { target: { value: "Venue" } });
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^Region:/ })).toHaveFocus());
+});
+
+it("refuses a price finer than a centavo, which the server would round to ₱0.00 (FT-22 review)", async () => {
+  const { submit } = mount("create"); fillCreate();
+  await pick("Region", eventRegions[0].name); await pick("Province", "Cebu");
+  fireEvent.change(screen.getByLabelText(/^Price per photo · PHP/), { target: { value: "0.001" } });
+  await userEvent.click(screen.getByRole("button", { name: "Create event" }));
+  expect(screen.getByText("Enter a price above zero (e.g. 80 or 80.50).")).toBeInTheDocument();
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("an unclassified event's edit form does not mark Region and Province required (FT-22 review)", () => {
+  mount("edit");
+  expect(screen.getByText(/^Region/, { selector: "label" })).toHaveTextContent(/^Region$/);
+  expect(screen.getByText(/^Title/, { selector: "label" })).toHaveTextContent("Title (required)");
 });

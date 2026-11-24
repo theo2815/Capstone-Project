@@ -50,3 +50,17 @@ describe("AdminConfirmModal footer (AX-3)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Failed.");
   });
 });
+
+describe("AdminFormModal noValidate (FT-22, R-04)", () => {
+  afterEach(cleanup);
+
+  it("without the prop the form keeps the browser's own check", () => {
+    form();
+    expect(document.body.querySelector("form")).not.toHaveAttribute("novalidate");
+  });
+
+  it("with the prop the form skips the browser's bubble", () => {
+    form({ noValidate: true });
+    expect(document.body.querySelector("form")).toHaveAttribute("novalidate");
+  });
+});

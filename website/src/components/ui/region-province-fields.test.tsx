@@ -26,3 +26,12 @@ it("keeps two controlled copies independent with unique labels and keyboard-acce
   expect(event.getByLabelText("Province")).toHaveAccessibleName("Province: Pick a province");
   expect(settings.getByLabelText("Province")).toHaveAccessibleName("Province: Cebu");
 });
+
+it("marks both labels (required) only when asked (FT-22, R-04)", () => {
+  const value = { regionCode: null, provinceCode: null };
+  const { rerender } = render(<RegionProvinceFields value={value} onChange={() => {}} regions={eventRegions} />);
+  expect(screen.queryByText(/\(required\)/)).not.toBeInTheDocument();
+  rerender(<RegionProvinceFields value={value} onChange={() => {}} regions={eventRegions} required />);
+  expect(screen.getByText(/^Region/, { selector: "label" })).toHaveTextContent("Region (required)");
+  expect(screen.getByText(/^Province/, { selector: "label" })).toHaveTextContent("Province (required)");
+});

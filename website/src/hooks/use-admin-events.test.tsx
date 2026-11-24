@@ -48,7 +48,7 @@ it.each(["INVALID_REGION", "VALIDATION_ERROR"])("allows correcting a rejected lo
   const { result } = renderHook(useAdminEventActions, { wrapper });
   await expect(result.current.createEvent({ ...createArgs, regionCode: "retired", provinceCode: "cebu" })).rejects.toThrow();
   post.mockResolvedValue(adminEvent);
-  await expect(result.current.createEvent({ ...createArgs, regionCode: "region-vii", provinceCode: "cebu" })).resolves.toBe(true);
+  await expect(result.current.createEvent({ ...createArgs, regionCode: "region-vii", provinceCode: "cebu" })).resolves.toEqual(adminEvent);
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
 });
@@ -65,7 +65,7 @@ it.each(["INVALID_REGION", "VALIDATION_ERROR"])("retains an uncertain create key
   post.mockResolvedValue(adminEvent);
   await expect(result.current.createEvent({ ...draft, regionCode: "barmm" })).rejects.toThrow(/unresolved/);
   expect(post).toHaveBeenCalledTimes(2);
-  await expect(result.current.createEvent(draft)).resolves.toBe(true);
+  await expect(result.current.createEvent(draft)).resolves.toEqual(adminEvent);
   expect(post.mock.calls[2][2]?.headers).toEqual(originalKey);
 });
 it("claims an event before hashing, blocks another view and reuses the update key after timeout", async () => {
@@ -111,7 +111,7 @@ it("allows correcting a cover rejected before execution but retains keys for unc
   const { result } = renderHook(useAdminEventActions, { wrapper });
   await expect(result.current.createEvent({ ...createArgs, cover: new File(["bad"], "bad.jpg") })).rejects.toThrow();
   post.mockResolvedValue(adminEvent);
-  await expect(result.current.createEvent({ ...createArgs, cover: new File(["valid"], "good.jpg") })).resolves.toBe(true);
+  await expect(result.current.createEvent({ ...createArgs, cover: new File(["valid"], "good.jpg") })).resolves.toBeTruthy();
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
 });
@@ -120,7 +120,7 @@ it("allows correcting form fields rejected by server validation before execution
   const { result } = renderHook(useAdminEventActions, { wrapper });
   await expect(result.current.createEvent({ ...createArgs, pricePerPhoto: 0 })).rejects.toThrow();
   post.mockResolvedValue(adminEvent);
-  await expect(result.current.createEvent(createArgs)).resolves.toBe(true);
+  await expect(result.current.createEvent(createArgs)).resolves.toBeTruthy();
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
 });
@@ -301,7 +301,7 @@ function mockLookup(answer: (path: string) => unknown) {
 it("names the event an earlier lost create made, then sends the different draft under a new key", async () => {
   const { post, actions, reference } = await loseCreateReply();
   const get = mockLookup(() => ({ commandId: reference, state: "SUCCEEDED", resourceId: earlier.id, decisionId: null, messageId: null, completedAt: "2026-10-09T00:00:00Z" }));
-  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBeTruthy();
   expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
   expect(useToastStore.getState().toasts).toContainEqual(expect.objectContaining({ kind: "success", message: expect.stringMatching(/Earlier race.*created/) }));
   expect(post).toHaveBeenCalledTimes(2);
@@ -316,7 +316,7 @@ it("releases an earlier create the server has no record of only after the wait, 
   expect(post).toHaveBeenCalledTimes(1);
   expect(actions.recoveryNotice("create")).toContain(reference);
   vi.setSystemTime(Date.now() + 5 * 60_000);
-  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBeTruthy();
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
   expect(useToastStore.getState().toasts.filter((toast) => toast.kind === "success")).toEqual([]);
@@ -324,7 +324,7 @@ it("releases an earlier create the server has no record of only after the wait, 
 it("releases an earlier create the server recorded as failed at once and sends the different draft", async () => {
   const { post, actions, reference } = await loseCreateReply();
   const get = mockLookup(() => ({ commandId: reference, state: "FAILED", resourceId: null, decisionId: null, messageId: null, completedAt: null }));
-  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBe(true);
+  await expect(actions.createEvent({ ...createArgs, title: "Different race" })).resolves.toBeTruthy();
   expect(get).toHaveBeenCalledWith(`/admin/commands/${reference}`);
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[1][2]?.headers).not.toEqual(post.mock.calls[0][2]?.headers);
@@ -343,7 +343,7 @@ it.each([
   expect(post).toHaveBeenCalledTimes(1);
   expect(useToastStore.getState().toasts.at(-1)?.message).toContain(reference);
   expect(actions.recoveryNotice("create")).toContain(reference);
-  await expect(actions.createEvent(createArgs)).resolves.toBe(true);
+  await expect(actions.createEvent(createArgs)).resolves.toBeTruthy();
   expect(post.mock.calls[1][2]?.headers).toEqual(post.mock.calls[0][2]?.headers);
 });
 it("does not announce an earlier result to a session that changed while the list refreshed", async () => {

@@ -20,11 +20,13 @@ interface RegionProvinceFieldsProps {
   errors?: { region?: string | null; province?: string | null };
   panelClassName?: string;
   onOpenChange?: (open: boolean) => void;
+  /** Adds " (required)" to both labels, the way AdminFieldLabel prints it. */
+  required?: boolean;
 }
 
 const GROUPS: readonly RegionGroup[] = ["luzon", "visayas", "mindanao"];
 
-export function RegionProvinceFields({ value, onChange, regions, disabled = false, errors, panelClassName, onOpenChange }: RegionProvinceFieldsProps) {
+export function RegionProvinceFields({ value, onChange, regions, disabled = false, errors, panelClassName, onOpenChange, required = false }: RegionProvinceFieldsProps) {
   const id = useId();
   const region = value.regionCode ? getRegion(regions, value.regionCode) : undefined;
   const province = region?.provinces.find((p) => p.code === value.provinceCode);
@@ -44,7 +46,7 @@ export function RegionProvinceFields({ value, onChange, regions, disabled = fals
         const error = errors?.[field];
         return (
           <div key={field} className="flex min-w-0 flex-col gap-2">
-            <label htmlFor={`${id}-${field}`} className="font-sans text-sm text-slate">{label}</label>
+            <label htmlFor={`${id}-${field}`} className="font-sans text-sm text-slate">{label}{required && <span className="text-slate"> (required)</span>}</label>
             <Dropdown
               id={`${id}-${field}`}
               ariaLabel={`${label}: ${selected}`}

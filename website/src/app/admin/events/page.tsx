@@ -82,6 +82,8 @@ export default function AdminEventsPage() {
   const catalog = list.items;
   const counts = useAdminEventCounts(q);
   const platformCounts = useAdminEventCounts("");
+  // FT-22: only a real zero in every tab; unknown counts keep each tab's own text.
+  const noEvents = !!platformCounts && Object.values(platformCounts).every((n) => n === 0);
   // FT-4: a search link with no tab (Sales) opens the first tab that holds a match, once; a tab named in
   // the URL or clicked stays (Live is the default and leaves the URL, so a ref remembers the choice).
   const tabDecided = useRef(statusInUrl);
@@ -168,7 +170,7 @@ export default function AdminEventsPage() {
     eventType?: string;
   }) {
     try {
-      const ok = await createEvent({
+      const created = await createEvent({
         eventType: payload.eventType,
         title: payload.name,
         location: payload.location,
@@ -180,9 +182,15 @@ export default function AdminEventsPage() {
         description: payload.description,
         cover: payload.cover,
       });
-      if (!ok) return false;
+      if (!created) return false;
       setCreateOpen(false);
-      showToast({ kind: "success", message: `Created · ${payload.name}` });
+      // FT-22: open the tab the server filed the event under (its rule differs from deriveEventState
+      // for a past date), and drop a search the new event may not match.
+      const landed = SECTIONS.find((s) => s.matchState === created.state) ?? section;
+      tabDecided.current = true;
+      setTab(landed.id);
+      if (search) setSearch("");
+      showToast({ kind: "success", message: `Created ${payload.name}. It is under ${landed.title}.` });
       return true;
     } catch {
       // The domain hook reports errors; retain the form for retry.
@@ -303,7 +311,9 @@ export default function AdminEventsPage() {
             <p className="font-sans text-sm text-slate mb-4">{section.caption}</p>
             {catalog.length === 0 ? (
               <p className="font-sans text-sm text-slate-soft">
-                {q ? "No events in this tab match this search." : emptyCopyFor(section.matchState)}
+                {q ? "No events in this tab match this search."
+                  : noEvents ? "No events yet. Use + New event to add the first one."
+                  : emptyCopyFor(section.matchState)}
               </p>
             ) : (
               <ul className="border border-line rounded-2xl bg-surface divide-y divide-line overflow-hidden">
