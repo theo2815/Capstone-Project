@@ -261,3 +261,14 @@ it("an unclassified event's edit form does not mark Region and Province required
   expect(screen.getByText(/^Region/, { selector: "label" })).toHaveTextContent(/^Region$/);
   expect(screen.getByText(/^Title/, { selector: "label" })).toHaveTextContent("Title (required)");
 });
+
+it("the edit form says nobody is told and how to undo, in edit mode only (FU-4, U4.5)", () => {
+  const line = "Nobody is told about an edit. To undo one, edit the event again.";
+  mount("edit");
+  expect(screen.getByText(line)).toBeInTheDocument();
+  cleanup(); vi.spyOn(api, "get").mockReturnValue(new Promise(() => {}));
+  mount("edit", { ...adminEvent, eventType: "ROAD_RACE" });
+  expect(screen.getByText(line)).toBeInTheDocument();
+  cleanup(); mount("create");
+  expect(screen.queryByText(line)).not.toBeInTheDocument();
+});

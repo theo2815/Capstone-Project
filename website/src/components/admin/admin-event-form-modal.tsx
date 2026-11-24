@@ -398,6 +398,7 @@ export function AdminEventFormModal({
       />
       {mode === "edit" && !event?.eventType && <p className="font-sans text-sm text-slate">Changing the price re-prices every photo already in this event. Orders already paid keep the price they were charged.</p>}
       {mode === "edit" && event?.eventType && <RacePriceList eventId={event.id} />}
+      {mode === "edit" && <p className="font-sans text-sm text-slate">Nobody is told about an edit. To undo one, edit the event again.</p>}
 
       <AdminTextInput
         id="event-organizer"
