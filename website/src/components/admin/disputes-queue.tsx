@@ -2,7 +2,7 @@
 
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Kicker } from "@/components/ui/kicker";
 import { BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { LoadMoreButton } from "@/components/ui/load-more-button";
@@ -101,6 +101,14 @@ export function DisputesQueue() {
   };
 
   const [rowId, setRowId] = useUrlState<string>("row", "");
+  // A decision can return after the admin opened another dispute, or left the queue; only the decided one's drawer closes.
+  const rowIdRef = useRef(rowId);
+  useEffect(() => {
+    rowIdRef.current = rowId;
+    return () => {
+      rowIdRef.current = "";
+    };
+  }, [rowId]);
   // Any aside dialog (resolve, refund confirm, deny, escalate, refund panel) is open; the drawer must ignore Esc.
   const [asideDialogOpen, setAsideDialogOpen] = useState(false);
 
@@ -161,7 +169,9 @@ export function DisputesQueue() {
       dispute={openRow}
       runnerHandle={openRow.runnerHandle}
       onDialogOpenChange={setAsideDialogOpen}
-      onDecided={() => setRowId("")}
+      onDecided={() => {
+        if (rowIdRef.current === openRow.id) setRowId("");
+      }}
       className={body ? "mb-10" : ""}
       body={body}
     />

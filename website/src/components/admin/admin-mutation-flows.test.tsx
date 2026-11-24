@@ -399,6 +399,15 @@ describe("a dispute whose refund went wrong", () => {
     expect(screen.getByText("PayMongo has not confirmed this refund yet. QuickPitik keeps checking by itself. Look up the payment in PayMongo if it stays like this.")).toBeInTheDocument();
     expect(screen.queryByText("This dispute is closed. No further actions are available.")).not.toBeInTheDocument();
   });
+
+  // FU-7 (U7.4, G5): under 24 hours the server refuses Escalate and Deny, and Approve only returns the same refund.
+  it.each(["open", "escalated"] as const)("a refund in flight under 24 hours (%s) says PayMongo is still processing it and offers no decision", (status) => {
+    renderAside({ ...problem(status, "pending"), attention: "refund_in_progress" });
+    expect(screen.getByText("PayMongo is still processing this refund. Nothing to do yet: QuickPitik keeps checking by itself.")).toBeInTheDocument();
+    for (const name of ["Approve refund…", "Deny…", "Escalate…"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+    expect(screen.queryByText("This dispute is closed. No further actions are available.")).not.toBeInTheDocument();
+    expect(screen.queryByText("A full refund can be approved now.")).not.toBeInTheDocument();
+  });
 });
 
 // FT-18 (C-35): Escalate says what really happens; the shared note field names who reads it.
@@ -407,7 +416,7 @@ it("the Escalate dialog says who is told and that the dispute stays in this queu
   render(<QueryClientProvider client={client}><AdminDisputeActionAside dispute={dispute} runnerHandle={dispute.runnerHandle} /></QueryClientProvider>);
   await user.click(screen.getByRole("button", { name: "Escalate…" }));
   const dialog = screen.getByRole("dialog", { name: "Escalate dispute-1" });
-  expect(dialog).toHaveTextContent("This marks the dispute as escalated and tells the runner and the photographer it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards.");
+  expect(dialog).toHaveTextContent("This marks the dispute as escalated and tells the photographer, and the runner if they still have an account, that it needs more review. It stays in this queue with the same due date, and you can still approve or deny it afterwards."); // FU-7 (U7.3)
   const note = within(dialog).getByLabelText("Note for other admins (optional, max 280)");
   expect(note).toHaveAttribute("placeholder", "What still needs checking?");
   expect(note).toHaveAccessibleDescription("Seen by: admins only."); // FT-33 (W33.1)

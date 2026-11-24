@@ -58,7 +58,7 @@ export function AdminDenyDisputeModal({
       onClose={onClose}
       onSubmit={() => reason && onSubmit(reason.code, trimmed || null)}
       title={`Deny ${disputeId}`}
-      intro="No refund is issued. The runner sees the reason in their orders ledger and can re-file with new evidence while the refund window is open."
+      intro="No refund is issued. The runner sees the reason on their order and can file again with new evidence while the refund window is open. If their account was deleted, they are not told."
       submitLabel="Deny claim"
       submitDisabled={!reason || noteMissing}
     >

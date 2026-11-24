@@ -90,3 +90,11 @@ it("the reasons load behind a skeleton, with no Loading sentence", () => {
   expect(dialog.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
   expect(within(dialog).queryByText(/Loading/)).toBeNull();
 });
+
+// FU-7 (U7.5): one sentence holds for every dispute, including a runner whose account was deleted (G4).
+it("the intro says where the runner sees the reason, and that a deleted account is not told", () => {
+  renderModal();
+  expect(screen.getByRole("dialog", { name: "Deny d1" })).toHaveTextContent(
+    "No refund is issued. The runner sees the reason on their order and can file again with new evidence while the refund window is open. If their account was deleted, they are not told.",
+  );
+});

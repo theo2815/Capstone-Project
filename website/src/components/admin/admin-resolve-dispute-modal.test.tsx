@@ -62,3 +62,11 @@ it("a QR Ph dispute says why only a full refund is offered", () => {
   const dialog = renderModal({ paymentMethod: "qrph" });
   expect(within(dialog).getByText("This payment was made by QR Ph, so only a full refund is possible.")).toBeInTheDocument();
 });
+
+// FU-7 (U7.1, U7.2): the note's label and the line under it say who reads it (G2).
+it("the note says the runner sees it once the refund is finished, and the photographer does not", () => {
+  const dialog = renderModal();
+  const note = within(dialog).getByLabelText("Note (required, max 500)");
+  expect(note).toHaveAccessibleDescription("The runner sees this note on their order once the refund is finished. The photographer does not. It is also kept in the activity log.");
+  expect(within(dialog).queryByText(/Reasoning/)).toBeNull();
+});

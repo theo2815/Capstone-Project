@@ -410,6 +410,55 @@ describe("after a decision", () => {
     expect(await within(screen.getByRole("dialog")).findByLabelText("Refund link")).toBeInTheDocument();
     expect(fixtures.router.replace).not.toHaveBeenCalled();
   });
+
+  // FU-7 (FT-24's low 1): only the decided dispute's drawer closes.
+  it("a decision that returns after the admin opened another dispute leaves that drawer open", async () => {
+    const user = userEvent.setup();
+    const other: Dispute = { ...dispute, id: "dispute-2", runnerHandle: "runner-2" };
+    vi.mocked(api.get).mockImplementation(async (path) => {
+      if (path === "/admin/disputes/deny-reasons") return denyReasons;
+      if (path.startsWith("/admin/disputes?")) return page([dispute, other]);
+      if (path === "/admin/kpis") return fixtures.kpis;
+      throw new Error(`unexpected GET ${path}`);
+    });
+    let answer!: (d: Dispute) => void;
+    const post = vi.spyOn(api, "post").mockReturnValueOnce(new Promise<Dispute>((resolve) => { answer = resolve; }) as never);
+    seed([dispute, other]);
+    fixtures.search = `row=${dispute.id}`;
+    const view = renderQueue();
+    const drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Deny…" }));
+    const dialog = screen.getByRole("dialog", { name: `Deny ${dispute.id}` });
+    await user.click(await within(dialog).findByRole("radio", { name: /Doesn't like/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Deny claim" }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    // Before the server answers, the address moves to the other dispute (a link, or the back button).
+    fixtures.search = `row=${other.id}`;
+    view.rerender(<QueryClientProvider client={client}><DisputesQueue /></QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("@runner-2"));
+    await act(async () => answer({ ...dispute, status: "denied" }));
+    await waitFor(() => expect(lastToast()?.message).toBe("Denied. The runner was sent your reason. It is now under Closed."));
+    expect(fixtures.router.replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("@runner-2");
+  });
+
+  // A decision that returns after the admin left the queue (an Inbox tab switch) moves no address.
+  it("a decision that returns after the queue closed changes no address", async () => {
+    const user = userEvent.setup();
+    let answer!: (d: Dispute) => void;
+    serve({ ...dispute, status: "denied" });
+    const post = vi.mocked(api.post).mockReset().mockReturnValueOnce(new Promise<Dispute>((resolve) => { answer = resolve; }) as never);
+    const drawer = await openDrawer(dispute);
+    await user.click(within(drawer).getByRole("button", { name: "Deny…" }));
+    const dialog = screen.getByRole("dialog", { name: `Deny ${dispute.id}` });
+    await user.click(await within(dialog).findByRole("radio", { name: /Doesn't like/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Deny claim" }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    cleanup();
+    await act(async () => answer({ ...dispute, status: "denied" }));
+    await waitFor(() => expect(lastToast()?.message).toBe("Denied. The runner was sent your reason. It is now under Closed."));
+    expect(fixtures.router.replace).not.toHaveBeenCalled();
+  });
 });
 
 it("the view tabs and the search stay on screen while the list loads and when it fails", async () => {
