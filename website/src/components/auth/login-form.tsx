@@ -152,7 +152,7 @@ export function LoginForm() {
             <input
               id="mfa-code"
               type="text"
-              inputMode="numeric"
+              inputMode="text"
               autoComplete="one-time-code"
               autoFocus
               value={code}

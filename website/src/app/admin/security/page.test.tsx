@@ -10,6 +10,7 @@ import * as utils from "@/lib/utils";
 import Page from "./page";
 import { expectSectionIntro } from "@/test/admin-section-intro";
 import { ROUTES } from "@/lib/constants";
+import { ApiError } from "@/lib/api";
 
 // Records exactly what the page hands the QR package.
 const qr = vi.hoisted(() => ({ values: [] as string[] }));
@@ -74,6 +75,30 @@ it.each(["confirm", "disable"])("%s keeps the code during failure and blocks edi
   await waitFor(() => expect(input).toBeEnabled());
   expect(input).toHaveValue("123456");
   expect(await screen.findByText("That code didn't work. Wait for a new one and try again. If it keeps failing, check that your phone's date and time are right.")).toBeInTheDocument();
+});
+
+it.each(["confirm", "disable"])("%s shows the clock hint, not the server's words, for a wrong code", async (action) => {
+  vi.mocked(mfa.fetchMfaStatus).mockResolvedValue({ enabled: action === "disable" });
+  vi.spyOn(mfa, "enrollMfa").mockResolvedValue({ secret: "local-secret", otpauthUri: "otpauth://test" });
+  const wrong = new ApiError([{ code: "INVALID_MFA_CODE", message: "That code is not valid." }], 401);
+  if (action === "confirm") vi.spyOn(mfa, "confirmMfa").mockRejectedValue(wrong);
+  else vi.spyOn(mfa, "disableMfa").mockRejectedValue(wrong);
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: action === "confirm" ? "Turn on two-step verification" : "Turn off" }));
+  fireEvent.change(await screen.findByRole("textbox"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: action === "confirm" ? "Turn on" : "Turn off" }));
+  expect(await screen.findByText("That code didn't work. Wait for a new one and try again. If it keeps failing, check that your phone's date and time are right.")).toBeInTheDocument();
+  expect(screen.queryByText("That code is not valid.")).not.toBeInTheDocument();
+});
+
+it("keeps the server's words for an error that is not a wrong code", async () => {
+  vi.mocked(mfa.fetchMfaStatus).mockResolvedValue({ enabled: true });
+  vi.spyOn(mfa, "disableMfa").mockRejectedValue(new ApiError([{ code: "ACCOUNT_LOCKED", message: "Too many tries. Try again later." }], 429));
+  render(<QueryClientProvider client={client}><Page /></QueryClientProvider>);
+  fireEvent.click(await screen.findByRole("button", { name: "Turn off" }));
+  fireEvent.change(await screen.findByRole("textbox"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "Turn off" }));
+  expect(await screen.findByText("Too many tries. Try again later.")).toBeInTheDocument();
 });
 
 it.each(["confirm", "disable"])("%s strips spaces from the code before sending it", async (action) => {
