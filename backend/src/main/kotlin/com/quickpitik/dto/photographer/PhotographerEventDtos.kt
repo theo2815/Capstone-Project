@@ -118,7 +118,8 @@ data class CreateMyEventRequest(
     val watermarkPolicy: String? = null,
 )
 
-// PATCH /me/photographer/events/{id}. Null/blank = no change. Pricing
+// PATCH /me/photographer/events/{id}. Null/blank = no change, except
+// organizerName and description, where blank clears them. Pricing
 // fields on a live event become an edit request (see
 // PhotographerOwnedEventService.update); withdrawPendingChange drops it.
 data class UpdateMyEventRequest(

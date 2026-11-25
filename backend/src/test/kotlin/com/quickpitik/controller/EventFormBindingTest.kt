@@ -205,6 +205,21 @@ class EventFormBindingTest {
     }
 
     @Test
+    fun `a patch keeps a sent blank organizer and note so they can be cleared`() {
+        val eventId = UUID.randomUUID()
+        photographer.perform(
+            multipart(HttpMethod.PATCH, "/api/v1/me/photographer/events/$eventId")
+                .param("organizerName", "")
+                .param("description", "  "),
+        ).andExpect(status().isOk)
+
+        val form = assertNotNull(updated)
+        assertEquals("", form.organizerName)
+        assertEquals("", form.description)
+        assertNull(form.title)
+    }
+
+    @Test
     fun `an admin create with no price still defaults to zero`() {
         admin.perform(
             multipart("/api/v1/admin/events")
