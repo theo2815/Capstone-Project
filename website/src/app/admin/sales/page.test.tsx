@@ -10,7 +10,8 @@ vi.mock("@/components/admin/admin-sales-event-table", () => ({ AdminSalesEventTa
 
 const ytd = { gmv: 48000, platformRevenue: 9600, refundsIssued: 120, netPlatformRevenue: 9480, photographerKeep: 38400, totalSalesCount: 400 };
 const week = { gmv: 2000, platformRevenue: 400, refundsIssued: 50, netPlatformRevenue: 350, photographerKeep: 1600, totalSalesCount: 16 };
-type Q = { data?: typeof ytd; isError: boolean; isFetching: boolean; refetch: () => void };
+type Q = { data?: typeof ytd & { refundsIssuedCount?: number }; isError: boolean; isFetching: boolean; refetch: () => void };
+const pulse = { refundCount: 0 };
 const state: { ytd: Q; week: Q } = { ytd: { isError: false, isFetching: false, refetch: vi.fn() }, week: { isError: false, isFetching: false, refetch: vi.fn() } };
 
 vi.mock("@/hooks/use-admin-data", () => ({
@@ -18,10 +19,11 @@ vi.mock("@/hooks/use-admin-data", () => ({
 }));
 vi.mock("@/lib/admin-sales", () => ({
   // The dispute list has not loaded any refunded rows yet, while the server total says ₱120.
-  useRefundPulse: () => ({ refundCount: 0, openCount: 0, escalatedCount: 0 }),
+  useRefundPulse: () => ({ refundCount: pulse.refundCount, openCount: 0, escalatedCount: 0 }),
 }));
 
 beforeEach(() => {
+  pulse.refundCount = 0;
   state.ytd = { data: ytd, isError: false, isFetching: false, refetch: vi.fn() };
   state.week = { data: week, isError: false, isFetching: false, refetch: vi.fn() };
 });
@@ -57,7 +59,26 @@ it("the refund pulse agrees with the refunds tile and rates against this week's 
   expect(screen.getAllByText("₱120.00")).toHaveLength(2);
   expect(screen.getByText("2.50%")).toBeInTheDocument();
   expect(screen.queryByText("0 refunds processed")).toBeNull();
-  expect(screen.getByText("refunded to runners, year to date")).toBeInTheDocument();
+  expect(screen.getAllByText("refunded to runners · year to date")).toHaveLength(2);
+});
+
+it("the year's refund count is the server's, not the newest disputes (FU-17)", () => {
+  pulse.refundCount = 7; // the dispute list's count, any date
+  state.ytd = { data: { ...ytd, refundsIssuedCount: 3 }, isError: false, isFetching: false, refetch: vi.fn() };
+  render(<AdminSalesPage />);
+  expect(screen.getAllByText("3 refunds processed · year to date")).toHaveLength(2);
+  expect(screen.queryByText(/7 refunds/)).toBeNull();
+});
+
+it("an older server without the count keeps the dispute list's count (FU-17)", () => {
+  pulse.refundCount = 2;
+  render(<AdminSalesPage />);
+  expect(screen.getAllByText("2 refunds processed · year to date")).toHaveLength(2);
+});
+
+it("the disputes queue link is a 44 px target (FU-17)", () => {
+  render(<AdminSalesPage />);
+  expect(screen.getByRole("link", { name: "Open disputes queue →" })).toHaveClass("min-h-[44px]");
 });
 
 it("shows no refund rate for a week without sales, even when an older sale was refunded", () => {
@@ -92,7 +113,7 @@ it("every money tile says its period, and the platform's share has one name (FT-
   // The guide's definitions also name these terms, so find each tile by its caption.
   expect(screen.getByText("400 photos sold · year to date").parentElement).toHaveTextContent(/^Total sales₱48,000\.00/);
   expect(screen.getByText("QuickPitik's share after refunds · year to date").parentElement).toHaveTextContent(/^Platform cut₱9,600\.00/);
-  expect(screen.getAllByText("refunded to runners · year to date")).toHaveLength(1);
+  expect(screen.getAllByText("refunded to runners · year to date")).toHaveLength(2);
   // The backend's net figure is the cut by construction, so there is no fourth tile.
   expect(screen.queryByText("Net platform revenue")).toBeNull();
   expect(screen.queryByText("Platform cut after refunds")).toBeNull();
@@ -101,7 +122,7 @@ it("every money tile says its period, and the platform's share has one name (FT-
 
 it("the section captions name their period in plain words (FT-26)", () => {
   render(<AdminSalesPage />);
-  for (const caption of ["Year to date", "Total sales per week", "Sortable · estimates are marked", "This week and year to date"]) {
+  for (const caption of ["Year to date", "Total sales per week", "All time, before refunds · sortable · estimates are marked", "This week and year to date"]) {
     expect(screen.getByText(caption)).toBeInTheDocument();
   }
 });
