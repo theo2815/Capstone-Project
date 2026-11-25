@@ -168,7 +168,7 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
                 </>
               )}
               <Link
-                href={`${ROUTES.DASHBOARD_SETTINGS}#payouts`}
+                href={`${ROUTES.DASHBOARD_SETTINGS}#payout`}
                 onClick={onClose}
                 className="mt-4 inline-flex items-center gap-1.5 font-sans text-sm text-slate hover:text-ink transition-colors group"
               >
@@ -218,7 +218,7 @@ export function HowPayoutsModal({ isOpen, onClose }: HowPayoutsModalProps) {
               If admin holds your request — usually because the payout account
               needs a fix — you&apos;ll see the reason on this page. Fix the
               issue, hit{" "}
-              <span className="text-ink">Withdraw request</span>, then submit a
+              <span className="text-ink">Cancel request</span>, then submit a
               new one. Refunded sales reduce your next available balance.
             </p>
             <p className="mt-3 font-sans text-sm md:text-base text-slate max-w-md">

@@ -6,6 +6,7 @@ import { AvatarDisc } from "@/components/account/avatar-disc";
 import { Sparkline } from "@/components/dashboard/sparkline";
 import { Skeleton, TileSkeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
+import { usePhotographerProvinceName } from "@/hooks/use-photographer-province";
 import {
   usePhotographerEarningsQuery,
   usePhotographerEvents,
@@ -27,11 +28,12 @@ import {
 export function DashboardActionGrid() {
   const { user } = useAuth();
   const firstName = user?.name?.split(/\s+/)[0] ?? "there";
+  const province = usePhotographerProvinceName();
 
   return (
     <section className="pb-12 md:pb-16">
       <p className="font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-slate tnum">
-        Overview · Cebu
+        Overview{province ? ` · ${province}` : ""}
       </p>
       <h2 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-ink leading-[1.05] mt-4">
         Welcome back, {firstName}.

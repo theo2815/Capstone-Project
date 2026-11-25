@@ -90,7 +90,7 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
               <span className="font-mono tnum text-ink">{cutPct}%</span> of
               every photo sale. You keep the other{" "}
               <span className="font-mono tnum text-ink">{keepPct}%</span>, paid
-              out weekly.
+              out when you request a payout.
             </p>
             <p className="font-sans text-sm md:text-base text-slate mt-3 max-w-md">
               A coupon you create comes out of your share only; the platform
@@ -155,7 +155,7 @@ export function PlatformCutModal({ isOpen, onClose }: PlatformCutModalProps) {
               })}
             </ul>
             <p className="mt-3 font-mono uppercase tracking-[0.14em] text-[10px] text-slate-soft">
-              Based on ₱{price} per photo · weekly payout
+              Based on ₱{price} per photo
             </p>
           </section>
 
