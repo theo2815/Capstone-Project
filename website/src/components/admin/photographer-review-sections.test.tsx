@@ -35,6 +35,7 @@ it("renders every section from one set of settings", () => {
   );
   expect(container.querySelector('img[src="https://cdn.example/cover.jpg"]')).not.toBeNull();
   expect(screen.getByText("quickpitik.com/test-studio")).toBeInTheDocument();
+  for (const link of screen.getAllByRole("link", { name: "Open ↗" })) expect(link).toHaveClass("min-h-[44px]");
   expect(screen.getByLabelText("Watermark label: TEST STUDIO")).toBeInTheDocument();
   expect(screen.getByText("Instagram")).toBeInTheDocument();
   expect(screen.getByText("GCash")).toBeInTheDocument();
@@ -59,6 +60,8 @@ it("links only safe web addresses, names the watermark image, and tags only the 
   expect(links).toHaveLength(1);
   expect(links[0]).toHaveAttribute("href", "https://instagram.com/test");
   expect(links[0]).toHaveAttribute("rel", "noopener noreferrer");
+  // FU-18 (B-37): a 44 px tap target, like the public address's Open link.
+  expect(links[0]).toHaveClass("min-h-[44px]");
   expect(screen.getByAltText("Test Studio watermark")).toBeInTheDocument();
   expect(screen.queryByText("Primary")).toBeNull();
 });

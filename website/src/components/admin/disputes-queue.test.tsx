@@ -224,6 +224,19 @@ it("search sends q and starts at the first page", async () => {
   expect(await screen.findByRole("button", { description: "dispute-9" })).toBeInTheDocument();
 });
 
+// FU-18: a runner's "Their disputes" link narrows the list to that runner, until the admin searches for something else.
+it("a runner= link keeps only that runner's disputes, and a new search drops it", async () => {
+  const user = userEvent.setup();
+  fixtures.search = "view=all&q=ana%40example.test&runner=runner-7";
+  renderQueue();
+  await waitFor(() => expect(api.get).toHaveBeenCalledWith("/admin/disputes?view=all&q=ana%40example.test&runner=runner-7&offset=0", expect.anything()));
+  const box = screen.getByRole("searchbox", { name: "Search disputes" });
+  expect(box).toHaveValue("ana@example.test");
+  await user.clear(box);
+  await user.type(box, "pay_ABC");
+  await waitFor(() => expect(fixtures.router.replace).toHaveBeenLastCalledWith("/admin/disputes?view=all&q=pay_ABC", { scroll: false }));
+});
+
 it("an overdue dispute shows the overdue chip", async () => {
   const late: Dispute = {
     ...dispute, attention: "review", overdue: true,

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
@@ -127,8 +127,12 @@ it("every tile says it is a total right now or names its window", () => {
   renderWithKpis({ approvedPhotographers: 4, suspended: 1, decisionsThisWeek: 3 });
   expect(screen.getByText("Totals right now. The last tile counts this week.")).toBeInTheDocument();
   expect(tile("Approved photographers").textContent).toContain("approved to upload");
-  expect(tile("Suspended accounts").textContent).toContain("photographers and runners");
-  expect(tile("Suspended accounts").getAttribute("href")).toBe("/admin/photographers?status=suspended");
+  // FU-18 (U18.2): the count is checked against two lists, so each word opens its own.
+  const suspended = screen.getByText("Suspended accounts").parentElement!;
+  expect(suspended.tagName).not.toBe("A");
+  expect(suspended).toHaveTextContent("photographers and runners");
+  expect(within(suspended).getByRole("link", { name: "photographers" })).toHaveAttribute("href", "/admin/photographers?status=suspended");
+  expect(within(suspended).getByRole("link", { name: "runners" })).toHaveAttribute("href", "/admin/runners?status=suspended");
   expect(tile("This week's decisions").textContent).toContain("actions logged since Monday");
   expect(tile("Pending verifications").getAttribute("href")).toBe("/admin/inbox?type=verifications");
 });

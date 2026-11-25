@@ -49,7 +49,7 @@ export function PublicUrlSection({ handle }: { handle: string }) {
         href={`/${handle}`}
         target="_blank"
         rel="noopener"
-        className={`shrink-0 ${MONO_LABEL} text-slate hover:text-ink transition-colors`}
+        className={`shrink-0 inline-flex min-h-[44px] items-center ${MONO_LABEL} text-slate hover:text-ink transition-colors`}
       >
         Open ↗
       </Link>
@@ -118,7 +118,7 @@ export function SocialsSection({ effective }: { effective: EffectivePhotographer
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`shrink-0 ${MONO_LABEL} text-slate hover:text-ink transition-colors`}
+                className={`shrink-0 inline-flex min-h-[44px] items-center ${MONO_LABEL} text-slate hover:text-ink transition-colors`}
               >
                 Open ↗
               </a>

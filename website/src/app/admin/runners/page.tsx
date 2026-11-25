@@ -7,9 +7,10 @@ import { LoadMoreButton } from "@/components/ui/load-more-button";
 import { Kicker } from "@/components/ui/kicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
+import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
 import { AdminSuspendModal, RUNNER_SUSPEND_REASONS } from "@/components/admin/admin-suspend-modal";
 import { AdminMessageModal } from "@/components/admin/admin-message-modal";
-import { useAdminRunnersPage, useAdminUserActions } from "@/hooks/use-admin-users";
+import { useAdminRunnerCount, useAdminRunnersPage, useAdminUserActions } from "@/hooks/use-admin-users";
 import { useSearchFocusShortcut } from "@/hooks/use-admin-keyboard";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useToast } from "@/hooks/use-toast";
@@ -23,10 +24,13 @@ import { ROUTES } from "@/lib/constants";
 // AX-41 (M1): find a runner on the server, then suspend, unsuspend or message
 // them with the same modals and actions the photographer detail page uses.
 export default function AdminRunnersPage() {
+  const [tabRaw, setTab] = useUrlState<string>("status", "all");
+  const tab = tabRaw === "suspended" ? "suspended" : "all";
   const [query, setQuery] = useUrlState<string>("q", "", { debounceMs: 300 });
   // The server search follows the URL, which trails typing by the 300 ms debounce.
   const q = (useSearchParams().get("q") ?? "").trim();
-  const list = useAdminRunnersPage(q);
+  const list = useAdminRunnersPage(q, tab === "suspended" ? "suspended" : undefined);
+  const counts = { all: useAdminRunnerCount(), suspended: useAdminRunnerCount("suspended") };
   const failed = !!list.error && list.items.length === 0;
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   useSearchFocusShortcut({ active: true, inputRef: searchInputRef });
@@ -98,6 +102,13 @@ export default function AdminRunnersPage() {
         </Kicker>
       </div>
 
+      <AdminStatusTabs
+        label="Runner status"
+        tabs={[{ key: "all", label: "All", count: counts.all }, { key: "suspended", label: "Suspended", count: counts.suspended }]}
+        value={tab}
+        onChange={setTab}
+      />
+
       {failed ? (
         <div role="alert" className="mt-10 space-y-3">
           <p className="font-sans text-sm text-error">
@@ -120,7 +131,7 @@ export default function AdminRunnersPage() {
         </div>
       ) : list.items.length === 0 ? (
         <p className="mt-6 font-sans text-sm text-slate-soft">
-          {q ? "No runner matches this search." : "No runners yet."}
+          {q ? "No runner matches this search." : tab === "suspended" ? "No active suspensions." : "No runners yet."}
         </p>
       ) : (
         <>
@@ -137,8 +148,10 @@ export default function AdminRunnersPage() {
                       <p className="font-sans text-sm text-slate-soft mt-1 tnum">
                         Joined {sentenceCaseDate(formatMemberSince(row.createdAt))}
                       </p>
+                      {/* runner= keeps only this runner's disputes; q= is today's email search, for a backend without that filter. */}
                       <Link
-                        href={`${ROUTES.ADMIN_DISPUTES}?view=all&q=${encodeURIComponent(row.email)}`}
+                        href={`${ROUTES.ADMIN_DISPUTES}?view=all&q=${encodeURIComponent(row.email)}&runner=${encodeURIComponent(row.userId)}`}
+                        aria-label={`Disputes of ${row.name}`}
                         className="inline-flex min-h-[44px] items-center font-sans text-sm text-ink underline decoration-line-strong underline-offset-4 hover:decoration-fresh"
                       >
                         Their disputes →

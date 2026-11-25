@@ -38,7 +38,7 @@ export function AdminPhotographerCard({
           <AvatarDisc name={row.brandName ?? row.name} size="sm" tone="ink" avatarOverride={null} />
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-3 flex-wrap">
-              <h3 title={row.brandName ?? row.name} className="font-display text-lg md:text-xl font-medium text-ink truncate">
+              <h3 className="font-display text-lg md:text-xl font-medium text-ink break-words min-w-0">
                 {row.brandName ?? row.name}
               </h3>
               {row.handle && (
@@ -47,8 +47,8 @@ export function AdminPhotographerCard({
                 </p>
               )}
             </div>
-            <p className="font-sans text-sm text-slate-soft mt-2 truncate">
-              <span title={place}>{place}</span>
+            <p className="font-sans text-sm text-slate-soft mt-2 break-words">
+              <span>{place}</span>
               <span className="text-slate-soft"> · </span>
               <span className="tnum">since {sentenceCaseDate(formatMemberSince(row.createdAt))}</span>
             </p>

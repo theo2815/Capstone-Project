@@ -14,7 +14,7 @@ import { ROUTES } from "@/lib/constants";
 const nav = vi.hoisted(() => ({ search: new URLSearchParams(""), replace: vi.fn(), push: vi.fn() }));
 vi.mock("@/lib/api-admin", async (orig) => ({
   ...(await orig<typeof import("@/lib/api-admin")>()),
-  fetchAdminUsersPage: vi.fn(), suspendUser: vi.fn(),
+  fetchAdminUsersPage: vi.fn(), suspendUser: vi.fn(), unsuspendUser: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/admin/runners",
@@ -37,7 +37,7 @@ beforeEach(() => {
   useAuthStore.getState().startSession(admin);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
-afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); client.clear(); useAuthStore.getState().logout(); useToastStore.setState({ toasts: [] }); vi.resetAllMocks(); });
 
 it("searches runners on the server with the search in the URL", async () => {
   nav.search = new URLSearchParams("q=ana");
@@ -50,12 +50,54 @@ it("searches runners on the server with the search in the URL", async () => {
   expect(screen.getByText("Active")).toBeInTheDocument();
 });
 
-it("links each runner to their disputes, searched by their email", async () => {
+// FU-18: runner= keeps only this runner's disputes; q= keeps today's email search for a backend without the filter.
+it("links each runner to their own disputes, by id, named for the runner", async () => {
   vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([{ ...runner, email: "ana+race@example.test" }]));
   mount();
   const row = (await screen.findByText("Ana Runner")).closest("li")!;
-  expect(within(row).getByRole("link", { name: "Their disputes →" }))
-    .toHaveAttribute("href", "/admin/disputes?view=all&q=ana%2Brace%40example.test");
+  const link = within(row).getByRole("link", { name: "Disputes of Ana Runner" });
+  expect(link).toHaveTextContent("Their disputes →");
+  expect(link).toHaveAttribute("href", "/admin/disputes?view=all&q=ana%2Brace%40example.test&runner=runner-7");
+});
+
+it("lists all runners by default and counts both tabs", async () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockImplementation(async (args) =>
+    args.limit === 1 ? { items: [], total: args.status === "suspended" ? 2 : 9, offset: 0, limit: 1 } : page([runner]));
+  mount();
+  expect(await screen.findByText("Ana Runner")).toBeInTheDocument();
+  expect(adminApi.fetchAdminUsersPage).toHaveBeenCalledWith({ role: "RUNNER", offset: 0, limit: 50 }, expect.anything());
+  const tabs = screen.getByRole("group", { name: "Runner status" });
+  expect(await within(tabs).findByRole("button", { name: /^All\D*9/ })).toHaveAttribute("aria-pressed", "true");
+  expect(await within(tabs).findByRole("button", { name: /^Suspended\D*2/ })).toHaveAttribute("aria-pressed", "false");
+});
+
+it("the Suspended tab asks the server for suspended runners only", async () => {
+  nav.search = new URLSearchParams("status=suspended");
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([]));
+  mount();
+  expect(await screen.findByText("No active suspensions.")).toBeInTheDocument();
+  expect(adminApi.fetchAdminUsersPage).toHaveBeenCalledWith(
+    { role: "RUNNER", status: "suspended", offset: 0, limit: 50 }, expect.anything());
+});
+
+it("an unsuspended runner leaves the Suspended tab at once, before the list refetch lands", async () => {
+  nav.search = new URLSearchParams("status=suspended");
+  const held = { ...runner, suspendedAt: "2026-11-01T00:00:00Z" };
+  vi.mocked(adminApi.fetchAdminUsersPage)
+    .mockImplementation(async (args) => args.limit === 1 ? { items: [], total: 1, offset: 0, limit: 1 } : page([held]));
+  vi.mocked(adminApi.unsuspendUser).mockResolvedValue({ ...runner, suspendedAt: null });
+  mount();
+  const row = (await screen.findByText("Ana Runner")).closest("li")!;
+  vi.mocked(adminApi.fetchAdminUsersPage).mockReturnValue(new Promise(() => {})); // the refetch is held
+  await userEvent.click(within(row).getByRole("button", { name: "Unsuspend" }));
+  await waitFor(() => expect(screen.queryByText("Ana Runner")).toBeNull());
+});
+
+it("picking a tab writes it to the URL", async () => {
+  vi.mocked(adminApi.fetchAdminUsersPage).mockResolvedValue(page([runner]));
+  mount();
+  await userEvent.click(within(screen.getByRole("group", { name: "Runner status" })).getByRole("button", { name: /^Suspended/ }));
+  expect(nav.replace).toHaveBeenCalledWith("/admin/runners?status=suspended", { scroll: false });
 });
 
 it("suspends the runner whose row opened the shared Suspend modal", async () => {
