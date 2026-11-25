@@ -74,9 +74,10 @@ export default function AdminSecurityPage() {
   }
 
   function messageFor(err: unknown, fallback: string): string {
-    return err instanceof ApiError
-      ? (err.errors[0]?.message ?? fallback)
-      : fallback;
+    if (!(err instanceof ApiError)) return fallback;
+    // The server's "That code is not valid." would hide the clock hint (O10).
+    if (err.errors.some((e) => e.code === "INVALID_MFA_CODE")) return CODE_FAILED;
+    return err.errors[0]?.message ?? fallback;
   }
 
   async function handleEnroll() {
@@ -387,7 +388,7 @@ function RecoveryCodes({
         If you lose both your phone and these codes, you cannot get back in by
         yourself. Ask the owner to reset your two-step verification.
       </p>
-      <ul ref={listRef} className="grid grid-cols-2 gap-x-8 gap-y-2 rounded-xl border border-line bg-bone-deep p-5">
+      <ul ref={listRef} className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 rounded-xl border border-line bg-bone-deep p-5">
         {codes.map((c) => (
           <li key={c} className="font-mono tnum text-base text-ink">
             {c}
