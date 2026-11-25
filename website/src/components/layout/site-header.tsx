@@ -52,40 +52,44 @@ export function SiteHeader({
     // Height is pinned to --site-header-h rather than falling out of the
     // padding, because every sticky bar on the site offsets against it. Left
     // to `py-4` the header measured 69px signed-in but ~57px signed-out (the
-    // size-9 bells/avatar are the tallest child, and guests don't get them),
-    // so no single offset could sit flush in both states.
+    // bells/avatar are the tallest child, and guests don't get them),
+    // so no single offset could sit flush in both states. Every control in it is
+    // a 44 px target (FU-23), which still fits inside the pinned height.
     <header className="sticky top-0 z-30 h-[var(--site-header-h)] bg-bone/85 backdrop-blur-md border-b border-line">
       <div className={`px-6 md:px-10 h-full flex items-center justify-between ${fullWidth ? "" : "max-w-7xl mx-auto"}`}>
         <Link
           href={ROUTES.RUNNERS}
-          className="flex items-center text-ink transition-opacity hover:opacity-75"
+          className="flex min-h-11 items-center text-ink transition-opacity hover:opacity-75"
           aria-label="Back to QuickPitik home"
         >
           <BrandLogo className="md:h-11 md:w-44" priority />
         </Link>
-        {/* Tighter below 400 px so "Sign in" (which no longer wraps) fits narrow phones. */}
-        <nav className="flex items-center gap-3 min-[400px]:gap-6 md:gap-8">
+        {/* Tighter below 400 px so "Sign in" (which no longer wraps) fits narrow phones,
+            and so Events, a 44 px bell and the 44 px avatar still fit beside the logo. */}
+        <nav className="flex items-center gap-2 min-[400px]:gap-6 md:gap-8">
           {!hidePublicNav && (
             <Link
               href={ROUTES.EVENTS}
               aria-current={isEventsActive ? "page" : undefined}
               className={cn(
-                "relative inline-flex items-center gap-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
+                "relative inline-flex min-h-11 items-center gap-2 font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] transition-colors",
                 isEventsActive
                   ? "text-ink"
-                  : "nav-link text-slate hover:text-ink",
+                  : "text-slate hover:text-ink",
               )}
             >
+              {/* The dot is hidden below 400 px so Events, a bell and the avatar fit at 360 px; the underline still marks the page. */}
               {isEventsActive && (
                 <span
-                  className="size-1.5 rounded-full bg-fresh"
+                  className="hidden min-[400px]:block size-1.5 rounded-full bg-fresh"
                   aria-hidden="true"
                 />
               )}
-              <span>Events</span>
+              {/* nav-link sits on the text, not the 44 px link, so its hover underline stays under the word. */}
+              <span className={isEventsActive ? undefined : "nav-link"}>Events</span>
               {isEventsActive && (
                 <span
-                  className="pointer-events-none absolute -bottom-4 left-0 right-0 h-px bg-fresh"
+                  className="pointer-events-none absolute -bottom-1 left-0 right-0 h-px bg-fresh"
                   aria-hidden="true"
                 />
               )}
@@ -93,7 +97,7 @@ export function SiteHeader({
           )}
           {isLoading ? (
             <div
-              className="size-9 rounded-full bg-line/40 animate-pulse"
+              className="size-11 rounded-full bg-line/40 animate-pulse"
               aria-hidden="true"
             />
           ) : isAuthenticated && user ? (
@@ -105,9 +109,9 @@ export function SiteHeader({
           ) : rightLink && rightHref ? (
             <Link
               href={rightHref}
-              className="nav-link font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors whitespace-nowrap"
+              className="inline-flex min-h-11 items-center font-mono uppercase tracking-[0.14em] text-[14px] min-[400px]:text-[15px] md:text-[13px] text-ink hover:text-fresh transition-colors whitespace-nowrap"
             >
-              {rightLink.label}
+              <span className="nav-link">{rightLink.label}</span>
             </Link>
           ) : null}
         </nav>

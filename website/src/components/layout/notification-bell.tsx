@@ -52,7 +52,7 @@ export function NotificationBell() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="relative grid size-9 place-items-center rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
+        className="relative grid size-11 place-items-center rounded-full border border-line text-slate hover:text-ink hover:border-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fresh focus-visible:ring-offset-2 focus-visible:ring-offset-bone"
         aria-label={
           unread > 0 ? `Inbox · ${unread} unread` : "Inbox · no unread messages"
         }

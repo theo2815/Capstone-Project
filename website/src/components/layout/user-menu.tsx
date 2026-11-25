@@ -161,7 +161,7 @@ export function UserMenu({ user }: UserMenuProps) {
         aria-label={`Account menu for ${user.name}`}
         onClick={() => setIsOpen((o) => !o)}
         className={cn(
-          "size-9 rounded-full overflow-hidden",
+          "size-11 rounded-full overflow-hidden",
           // Admin and photographer pages spend their one fresh accent on their own
           // signals (queue dot, Upload, LIVE), so those initials discs are ink.
           !avatar && (user.role === "ADMIN" || user.role === "PHOTOGRAPHER" ? "bg-ink text-surface hover:bg-ink-soft" : "bg-fresh text-surface hover:bg-fresh-deep"),
@@ -193,7 +193,7 @@ export function UserMenu({ user }: UserMenuProps) {
           role="menu"
           aria-label="Account"
           className={cn(
-            "absolute right-0 top-full mt-3 z-40",
+            "absolute right-0 top-full mt-2 z-40",
             "w-[300px] origin-top-right",
             "bg-bone border border-line rounded-2xl overflow-hidden",
             "shadow-[0_18px_50px_-12px_rgba(17,17,17,0.14)]",
