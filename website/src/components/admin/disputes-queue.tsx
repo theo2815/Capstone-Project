@@ -21,6 +21,8 @@ import { useAdminDispute, useAdminDisputePage } from "@/hooks/use-admin-disputes
 import { useAdminKpis } from "@/hooks/use-admin-data";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useQueueKeyboardNav } from "@/hooks/use-admin-keyboard";
+import { usePathname } from "next/navigation";
+import { ROUTES } from "@/lib/constants";
 import {
   type Dispute,
   type DisputeResolution,
@@ -98,6 +100,8 @@ export function DisputesQueue() {
   const list = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined, runner: view === "refund_run" ? undefined : runner || undefined });
   const items = list.items;
   const mdUp = useMdUp();
+  // FU-20: in the Inbox the views keep to one row and the legend follows the list, so the first dispute sits higher.
+  const inInbox = usePathname() === ROUTES.ADMIN_INBOX;
   // Counts come from the polled KPIs; a field an older backend leaves out shows no count.
   const kpis = useAdminKpis();
   const counts: Partial<Record<QueueView, number>> = {
@@ -182,6 +186,13 @@ export function DisputesQueue() {
     />
   );
 
+  const legend = (
+    <p className="font-sans text-sm text-slate">
+      Needs you: waiting for your decision. Overdue: past the due date on the dispute. Refund run: approved QR Ph
+      refunds you still have to pay in PayMongo.
+    </p>
+  );
+
   return (
     <>
       <AdminStatusTabs
@@ -189,12 +200,10 @@ export function DisputesQueue() {
         tabs={VIEWS.map((v) => ({ key: v.value, label: v.label, count: counts[v.value] }))}
         value={view}
         onChange={setView}
+        scroll={inInbox}
       />
       <div className="pt-6 md:pt-8 space-y-6" aria-busy={list.isFetching}>
-        <p className="font-sans text-sm text-slate">
-          Needs you: waiting for your decision. Overdue: past the due date on the dispute. Refund run: approved QR Ph
-          refunds you still have to pay in PayMongo.
-        </p>
+        {!inInbox && legend}
         {list.error != null && items.length > 0 && (
           <div role="alert" className="flex flex-wrap items-center gap-3">
             <p className="font-sans text-sm text-error">Couldn&apos;t refresh.</p>
@@ -253,6 +262,7 @@ export function DisputesQueue() {
             )}
           </>
         )}
+        {inInbox && legend}
       </div>
 
       {openRow && (

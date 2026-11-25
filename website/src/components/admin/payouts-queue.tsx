@@ -20,7 +20,7 @@ import { AdminDetailDrawer } from "@/components/admin/admin-detail-drawer";
 import { PayoutAccountCard } from "@/components/admin/payout-account-card";
 import { ReadyToSendCard } from "@/components/admin/ready-to-send-card";
 import { AdminStatusPill } from "@/components/admin/admin-status-pill";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useAdminPayoutById, useAdminPayoutCounts, useAdminPayoutsPage, usePayoutActions } from "@/hooks/use-admin-payouts";
 import { BTN_DANGER, BTN_PRIMARY, BTN_SECONDARY, BTN_SIZE } from "@/components/ui/button-styles";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -42,6 +42,7 @@ import { formatLongDate, sentenceCaseDate } from "@/lib/format";
 import { cn, formatPrice } from "@/lib/utils";
 import { KBD_CLASS } from "@/components/admin/keyboard-hint-pill";
 import { AdminStatusTabs } from "@/components/admin/admin-status-tabs";
+import { ROUTES } from "@/lib/constants";
 
 interface SingleHoldTarget {
   kind: "single";
@@ -111,6 +112,8 @@ export function PayoutsQueue() {
   const [search, setSearch] = useUrlState<string>("q", "", { debounceMs: 300 });
   // The server search follows the URL, which trails typing by the 300 ms debounce.
   const q = (useSearchParams().get("q") ?? "").trim();
+  // FU-20: in the Inbox the tabs keep to one row, so the first payout sits higher.
+  const inInbox = usePathname() === ROUTES.ADMIN_INBOX;
   const list = useAdminPayoutsPage(TAB_STATUSES[tab], q);
   const counts = useAdminPayoutCounts(q);
   const effective = list.items;
@@ -455,6 +458,7 @@ export function PayoutsQueue() {
         }))}
         value={tab}
         onChange={setTab}
+        scroll={inInbox}
       />
       {list.isLoading ? (
         <div aria-busy="true" className="space-y-4 pt-6">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-28 w-full rounded-2xl" />)}</div>
