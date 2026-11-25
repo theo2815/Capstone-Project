@@ -35,7 +35,8 @@ export type PaletteEntryKind =
   | "dispute"
   | "flag"
   | "payout"
-  | "photographer";
+  | "photographer"
+  | "runner";
 
 export interface PaletteEntry {
   id: string;
@@ -57,6 +58,7 @@ export const PALETTE_KIND_LABEL: Record<PaletteEntryKind, string> = {
   flag: "Flags",
   payout: "Payouts",
   photographer: "Photographers",
+  runner: "Runners",
 };
 
 /** Render order for grouped results — pages first, then queue verbs in
@@ -68,6 +70,7 @@ export const PALETTE_KIND_ORDER: ReadonlyArray<PaletteEntryKind> = [
   "flag",
   "payout",
   "photographer",
+  "runner",
 ];
 
 export interface PaletteSnapshots {
@@ -198,7 +201,7 @@ function buildFlagEntries(flags: ReadonlyArray<Flag>): PaletteEntry[] {
   return flags.map((f) => {
     const reasonLabel = flagReasonLabel(f);
     const statusLabel = capitalize(f.status);
-    const reporter = f.reportedBy === "system" ? "System" : `@${f.reportedBy}`;
+    const reporter = f.reportedBy === "system" ? "Automatic check" : `@${f.reportedBy}`;
     const subtitle = `${statusLabel} · ${reasonLabel} · ${reporter}`;
     return {
       id: `flg:${f.id}`,
@@ -209,6 +212,7 @@ function buildFlagEntries(flags: ReadonlyArray<Flag>): PaletteEntry[] {
         f.id,
         f.photographerHandle,
         f.reportedBy,
+        reporter,
         statusLabel,
         reasonLabel,
         f.note,
@@ -277,6 +281,18 @@ function buildPhotographerEntries(
   });
 }
 
+// FU-24: useAdminUsers loads every page, so every runner is already here (the palette says when that load failed).
+function buildRunnerEntries(userPool: AdminUserRow[]): PaletteEntry[] {
+  return userPool.filter((u) => u.role === "RUNNER").map((u) => ({
+    id: `run:${u.userId}`,
+    kind: "runner" as const,
+    title: u.name,
+    subtitle: u.email,
+    haystack: [u.name, u.email, u.handle ?? ""].join(" ").toLowerCase(),
+    route: `${ROUTES.ADMIN_RUNNERS}?q=${encodeURIComponent(u.email)}`,
+  }));
+}
+
 export function buildPaletteIndex(
   snapshots: PaletteSnapshots,
 ): PaletteEntry[] {
@@ -289,6 +305,7 @@ export function buildPaletteIndex(
       : []),
     ...buildPayoutEntries(snapshots.payouts),
     ...buildPhotographerEntries(snapshots.userPool),
+    ...buildRunnerEntries(snapshots.userPool),
   ];
 }
 
