@@ -46,7 +46,8 @@ export function CommandPalette() {
   const recents = useAdminPaletteStore((s) => s.recents);
   const pushRecent = useAdminPaletteStore((s) => s.pushRecent);
 
-  const userPool = useAdminUsers().data ?? EMPTY_ADMIN_USERS;
+  const users = useAdminUsers();
+  const userPool = users.data ?? EMPTY_ADMIN_USERS;
   const disputes = useAdminDisputes().data ?? EMPTY_DISPUTES;
   const flags = useAdminFlags()?.items ?? EMPTY_FLAGS;
   const payouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
@@ -200,6 +201,11 @@ export function CommandPalette() {
         />
       </div>
       <div className="max-h-[60vh] overflow-y-auto">
+        {users.isError && trimmed.length >= 2 && (
+          <p className="px-5 pt-4 font-sans text-sm text-ink-soft">
+            Couldn&apos;t search people. The list shows what is loaded.
+          </p>
+        )}
         {trimmed.length === 0 && results.length === 0 ? (
           <EmptyState />
         ) : results.length === 0 ? (

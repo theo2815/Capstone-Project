@@ -51,6 +51,16 @@ it("labels a rejected photographer Rejected, and Suspended still wins", () => {
 it("a flag entry shows and finds the row's reasonLabel", () => {
   const flag = { id: "flag-2", photographerHandle: "ana", reportedBy: "system", reason: "user_report", reasonLabel: "Reported by a runner", note: "", status: "open" } as Flag;
   const [entry] = buildPaletteIndex({ userPool: [], disputes: [], flags: [flag], payouts: [] }).filter((e) => e.kind === "flag");
-  expect(entry.subtitle).toBe("Open · Reported by a runner · System");
+  expect(entry.subtitle).toBe("Open · Reported by a runner · Automatic check");
   expect(fuzzyScore("reported by a runner", entry)).not.toBeNull();
+  expect(fuzzyScore("automatic check", entry)).not.toBeNull();
+});
+
+// FU-24 (O15): runners are in the loaded user pool, so the palette finds them by name or email.
+it("finds a runner by name or email and opens the Runners search for them", () => {
+  const runner = { ...adminUser, userId: "runner-1", role: "RUNNER" as const, name: "Joana Reyes", email: "joana@example.test", brandName: null, handle: null };
+  const [entry] = buildPaletteIndex({ userPool: [runner], disputes: [], flags: [], payouts: [] }).filter((e) => e.kind === "runner");
+  expect(entry).toMatchObject({ title: "Joana Reyes", subtitle: "joana@example.test", route: "/admin/runners?q=joana%40example.test" });
+  expect(fuzzyScore("joana reyes", entry)).not.toBeNull();
+  expect(fuzzyScore("joana@example", entry)).not.toBeNull();
 });
