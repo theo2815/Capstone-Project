@@ -12,6 +12,15 @@ import { Kicker, KICKER_SIZE_CLASS } from "@/components/ui/kicker";
 const TOGGLE_CLS =
   `font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-slate group-hover:text-ink transition-colors tnum shrink-0`;
 
+// The word is part of the button's name (FU-21); only the arrow is hidden from screen readers.
+function ToggleWord({ open }: { open: boolean }) {
+  return (
+    <span className={TOGGLE_CLS}>
+      {open ? "Hide" : "Show"} <span aria-hidden>{open ? "↑" : "↓"}</span>
+    </span>
+  );
+}
+
 interface CollapsibleReviewSlabProps {
   id?: string;
   number: string;
@@ -51,7 +60,7 @@ export function CollapsibleReviewSlab({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={open ? bodyId : undefined}
-        className={`group w-full flex flex-wrap items-baseline justify-between gap-4 md:gap-6 text-left ${
+        className={`group w-full min-h-11 flex flex-wrap content-center items-baseline justify-between gap-4 md:gap-6 text-left ${
           open ? "mb-8 md:mb-10" : ""
         }`}
       >
@@ -63,7 +72,7 @@ export function CollapsibleReviewSlab({
             {title}
           </Kicker>
           {caption && (
-            <Kicker as="p" tone="soft" className="hidden md:block break-words min-w-0">
+            <Kicker as="p" tone="soft" className="break-words min-w-0">
               {caption}
             </Kicker>
           )}
@@ -75,9 +84,7 @@ export function CollapsibleReviewSlab({
               {trailing}
             </Kicker>
           ) : trailing}
-          <span aria-hidden className={TOGGLE_CLS}>
-            {open ? "Hide ↑" : "Show ↓"}
-          </span>
+          <ToggleWord open={open} />
         </div>
       </button>
       {open && <div id={bodyId}>{children}</div>}
@@ -110,16 +117,14 @@ export function CollapsibleReviewSection({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={open ? bodyId : undefined}
-        className={`group w-full flex items-baseline justify-between gap-4 text-left ${
+        className={`group w-full min-h-11 flex items-center justify-between gap-4 text-left ${
           open ? "mb-3" : ""
         }`}
       >
         <Kicker as="p" tone="soft">
           {kicker}
         </Kicker>
-        <span aria-hidden className={TOGGLE_CLS}>
-          {open ? "Hide ↑" : "Show ↓"}
-        </span>
+        <ToggleWord open={open} />
       </button>
       {open && <div id={bodyId}>{children}</div>}
     </section>
