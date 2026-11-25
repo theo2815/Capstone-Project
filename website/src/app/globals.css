@@ -44,7 +44,8 @@
   --accent: var(--fresh);
   --primary: var(--fresh);
   --success: var(--fresh);
-  --error: #DC2626;
+  /* Error red: 4.5:1 on surface, paper and paper-deep (app/globals-contrast.test.ts). */
+  --error: #B91C1C;
   --warning: #D97706;
   /* Warning text: the lightest amber at 4.5:1 on surface, paper and paper-deep (app/globals-contrast.test.ts). */
   --warning-text: #AC4F0A;
