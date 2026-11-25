@@ -18,7 +18,7 @@ interface CharCounterProps {
 // input that ships after):
 //   < 80%     → text-slate-soft (default)
 //   ≥ 80%    → text-warning-text (--warning-text, #AC4F0A)
-//   ≥ 100%   → text-error (red #DC2626; user has hit cap, next keystroke
+//   ≥ 100%   → text-error (red #B91C1C; user has hit cap, next keystroke
 //             blocked or surfaces an inline FieldError)
 //
 // Decorative for screen readers — pair with <FieldError> for any actual

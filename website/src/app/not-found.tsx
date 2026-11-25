@@ -8,7 +8,7 @@ export default function NotFound() {
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center px-4">
       <BrandLogo className="mb-8 h-11 w-44" />
-      <h1 className="font-hero text-6xl text-line-strong">404</h1>
+      <h1 className="font-hero text-6xl text-slate-soft">404</h1>
       <h2 className="mt-4 font-display text-xl font-bold text-ink">
         Page Not Found
       </h2>
