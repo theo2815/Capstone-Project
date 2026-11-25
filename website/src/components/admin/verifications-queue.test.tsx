@@ -64,6 +64,8 @@ it("Incomplete leaves out suspended photographers and links each row to its phot
   const slab = document.getElementById("incomplete")!;
   expect(within(slab).queryByText("Banned Studio")).toBeNull();
   expect(within(slab).getByRole("link", { name: "Half Studio" })).toHaveAttribute("href", "/admin/photographers/half-studio");
+  // FU-16: the name link is a 44 px target.
+  expect(within(slab).getByRole("link", { name: "Half Studio" })).toHaveClass("min-h-11");
 });
 
 it("Select all ticks every visible row, and bulk Reject is a danger button", async () => {
@@ -94,6 +96,21 @@ it("a row's completeness counts socials and payouts, the same number as the dire
   cleanup();
   render(<AdminPhotographerCard row={{ ...adminUser, verificationStatus: "approved", settingsSnapshot: snapshot }} />);
   expect(screen.getByText("5/7 fields")).toBeInTheDocument();
+});
+
+it("FU-16: the row and the drawer give one count for a cover gradient with no cover image", async () => {
+  const snapshot = { hasCover: false, hasBrandName: true, hasWatermark: true, hasHandle: true, hasRegion: true, socialCount: 0, payoutCount: 0 };
+  vi.spyOn(api, "get").mockImplementation(async (url: string) => url.endsWith("/settings") ? {
+    ...adminUserSettings,
+    region: { regionCode: "07", provinceCode: "0722", city: null },
+    cover: { url: null, gradientFrom: "#000000", gradientTo: "#111111" },
+    watermark: { dataUrl: "https://example.test/wm.png", label: null },
+  } : []);
+  navigation.search = `row=${adminUser.userId}`;
+  mount([{ ...adminUser, settingsSnapshot: snapshot }]);
+  expect(screen.getByText("4 of 7 fields")).toBeInTheDocument();
+  const drawer = await screen.findByRole("dialog");
+  await within(drawer).findByText("4/7");
 });
 
 // AX-39 (UA7): row values read as typed; mono caps stay for labels only.

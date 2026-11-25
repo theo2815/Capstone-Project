@@ -109,13 +109,14 @@ const COMPLETENESS_FIELDS: ReadonlyArray<{ key: keyof PhotographerSettingsSnapsh
 
 export function snapshotFromSettings(s: EffectivePhotographerSettings): PhotographerSettingsSnapshot {
   return {
-    hasCover: !!s.cover,
+    // FU-16: the server's rule (AdminUserService.buildSnapshot): an uploaded cover and watermark, payout accounts with a QR.
+    hasCover: s.cover?.kind === "image",
     hasBrandName: s.brandName.trim().length > 0,
-    hasWatermark: !!s.watermark,
+    hasWatermark: s.watermark?.kind === "image",
     hasHandle: s.handle.trim().length >= 3,
     hasRegion: !!s.region,
     socialCount: s.socials.length,
-    payoutCount: s.payouts.length,
+    payoutCount: s.payouts.filter((p) => p.qr).length,
   };
 }
 
