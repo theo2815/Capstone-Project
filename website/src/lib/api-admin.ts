@@ -1050,6 +1050,8 @@ export interface AdminSalesKpis {
   gmv: number;
   platformRevenue: number;
   refundsIssued: number;
+  /** FU-3: succeeded refunds in the window; missing on an older backend. */
+  refundsIssuedCount?: number;
   netPlatformRevenue: number;
   photographerKeep: number;
   totalSalesCount: number;

@@ -82,7 +82,11 @@ export function AdminTrendChart({
       </div>
       <div
         className="flex items-end gap-1 h-20 md:h-24 bg-bone-deep rounded-md p-1.5"
-        onMouseLeave={() => setActiveIndex(null)}
+        onMouseLeave={(e) => {
+          // A bar that still has keyboard focus keeps its readout.
+          const focused = Array.from(e.currentTarget.children).indexOf(document.activeElement as Element);
+          setActiveIndex(focused >= 0 ? focused : null);
+        }}
       >
         {data.map((point, i) => {
           const pct = (point.amount / max) * 100;

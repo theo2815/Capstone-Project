@@ -26,6 +26,8 @@ export default function AdminSalesPage() {
   const kpisQuery = useAdminSalesKpisQuery("ytd");
   const kpis = kpisQuery.data;
   const refunds = useRefundPulse();
+  // The server's year-to-date count; an older backend lacks it, so the dispute list's count stands in.
+  const refundCount = kpis?.refundsIssuedCount ?? refunds.refundCount;
 
   return (
     <>
@@ -79,7 +81,7 @@ export default function AdminSalesPage() {
           <AdminStatTile
             kicker="Refunds issued"
             value={formatPrice(kpis.refundsIssued)}
-            caption={`${refundCaption(kpis.refundsIssued, refunds.refundCount)} · year to date`}
+            caption={`${refundCaption(kpis.refundsIssued, refundCount)} · year to date`}
           />
         </div>
         )}
@@ -110,7 +112,7 @@ export default function AdminSalesPage() {
         id="by-event"
         number="04"
         title="Sales by event"
-        caption="Sortable · estimates are marked"
+        caption="All time, before refunds · sortable · estimates are marked"
       >
         <AdminSalesEventTable />
       </Slab>
@@ -122,14 +124,14 @@ export default function AdminSalesPage() {
         title="Refund pulse"
         caption="This week and year to date"
       >
-        <RefundPulseSummary refundsIssued={kpis?.refundsIssued} />
+        <RefundPulseSummary refundsIssued={kpis?.refundsIssued} refundCount={refundCount} />
       </Slab>
     </>
   );
 }
 
-// The amount is the server total and the count comes from the dispute list, so
-// never caption a non-zero amount with "no refunds" or "0 refunds".
+// The count may come from the dispute list (an older backend), so never caption
+// a non-zero amount with "no refunds" or "0 refunds".
 function refundCaption(amount: number, count: number): string {
   if (amount === 0) return "no refunds processed";
   if (count === 0) return "refunded to runners";
@@ -152,7 +154,7 @@ function Header({ totalSales }: { totalSales: number | undefined }) {
   );
 }
 
-function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefined }) {
+function RefundPulseSummary({ refundsIssued, refundCount }: { refundsIssued: number | undefined; refundCount: number }) {
   const refunds = useRefundPulse();
   const week = useAdminSalesKpisQuery("week").data;
   // No sales this week means no rate (a refund can be for an older sale).
@@ -163,7 +165,7 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
         <PulseRow
           label="Refunds issued"
           value={refundsIssued === undefined ? "—" : formatPrice(refundsIssued)}
-          caption={refundsIssued === undefined ? "not loaded" : `${refundCaption(refundsIssued, refunds.refundCount)}, year to date`}
+          caption={refundsIssued === undefined ? "not loaded" : `${refundCaption(refundsIssued, refundCount)} · year to date`}
         />
         <PulseRow
           label="Refund rate"
@@ -179,7 +181,7 @@ function RefundPulseSummary({ refundsIssued }: { refundsIssued: number | undefin
 
       <Link
         href={ROUTES.ADMIN_DISPUTES}
-        className={`inline-flex items-center gap-2 self-start font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink hover:text-fresh transition-colors`}
+        className={`inline-flex items-center gap-2 min-h-[44px] self-start font-mono uppercase ${KICKER_SIZE_CLASS.sm} text-ink hover:text-fresh transition-colors`}
       >
         Open disputes queue →
       </Link>

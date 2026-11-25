@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { AdminTrendChart } from "./admin-trend-chart";
 
@@ -39,6 +39,23 @@ it("clicking or focusing a bar reads its day and value without a mouse hover", (
   expect(screen.getAllByText("3 decisions")).toHaveLength(2); // and the readout
   fireEvent.focus(screen.getByRole("button", { name: "Nov 19 · 2026: 6 decisions" }));
   expect(screen.getAllByText("6 decisions")).toHaveLength(2);
+});
+
+it("a bar with keyboard focus keeps its readout when the mouse leaves the chart (FU-17)", () => {
+  renderChart();
+  const bar = screen.getByRole("button", { name: "Nov 18 · 2026: 3 decisions" });
+  act(() => bar.focus());
+  fireEvent.mouseEnter(screen.getByRole("button", { name: "Nov 19 · 2026: 6 decisions" }));
+  fireEvent.mouseLeave(bar.parentElement!);
+  expect(screen.getAllByText("3 decisions")).toHaveLength(2); // the table cell and the readout
+});
+
+it("with no bar focused, leaving the chart clears the readout", () => {
+  renderChart();
+  fireEvent.mouseEnter(screen.getByRole("button", { name: "Nov 19 · 2026: 6 decisions" }));
+  expect(screen.getAllByText("6 decisions")).toHaveLength(2);
+  fireEvent.mouseLeave(screen.getAllByRole("button")[0].parentElement!);
+  expect(screen.getAllByText("6 decisions")).toHaveLength(1);
 });
 
 it("names the busiest day under the bars", () => {
