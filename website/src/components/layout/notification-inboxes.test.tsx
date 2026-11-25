@@ -33,6 +33,11 @@ function mount(role: "PHOTOGRAPHER" | "RUNNER") {
   return render(<QueryClientProvider client={client}><NotificationBell /><RunnerNotificationBell /><ConfirmationOverlay /></QueryClientProvider>);
 }
 describe.each(["PHOTOGRAPHER", "RUNNER"] as const)("%s inbox controls", (role) => {
+  // FU-23: the header bell is a 44 px target (size-11), like the account menu beside it.
+  it("the bell button is 44 px", async () => {
+    mount(role);
+    expect(await screen.findByRole("button", { name: "Inbox · 1 unread" })).toHaveClass("size-11");
+  });
   it("keeps read-all and rows disabled until confirmation, retaining unread data on failure", async () => {
     const request = deferred<unknown>(); const patch = vi.spyOn(api, "fetch").mockReturnValueOnce(request.promise);
     const user = userEvent.setup(); mount(role);

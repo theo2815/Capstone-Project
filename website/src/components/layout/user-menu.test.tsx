@@ -8,6 +8,12 @@ vi.mock("@/hooks/use-confirmation", () => ({ useConfirmation: () => ({ confirm: 
 
 const runner = { id: "r1", email: "runner@example.test", name: "Runner One", role: "RUNNER" as const, createdAt: "2026-11-01" };
 
+// FU-23: the account menu button is a 44 px target (size-11), not 36 px.
+it("the account menu button is 44 px", () => {
+  render(<UserMenu user={runner} />);
+  expect(screen.getByRole("button", { name: /Account menu/ })).toHaveClass("size-11");
+});
+
 // Runner audit P3-6: the menu is announced as a menu, but only Esc worked.
 it("moves through the menu with the arrow keys, Home and End", () => {
   render(<UserMenu user={runner} />);

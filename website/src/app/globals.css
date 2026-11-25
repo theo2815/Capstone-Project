@@ -285,7 +285,8 @@ body {
   background: currentColor;
   transition: width 0.3s ease;
 }
-.nav-link:hover::after {
+.nav-link:hover::after,
+a:hover > .nav-link::after {
   width: 100%;
 }
 
