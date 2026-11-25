@@ -402,9 +402,9 @@ export function VerificationsQueue({ afterIncomplete }: { afterIncomplete?: Reac
                     <p className="font-display text-base text-ink truncate">
                       <Link
                         href={photographerHref(row)}
-                        className="underline decoration-line underline-offset-4 hover:decoration-ink"
+                        className="inline-flex min-h-11 max-w-full items-center underline decoration-line underline-offset-4 hover:decoration-ink"
                       >
-                        {row.brandName ?? row.name}
+                        <span className="truncate">{row.brandName ?? row.name}</span>
                       </Link>
                     </p>
                     <p className="font-sans text-sm text-slate-soft mt-1">

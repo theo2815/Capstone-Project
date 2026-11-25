@@ -78,13 +78,21 @@ it("hides the facts and says so when an older backend has no record route", asyn
   expect(screen.queryByText("Seller details")).not.toBeInTheDocument();
 });
 
-it("offers Approve for a held profile and sends it to the server", async () => {
+it("FU-16: a held profile's Approve… comes after Send back… and asks first, as in the Verifications drawer", async () => {
   detail = { ...adminUser, adminHold: true, decisionLog: [] };
   const post = vi.spyOn(api, "post").mockResolvedValue({ ...adminUser, verificationStatus: "approved" });
   params.handle = adminUser.handle!;
   mount();
-  fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+  const approve = await screen.findByRole("button", { name: "Approve…" });
+  const sendBack = screen.getByRole("button", { name: "Send back…" });
+  expect(sendBack.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.click(approve);
+  expect(post).not.toHaveBeenCalled();
+  const confirm = await screen.findByRole("dialog", { name: "Approve Test Studio?" });
+  expect(within(confirm).getByText("This releases the hold. If their ID check has passed, the profile goes live now and they are told. If it has not, the profile goes live by itself when the check passes.")).toBeInTheDocument();
+  fireEvent.click(within(confirm).getByRole("button", { name: "Approve" }));
   await waitFor(() => expect(post).toHaveBeenCalledWith(`/admin/users/${adminUser.userId}/approve`, { expectedRevision: 7 }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Approve Test Studio?" })).not.toBeInTheDocument());
 });
 
 it("shows no Approve for a held profile that is back to incomplete (the server would refuse it)", async () => {
@@ -92,14 +100,14 @@ it("shows no Approve for a held profile that is back to incomplete (the server w
   params.handle = adminUser.handle!;
   mount();
   await screen.findByRole("button", { name: "Suspend…" });
-  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Approve/ })).not.toBeInTheDocument();
 });
 
 it("shows no Approve for a profile that is not held", async () => {
   params.handle = adminUser.handle!;
   mount();
   await screen.findByRole("heading", { level: 1, name: /Test Studio/ });
-  expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Approve/ })).not.toBeInTheDocument();
 });
 
 it("puts the admin actions before the review sections, so a phone reaches them first", async () => {

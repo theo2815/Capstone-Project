@@ -27,4 +27,18 @@ describe("computeCompleteness", () => {
       region: null, socials: [], payouts: [], source: "live",
     })).toEqual({ hasCover: false, hasBrandName: false, hasWatermark: false, hasHandle: false, hasRegion: false, socialCount: 0, payoutCount: 0 });
   });
+
+  it("FU-16: counts what the server counts: an uploaded cover and watermark, a payout account with its QR", () => {
+    const payout = { id: "p-1", method: "gcash", accountNumber: "09175550101", accountName: "Ana", qr: null, isPrimary: true } as const;
+    expect(view.snapshotFromSettings({
+      brandName: "Studio", brandColor: "none", bio: "", handle: "studio", avatarUrl: null,
+      cover: { kind: "gradient", from: "#000", to: "#111" }, watermark: { kind: "label", label: "Studio" },
+      region: null, socials: [], payouts: [payout], source: "live",
+    })).toMatchObject({ hasCover: false, hasWatermark: false, payoutCount: 0 });
+    expect(view.snapshotFromSettings({
+      brandName: "Studio", brandColor: "none", bio: "", handle: "studio", avatarUrl: null,
+      cover: { kind: "image", url: "https://example.test/c.jpg" }, watermark: { kind: "image", dataUrl: "https://example.test/w.png" },
+      region: null, socials: [], payouts: [{ ...payout, qr: { dataUrl: "https://example.test/q.png", uploadedAt: "2026-11-25T00:00:00Z" } }], source: "live",
+    })).toMatchObject({ hasCover: true, hasWatermark: true, payoutCount: 1 });
+  });
 });

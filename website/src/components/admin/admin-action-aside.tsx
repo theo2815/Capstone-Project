@@ -50,6 +50,7 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
   const [suspendOpen, setSuspendOpen] = useState(false);
   const [messageOpen, setMessageOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+  const [approveOpen, setApproveOpen] = useState(false);
   const [reviewRevision, setReviewRevision] = useState(row.verificationRevision);
 
   const isPending = row.verificationStatus === "pending";
@@ -59,7 +60,8 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
 
   // PD5: the same approve the verifications drawer offers a profile held after a reset or rejection.
   async function handleApproveHeld() {
-    if (await approveHeld(row.userId, row.verificationRevision)) {
+    if (await approveHeld(row.userId, reviewRevision)) {
+      setApproveOpen(false);
       showToast({ kind: "success", message: `Hold released · ${displayName}` });
     }
   }
@@ -123,17 +125,6 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
         Admin actions
       </Kicker>
       <div className="mt-5 space-y-3">
-        {isPending && row.adminHold && (
-          <button
-            type="button"
-            disabled={locked}
-            onClick={handleApproveHeld}
-            className={primaryBtn}
-          >
-            {activeLabel === "Approving…" ? activeLabel : "Approve"}
-          </button>
-        )}
-
         {isPending && (
           <button
             type="button"
@@ -142,6 +133,18 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
             className={dangerBtn}
           >
             Send back…
+          </button>
+        )}
+
+        {/* FU-16: after Send back…, and behind the same confirm as the Verifications drawer. */}
+        {isPending && row.adminHold && (
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => { setReviewRevision(row.verificationRevision); setApproveOpen(true); }}
+            className={primaryBtn}
+          >
+            Approve…
           </button>
         )}
 
@@ -198,6 +201,20 @@ export function AdminActionAside({ row }: AdminActionAsideProps) {
       )}
 
       {row.role === "PHOTOGRAPHER" && <ConsentWithdrawal row={row} locked={locked} busy={withdrawalBusy} setBusy={setWithdrawalBusy} />}
+
+      <AdminConfirmModal
+        open={approveOpen}
+        submitting={submitting}
+        pendingLabel="Approving…"
+        onClose={() => setApproveOpen(false)}
+        onConfirm={() => void handleApproveHeld()}
+        title={`Approve ${displayName}?`}
+        confirmLabel="Approve"
+      >
+        <p className="font-sans text-sm text-ink-soft">
+          This releases the hold. If their ID check has passed, the profile goes live now and they are told. If it has not, the profile goes live by itself when the check passes.
+        </p>
+      </AdminConfirmModal>
 
       <AdminRejectModal
 
