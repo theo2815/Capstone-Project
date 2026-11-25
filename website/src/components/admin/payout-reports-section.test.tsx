@@ -11,9 +11,10 @@ import { formatLongDate } from "@/lib/format";
 import { formatPrice } from "@/lib/utils";
 import { PayoutReportsSection } from "./payout-reports-section";
 
+const navigation = vi.hoisted(() => ({ pathname: "/admin/payouts" }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn() }),
-  usePathname: () => "/admin/payouts",
+  usePathname: () => navigation.pathname,
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -22,6 +23,7 @@ let reports: PayoutReport[];
 let total: number;
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  navigation.pathname = "/admin/payouts";
   reports = [report];
   total = 1;
   useAuthStore.getState().setUser(admin);
@@ -206,4 +208,22 @@ it("FT-36: J then Enter opens the first report", async () => {
   act(() => { fireEvent.keyDown(document.body, { key: "j" }); });
   act(() => { fireEvent.keyDown(document.body, { key: "Enter" }); });
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
+});
+
+// FU-20: in the Inbox the first report sits higher: the tabs keep to one row and the legend follows the list.
+it("in the Inbox the status tabs are one row and the legend comes after the list; on the page, as before", async () => {
+  navigation.pathname = "/admin/inbox";
+  renderSection();
+  const list = await screen.findByRole("list");
+  const legend = screen.getByText(/^Open: not answered yet\./);
+  expect(list.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Report status" })).toHaveClass("flex-nowrap");
+  cleanup();
+
+  navigation.pathname = "/admin/payouts";
+  renderSection();
+  const pageList = await screen.findByRole("list");
+  const pageLegend = screen.getByText(/^Open: not answered yet\./);
+  expect(pageList.compareDocumentPosition(pageLegend) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Report status" })).not.toHaveClass("flex-nowrap");
 });

@@ -12,10 +12,10 @@ import { StepUpProvider } from "@/components/auth/step-up-provider";
 import { PayoutsQueue } from "./payouts-queue";
 import { gaveFirstApproval } from "./admin-payout-row";
 
-const navigation = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+const navigation = vi.hoisted(() => ({ pathname: "/admin/payouts", search: "", replace: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: navigation.replace }),
-  usePathname: () => "/admin/payouts",
+  usePathname: () => navigation.pathname,
   useSearchParams: () => new URLSearchParams(navigation.search),
 }));
 
@@ -108,7 +108,7 @@ function seed(status: AdminPayoutCycle["status"] = "pending_review") {
 beforeEach(() => {
   useAuthStore.getState().setUser(admin);
   useToastStore.getState().clear();
-  navigation.search = ""; navigation.replace.mockClear();
+  navigation.pathname = "/admin/payouts"; navigation.search = ""; navigation.replace.mockClear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   vi.spyOn(console, "error").mockImplementation(() => {});
   countsMissing = false; failLists = 0; nextTabList = null;
@@ -768,4 +768,17 @@ it("loading shows skeleton rows and no Loading sentence", () => {
   const { container } = render_();
   expect(container.querySelector('[aria-busy="true"] .animate-pulse')).not.toBeNull();
   expect(screen.queryByText(/Loading/)).toBeNull();
+});
+
+// FU-20: in the Inbox the status tabs keep to one row that scrolls sideways; the Payouts page keeps them wrapping.
+it("in the Inbox the status tabs are one row; on the page they wrap as before", async () => {
+  rows = [payoutCycle]; client.setQueryData(key, rows);
+  navigation.pathname = "/admin/inbox";
+  const view = await mount();
+  expect(screen.getByRole("group", { name: "Payout status" })).toHaveClass("flex-nowrap");
+  view.unmount();
+
+  navigation.pathname = "/admin/payouts";
+  await mount();
+  expect(screen.getByRole("group", { name: "Payout status" })).not.toHaveClass("flex-nowrap");
 });

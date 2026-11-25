@@ -10,10 +10,10 @@ import { adminDisputeKeys } from "@/hooks/use-admin-disputes";
 import { admin, dispute } from "@/test/fixtures/admin";
 import { DisputesQueue } from "./disputes-queue";
 
-const fixtures = vi.hoisted(() => ({ search: "", router: { replace: vi.fn() }, kpis: {} as Record<string, number> }));
+const fixtures = vi.hoisted(() => ({ pathname: "/admin/disputes", search: "", router: { replace: vi.fn() }, kpis: {} as Record<string, number> }));
 vi.mock("next/navigation", () => ({
   useRouter: () => fixtures.router,
-  usePathname: () => "/admin/disputes",
+  usePathname: () => fixtures.pathname,
   useSearchParams: () => new URLSearchParams(fixtures.search),
 }));
 
@@ -28,6 +28,7 @@ const seed = (items: Dispute[]) => client.setQueryData(firstPageKey, { pages: [p
 let client: QueryClient;
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  fixtures.pathname = "/admin/disputes";
   fixtures.search = "";
   fixtures.router.replace.mockClear();
   fixtures.kpis = {};
@@ -505,4 +506,22 @@ it("the dispute actions read Escalate, Deny, then Approve refund", async () => {
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+// FU-20: in the Inbox the first dispute sits higher: the tabs keep to one row and the legend follows the list.
+it("in the Inbox the views are one row and the legend comes after the list; on the page, as before", async () => {
+  fixtures.pathname = "/admin/inbox";
+  renderQueue();
+  const list = await screen.findByRole("list");
+  const legend = screen.getByText(/^Needs you: waiting for your decision\./);
+  expect(list.compareDocumentPosition(legend) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Dispute views" })).toHaveClass("flex-nowrap");
+  cleanup();
+
+  fixtures.pathname = "/admin/disputes";
+  renderQueue();
+  const pageList = await screen.findByRole("list");
+  const pageLegend = screen.getByText(/^Needs you: waiting for your decision\./);
+  expect(pageList.compareDocumentPosition(pageLegend) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+  expect(screen.getByRole("group", { name: "Dispute views" })).not.toHaveClass("flex-nowrap");
 });

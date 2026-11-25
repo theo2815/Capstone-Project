@@ -3,6 +3,7 @@
 import { LoadError } from "@/components/ui/load-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAdminPayoutById, useAdminPayouts, EMPTY_PAYOUTS } from "@/hooks/use-admin-payouts";
 import { ADMIN_PAYOUT_STATUS_LABEL } from "@/lib/admin-payouts";
@@ -70,6 +71,8 @@ export function PayoutReportsSection({ keyScope = false }: { keyScope?: boolean 
   const reports = list.items;
   const serverPayouts = useAdminPayouts().data ?? EMPTY_PAYOUTS;
   const openCount = useAdminKpis()?.openPayoutReports;
+  // FU-20: in the Inbox the tabs keep to one row and the legend follows the list, so the first report sits higher.
+  const inInbox = usePathname() === ROUTES.ADMIN_INBOX;
   const { showToast } = useToast();
 
   const [reportRowId, setReportRowId] = useUrlState<string>("report", "");
@@ -133,6 +136,12 @@ export function PayoutReportsSection({ keyScope = false }: { keyScope?: boolean 
     });
   }
 
+  const legend = (
+    <p className={`font-sans text-sm text-slate-soft ${inInbox ? "mt-6" : "mt-3"}`}>
+      Open: not answered yet. Acknowledged: you replied and are still working on it. Resolved: closed.
+    </p>
+  );
+
   return (
     <Slab
       titleStyle="heading"
@@ -153,10 +162,9 @@ export function PayoutReportsSection({ keyScope = false }: { keyScope?: boolean 
         }))}
         value={status}
         onChange={setStatus}
+        scroll={inInbox}
       />
-      <p className="font-sans text-sm text-slate-soft mt-3">
-        Open: not answered yet. Acknowledged: you replied and are still working on it. Resolved: closed.
-      </p>
+      {!inInbox && legend}
       <div className="mt-6">
       {list.isLoading ? <div aria-busy="true" className="space-y-3">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div> :
         list.error && reports.length === 0 ? (
@@ -191,6 +199,7 @@ export function PayoutReportsSection({ keyScope = false }: { keyScope?: boolean 
         </>
       )}
       </div>
+      {inInbox && legend}
 
       {openReport && (
         <AdminDetailDrawer
