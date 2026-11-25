@@ -1,10 +1,12 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 interface StatTileProps {
   kicker: string;
   value: number | string;
-  caption?: string;
+  /** Links inside it only on a tile with no href (a link cannot sit inside a link). */
+  caption?: ReactNode;
   href?: string;
   variant?: "default" | "muted";
 }

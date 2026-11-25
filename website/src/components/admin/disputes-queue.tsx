@@ -74,6 +74,8 @@ const useMdUp = () => useSyncExternalStore(subscribeMdUp, () => window.matchMedi
 export function DisputesQueue() {
   const [view, setView] = useUrlState<QueueView>("view", "needs_me", { parse: parseView });
   const [q, setQ] = useUrlState<string>("q", "");
+  // FU-18: a runner's "Their disputes" link narrows the list to that runner, until the admin searches for something else.
+  const [runner, setRunner] = useUrlState<string>("runner", "");
   // The box holds what is typed; the URL (and the request) get it trimmed, after a pause.
   const [qDraft, setQDraft] = useState(q);
   const [qSeen, setQSeen] = useState(q);
@@ -85,12 +87,15 @@ export function DisputesQueue() {
   useEffect(() => {
     const next = qDraft.trim();
     if (next === q) return;
-    const timer = setTimeout(() => setQ(next), SEARCH_DEBOUNCE_MS);
+    const timer = setTimeout(() => {
+      if (runner) setRunner("");
+      setQ(next);
+    }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [qDraft, q, setQ]);
+  }, [qDraft, q, setQ, runner, setRunner]);
 
   // Each view and search is its own list, so a new one starts at the first page.
-  const list = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined });
+  const list = useAdminDisputePage({ view, q: view === "refund_run" ? undefined : q || undefined, runner: view === "refund_run" ? undefined : runner || undefined });
   const items = list.items;
   const mdUp = useMdUp();
   // Counts come from the polled KPIs; a field an older backend leaves out shows no count.

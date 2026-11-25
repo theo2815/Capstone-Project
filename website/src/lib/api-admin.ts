@@ -48,7 +48,7 @@ const ADMIN_LIST_LIMIT = 200;
 //   POST   /api/v1/admin/users/{id}/suspend      { reason } → AdminUserRow
 //   POST   /api/v1/admin/users/{id}/unsuspend              → AdminUserRow
 //
-//   GET    /api/v1/admin/disputes?status=&view=&q=&offset=&limit= → PaginatedResponse<Dispute>
+//   GET    /api/v1/admin/disputes?status=&view=&q=&runner=&offset=&limit= → PaginatedResponse<Dispute>
 //   GET    /api/v1/admin/disputes/{id}                     → Dispute (404 when unknown)
 //   POST   /api/v1/admin/disputes/{id}/resolve   { resolution, refundAmount?, reason } → Dispute
 //   POST   /api/v1/admin/disputes/{id}/deny      { reason } → Dispute
@@ -404,6 +404,8 @@ export type AdminDisputeView = "needs_me" | "overdue" | "refund_run" | "closed" 
 export interface AdminDisputePageArgs {
   view?: AdminDisputeView;
   q?: string;
+  /** FU-2: exact runner user id; an older backend ignores it. */
+  runner?: string;
   offset?: number;
 }
 
@@ -434,11 +436,12 @@ export async function fetchAdminDisputes(
 
 // One server page of a queue view; no limit, so the server's default page size decides.
 export async function fetchAdminDisputePage(
-  { view, q, offset, signal }: AdminDisputePageArgs & { signal?: AbortSignal },
+  { view, q, runner, offset, signal }: AdminDisputePageArgs & { signal?: AbortSignal },
 ): Promise<PaginatedResponse<Dispute>> {
   const p = new URLSearchParams();
   if (view) p.set("view", view);
   if (q) p.set("q", q);
+  if (runner) p.set("runner", runner);
   p.set("offset", String(offset ?? 0));
   return api.get<PaginatedResponse<Dispute>>(`/admin/disputes?${p.toString()}`, { signal });
 }

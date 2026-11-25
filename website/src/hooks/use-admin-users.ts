@@ -55,10 +55,19 @@ export function useAdminPhotographersPage(status: AdminUserStatusFilter, q: stri
 // FT-39: one limit=1 request per tab, read for its total. Its key[3] is not one the user mutations patch
 // as a list, and the owner prefix means their refresh refetches it.
 export function useAdminPhotographerCount(status: AdminUserStatusFilter): number | undefined {
+  return useAdminUserCount("PHOTOGRAPHER", status);
+}
+
+// FU-18: the Runners tabs count the same way; no status counts every runner.
+export function useAdminRunnerCount(status?: AdminUserStatusFilter): number | undefined {
+  return useAdminUserCount("RUNNER", status);
+}
+
+function useAdminUserCount(role: "PHOTOGRAPHER" | "RUNNER", status?: AdminUserStatusFilter): number | undefined {
   const user = useAuthStore((s) => s.user);
   return useQuery({
-    queryKey: [...adminUserKeys.owner(user?.id ?? null), "photographer-count", status],
-    queryFn: ({ signal }) => fetchAdminUsersPage({ role: "PHOTOGRAPHER", status, offset: 0, limit: 1 }, signal),
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), role === "PHOTOGRAPHER" ? "photographer-count" : "runner-count", status ?? "all"],
+    queryFn: ({ signal }) => fetchAdminUsersPage({ role, status, offset: 0, limit: 1 }, signal),
     enabled: user?.role === "ADMIN",
     staleTime: 30_000,
     select: (page) => page.total,
@@ -66,12 +75,12 @@ export function useAdminPhotographerCount(status: AdminUserStatusFilter): number
 }
 
 // AX-41: same owner prefix as the photographers list, so suspend and unsuspend refresh it.
-export function useAdminRunnersPage(q: string) {
+export function useAdminRunnersPage(q: string, status?: AdminUserStatusFilter) {
   const user = useAuthStore((s) => s.user);
   return useInfiniteList<AdminUserRow & { id: string }>({
-    queryKey: [...adminUserKeys.owner(user?.id ?? null), "runners", q],
+    queryKey: [...adminUserKeys.owner(user?.id ?? null), "runners", status ?? "all", q],
     fetchPage: async (offset, limit, signal) => {
-      const page = await fetchAdminUsersPage({ role: "RUNNER", q: q || undefined, offset, limit }, signal);
+      const page = await fetchAdminUsersPage({ role: "RUNNER", status, q: q || undefined, offset, limit }, signal);
       return { ...page, items: page.items.map((row) => ({ ...row, id: row.userId })) };
     },
     limit: 50,
@@ -175,7 +184,7 @@ export function useAdminUserActions() {
       for (const [key, data] of qc.getQueriesData<InfiniteData<PaginatedResponse<AdminUserRow & { id: string }>>>(
         { queryKey: adminUserKeys.owner(owner), predicate: (query) => query.queryKey[3] === "photographers" || query.queryKey[3] === "runners" })) {
         if (!data?.pages.some((page) => page.items.some((existing) => existing.userId === id))) continue;
-        const leaves = key[3] === "photographers" && key[4] !== status;
+        const leaves = key[3] === "photographers" ? key[4] !== status : key[4] === "suspended" && !row.suspendedAt;
         qc.setQueryData(key, { ...data, pages: data.pages.map((page) => leaves
           ? { ...page, total: page.total - 1, items: page.items.filter((existing) => existing.userId !== id) }
           : { ...page, items: page.items.map((existing) => existing.userId === id ? { ...row, id } : existing) }) });

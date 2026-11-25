@@ -10,10 +10,12 @@ it("Pending uses the warning tone", () => {
   expect(screen.getByText("Pending")).toHaveClass("text-warning-text");
 });
 
-it("a long name and region keep their full text in a title", () => {
-  render(<AdminPhotographerCard row={adminUser} />);
-  expect(screen.getByRole("heading", { name: "Test Studio" })).toHaveAttribute("title", "Test Studio");
-  expect(screen.getByTitle(/^Cebu · Cebu$/)).toBeInTheDocument();
+// FU-18 (B-37): touch has no hover, so a long name and place wrap instead of hiding behind a title.
+it("a long name and region wrap, with no title repeating them", () => {
+  const { container } = render(<AdminPhotographerCard row={adminUser} />);
+  expect(screen.getByRole("heading", { name: "Test Studio" })).not.toHaveClass("truncate");
+  expect(screen.getByText(/^Cebu · Cebu$/).closest(".truncate")).toBeNull();
+  expect(container.querySelector("[title]")).toBeNull();
 });
 
 // AX-39 (UA7): row values read as typed; mono caps stay for labels only.

@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
 import type { AdminKpis } from "@/lib/api-admin";
 import { ROUTES, ADMIN_FLAGS_ENABLED } from "@/lib/constants";
 import { AdminSectionIntro } from "@/components/admin/admin-section-intro";
+import Link from "next/link";
+
+const CAPTION_LINK = "inline-flex min-h-[44px] items-center underline decoration-line-strong underline-offset-4 hover:decoration-fresh";
 
 // Phase 1 admin redesign — /admin/overview is now the weekly-review tab.
 // 8-tile KPI grid + 30-day trend + decisions timeline. The daily landing
@@ -140,11 +143,17 @@ export default function AdminOverviewPage() {
             caption="approved to upload"
             href={ROUTES.ADMIN_PHOTOGRAPHERS}
           />
+          {/* FU-18 (U18.2): the count is two lists, so each word opens its own. */}
           <AdminStatTile
             kicker="Suspended accounts"
             value={kpis.suspended}
-            caption="photographers and runners"
-            href={`${ROUTES.ADMIN_PHOTOGRAPHERS}?status=suspended`}
+            caption={
+              <>
+                <Link href={`${ROUTES.ADMIN_PHOTOGRAPHERS}?status=suspended`} className={CAPTION_LINK}>photographers</Link>
+                {" and "}
+                <Link href={`${ROUTES.ADMIN_RUNNERS}?status=suspended`} className={CAPTION_LINK}>runners</Link>
+              </>
+            }
           />
           <AdminStatTile
             kicker="This week's decisions"
