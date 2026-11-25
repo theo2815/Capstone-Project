@@ -404,7 +404,7 @@ function ComingUpPreview() {
         <br className="hidden md:block" /> earnings dashboard.
       </h2>
       <p className="font-sans text-sm md:text-base text-ink-soft mt-3 max-w-xl">
-        Your first sale shows up here with a 12-week sparkline, weekly payouts,
+        Your first sale shows up here with a 12-week sparkline, your payouts,
         active-event pipeline, and upcoming coverage — every number you&apos;ll
         check before each race day.
       </p>

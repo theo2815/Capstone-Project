@@ -70,6 +70,7 @@ import {
 } from "@/lib/image-utils";
 import { getRegion } from "@/lib/ph-regions";
 import { useRegions } from "@/hooks/use-regions";
+import { usePhotographerProvinceName } from "@/hooks/use-photographer-province";
 import {
   photographerSettingsKeys,
   usePhotographerSettingsQueries,
@@ -1622,6 +1623,7 @@ function LivePreview() {
   const brandColor = usePhotographerSettingsStore((s) => s.brandColor);
   const bio = usePhotographerSettingsStore((s) => s.bio);
   const handle = usePhotographerSettingsStore((s) => s.handle);
+  const province = usePhotographerProvinceName();
 
   const accent =
     brandColor !== "none" ? BRAND_COLOR_HEX[brandColor] : null;
@@ -1698,8 +1700,12 @@ function LivePreview() {
         <AvatarDisc name={avatarName} size="md" />
         <Kicker as="p" tnum className="mt-4 flex items-center gap-2 flex-wrap">
           <span>Photographer</span>
-          <span className="text-slate-soft">·</span>
-          <span>Cebu</span>
+          {province && (
+            <>
+              <span className="text-slate-soft">·</span>
+              <span>{province}</span>
+            </>
+          )}
           {accentLabel && (
             <>
               <span className="text-slate-soft">·</span>
@@ -1869,14 +1875,7 @@ function PictureSubsection() {
       )}
       <p className="font-sans text-sm text-slate-soft mt-4 max-w-md">
         Shown next to your name across QuickPitik. Different from your
-        face-search selfies — those live in your{" "}
-        <Link
-          href="/profile#selfies"
-          className="text-ink underline decoration-line underline-offset-4 decoration-1 hover:decoration-fresh hover:text-fresh transition-colors"
-        >
-          selfie library
-        </Link>
-        .
+        face-search selfies — those live in your selfie library.
       </p>
     </div>
   );

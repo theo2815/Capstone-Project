@@ -221,8 +221,9 @@ class PhotographerOwnedEventService(
         req.title?.takeIf { it.isNotBlank() }?.let { event.name = it.trim() }
         req.date?.takeIf { it.isNotBlank() }?.let { event.date = parseEditDate(event, it) }
         req.location?.takeIf { it.isNotBlank() }?.let { event.location = it.trim() }
-        req.organizerName?.takeIf { it.isNotBlank() }?.let { event.organizerName = it.trim() }
-        req.description?.takeIf { it.isNotBlank() }?.let { event.description = it.trim() }
+        // Optional texts: null = no change, blank = cleared.
+        req.organizerName?.let { event.organizerName = it.trim() }
+        req.description?.let { event.description = it.trim() }
         req.visibility?.takeIf { it.isNotBlank() }?.let { event.visibility = parseVisibility(it) }
         // Going Private takes the event off /events; the admin must list it again (V89).
         if (event.visibility == EventVisibility.UNLISTED) event.listedOnEvents = false

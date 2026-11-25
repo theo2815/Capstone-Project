@@ -220,6 +220,19 @@ class PhotographerOwnedEventServiceTest {
         assertTrue(published.isEmpty())
     }
 
+    @Test
+    fun `a blank organizer or race-day note clears it, and a missing one leaves it alone`() {
+        val event = liveEvent().apply { organizerName = "Cebu Runners Club"; description = "Bring water" }
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(title = "Renamed Run"), null)
+        assertEquals("Cebu Runners Club", event.organizerName)
+        assertEquals("Bring water", event.description)
+
+        service.update(photographerId, event.id, UpdateMyEventRequest(organizerName = "", description = ""), null)
+        assertEquals("", event.organizerName)
+        assertEquals("", event.description)
+    }
+
     // V89: the photographer's Private choice wins over the admin's listing;
     // making it Public again does not re-list it by surprise.
     @Test

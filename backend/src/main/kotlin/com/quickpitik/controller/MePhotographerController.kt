@@ -174,7 +174,7 @@ class MePhotographerController(
     fun updateEvent(
         @AuthenticationPrincipal principal: AuthPrincipal,
         @PathVariable eventId: UUID,
-        @Valid @ModelAttribute("form") form: UpdateMyEventRequest,
+        @Valid @ModelAttribute("patch") form: UpdateMyEventRequest,
         @RequestPart("cover", required = false) cover: MultipartFile?,
     ): PhotographerEventDetailDto =
         photographerOwnedEventService.update(principal.userId, eventId, form, coverOf(cover))
@@ -187,6 +187,15 @@ class MePhotographerController(
     @InitBinder("form")
     fun trimEventForm(binder: WebDataBinder) {
         binder.registerCustomEditor(String::class.java, StringTrimmerEditor(true))
+    }
+
+    // The own-event edit trims the same way, except the two optional texts:
+    // the clients send them only when changed, so a sent blank means "clear it".
+    @InitBinder("patch")
+    fun trimEventPatch(binder: WebDataBinder) {
+        binder.registerCustomEditor(String::class.java, StringTrimmerEditor(true))
+        binder.registerCustomEditor(String::class.java, "organizerName", StringTrimmerEditor(false))
+        binder.registerCustomEditor(String::class.java, "description", StringTrimmerEditor(false))
     }
 
     private fun coverOf(cover: MultipartFile?): AdminEventService.CoverUpload? =

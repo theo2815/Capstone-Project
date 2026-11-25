@@ -472,10 +472,10 @@ function PhotographerProfileBody({ user }: { user: User }) {
       <div className="flex-1 max-w-7xl mx-auto w-full px-6 md:px-10 -mt-10 md:-mt-12 relative">
         {/* Edit cover — top-right of the negative-margin band. Mobile: own
             right-aligned row above the avatar. Desktop: absolute, free of
-            the avatar/kicker row. Routes to settings #cover anchor. */}
+            the avatar/kicker row. Routes to the settings profile section. */}
         <div className="flex justify-end mb-3 md:mb-0 md:absolute md:top-0 md:right-10 md:z-10">
           <Link
-            href={`${ROUTES.DASHBOARD_SETTINGS}#cover`}
+            href={`${ROUTES.DASHBOARD_SETTINGS}#public-profile`}
             className="inline-flex items-center gap-1.5 font-sans text-sm text-slate hover:text-ink transition-colors"
           >
             <CameraGlyph className="size-4" />
